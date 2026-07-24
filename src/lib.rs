@@ -7,6 +7,7 @@ pub mod export;
 pub mod helpers;
 pub mod model;
 pub mod pricing;
+pub mod routing;
 pub mod ui;
 pub mod utils;
 

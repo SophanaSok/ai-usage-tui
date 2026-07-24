@@ -16,13 +16,13 @@ use ai_usage_tui::{
         background::{
             Collector, CollectorHandle, JournalCollector, OpenCodeCollector, ZenPricingCollector,
         },
-        journal::record_ollama,
+        journal::{record_ollama, record_routing},
         load_usage,
         pricing_refresh::refresh_pricing,
         zen::refresh_zen_catalog,
     },
     config::{apply_config, CollectorsConfig},
-    export::print_once,
+    export::{csv_field, print_once},
     ui::run,
 };
 
@@ -55,8 +55,19 @@ fn main() -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
         return record_ollama(&path);
     }
+    if cli.record_routing {
+        let path = cli
+            .journal_path
+            .clone()
+            .or_else(ai_usage_tui::utils::journal_path)
+            .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+        return record_routing(&path);
+    }
     if cli.check_budgets {
         return check_budgets(&cli);
+    }
+    if cli.routing_json || cli.routing_csv_path.is_some() {
+        return export_routing(&cli);
     }
     if cli.once || cli.json {
         return print_once(&cli);
@@ -204,6 +215,72 @@ fn check_budgets(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
 
     if has_alerts {
         std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn export_routing(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
+    let journal = cli
+        .journal_path
+        .clone()
+        .or_else(ai_usage_tui::utils::journal_path)
+        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+
+    let events = ai_usage_tui::collector::journal::load_routing(&journal)?;
+    let aggregates = ai_usage_tui::routing::aggregate(&events);
+
+    if let Some(path) = &cli.routing_csv_path {
+        let mut csv = String::from(
+            "agent,model,provider,tasks,tokens,cost,retries,escalations,test_passes,test_failures,review_defects\n",
+        );
+        for agg in &aggregates {
+            csv.push_str(&format!(
+                "{},{},{},{},{},{},{},{},{},{},{}\n",
+                csv_field(&agg.agent),
+                csv_field(&agg.model),
+                csv_field(&agg.provider),
+                agg.tasks,
+                agg.tokens,
+                agg.cost,
+                agg.retries,
+                agg.escalations,
+                agg.test_passes,
+                agg.test_failures,
+                agg.review_defects,
+            ));
+        }
+        std::fs::write(path, csv)?;
+        println!("Wrote routing CSV to {}", path.display());
+    } else {
+        let rows: Vec<_> = aggregates
+            .iter()
+            .map(|agg| {
+                serde_json::json!({
+                    "agent": agg.agent,
+                    "model": agg.model,
+                    "provider": agg.provider,
+                    "tasks": agg.tasks,
+                    "tokens": agg.tokens,
+                    "cost": agg.cost,
+                    "retries": agg.retries,
+                    "escalations": agg.escalations,
+                    "test_passes": agg.test_passes,
+                    "test_failures": agg.test_failures,
+                    "review_defects": agg.review_defects,
+                    "retry_rate": ai_usage_tui::routing::retry_rate(agg),
+                    "escalation_rate": ai_usage_tui::routing::escalation_rate(agg),
+                    "defect_rate": ai_usage_tui::routing::defect_rate(agg),
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "source": format!("journal: {}", journal.display()),
+                "events": events.len(),
+                "aggregates": rows
+            }))?
+        );
     }
     Ok(())
 }

@@ -29,11 +29,14 @@
 - Budgets and alerts: `BudgetEngine`, `AlertDispatcher`, per-provider/model/global scopes
 - `[[budgets.entry]]` config with `--check-budgets` (exit 1 on alerts) and `--webhook` CLI
 - TUI alert banner and budget panel toggle (`b` key) with calendar-based period cutoffs
+- Model-routing analytics: `RoutingEvent`, `routing_event` table, `--record-routing` capture
+- `RoutingEngine` aggregation: cost/task, token efficiency, retry/escalation/defect rates
+- `--routing-json` and `--routing-csv` export flags
+- TUI routing panel toggle (`t` key) with sortable aggregate table
 
 ## In Progress
 
 - Cross-platform release packaging
-- Model-routing analytics
 
 ## Agent Routing
 

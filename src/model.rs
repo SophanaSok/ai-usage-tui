@@ -163,6 +163,40 @@ impl Range {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct RoutingEvent {
+    pub task: String,
+    pub phase: String,
+    pub agent: String,
+    pub model: String,
+    pub provider: String,
+    pub category: Category,
+    pub requests: u64,
+    pub tokens: u64,
+    pub cost: Option<f64>,
+    pub cost_status: CostStatus,
+    pub retries: u32,
+    pub escalations: u32,
+    pub test_result: Option<bool>,
+    pub review_defects: u32,
+    pub created: i64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RoutingAggregates {
+    pub agent: String,
+    pub model: String,
+    pub provider: String,
+    pub tasks: u64,
+    pub tokens: u64,
+    pub cost: f64,
+    pub retries: u32,
+    pub escalations: u32,
+    pub test_passes: u32,
+    pub test_failures: u32,
+    pub review_defects: u32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

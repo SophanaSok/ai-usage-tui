@@ -39,6 +39,7 @@ pub struct App {
     pub model_filter: Option<String>,
     pub collector: Option<CollectorHandle>,
     pub show_budgets: bool,
+    pub show_routing: bool,
     pub budget_engine: BudgetEngine,
     pub alerts: Vec<Alert>,
 }
@@ -70,6 +71,7 @@ impl App {
             model_filter,
             collector,
             show_budgets: false,
+            show_routing: false,
             budget_engine,
             alerts: Vec::new(),
         };
@@ -217,6 +219,7 @@ pub fn run(
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
                     KeyCode::Char('r') => app.refresh(),
                     KeyCode::Char('b') => app.show_budgets = !app.show_budgets,
+                    KeyCode::Char('t') => app.show_routing = !app.show_routing,
                     KeyCode::Char('1') => app.range = Range::Today,
                     KeyCode::Char('2') => app.range = Range::Week,
                     KeyCode::Char('3') => app.range = Range::Month,
@@ -274,7 +277,9 @@ fn draw(frame: &mut Frame, app: &App) {
         .constraints([Constraint::Percentage(36), Constraint::Percentage(64)])
         .split(chunks[3]);
     draw_breakdown(frame, body[0], app);
-    if app.show_budgets {
+    if app.show_routing {
+        draw_routing(frame, body[1], app);
+    } else if app.show_budgets {
         draw_budgets(frame, body[1], app);
     } else {
         draw_models(frame, body[1], app);
@@ -289,6 +294,8 @@ fn draw(frame: &mut Frame, app: &App) {
         Span::raw(" refresh  "),
         Span::styled("b", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
         Span::raw(" budgets  "),
+        Span::styled("t", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
+        Span::raw(" routing  "),
         Span::styled(
             "j/k",
             Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
@@ -568,6 +575,49 @@ fn draw_budgets(frame: &mut Frame, area: Rect, app: &App) {
     );
 }
 
+fn draw_routing(frame: &mut Frame, area: Rect, app: &App) {
+    let events = crate::collector::journal::load_routing(&app.journal_path).unwrap_or_default();
+    if events.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No routing events recorded.\nUse --record-routing to capture.")
+                .style(Style::default().fg(MUTED))
+                .block(panel("ROUTING", CYAN)),
+            area,
+        );
+        return;
+    }
+    let aggregates = crate::routing::aggregate(&events);
+    let table_rows = aggregates.iter().map(|agg| {
+        Row::new(vec![
+            Cell::from(agg.agent.clone()),
+            Cell::from(agg.model.clone()),
+            Cell::from(format_count(agg.tokens)),
+            Cell::from(format!("${:.4}", agg.cost)),
+            Cell::from(format!("{:.0}%", crate::routing::retry_rate(agg))),
+            Cell::from(format!("{:.0}%", crate::routing::defect_rate(agg))),
+            Cell::from(agg.tasks.to_string()),
+        ])
+    });
+    let header = Row::new(vec!["AGENT", "MODEL", "TOKENS", "COST", "RETRY%", "DEFECTS", "TASKS"])
+        .style(Style::default().fg(MUTED).add_modifier(Modifier::BOLD));
+    let widths = [
+        Constraint::Min(18),
+        Constraint::Min(20),
+        Constraint::Length(11),
+        Constraint::Length(11),
+        Constraint::Length(8),
+        Constraint::Length(8),
+        Constraint::Length(7),
+    ];
+    frame.render_widget(
+        Table::new(table_rows, widths)
+            .header(header)
+            .column_spacing(1)
+            .block(panel("ROUTING", CYAN)),
+        area,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -620,6 +670,7 @@ mod tests {
             model_filter: None,
             collector: None,
             show_budgets: false,
+            show_routing: false,
             budget_engine: BudgetEngine::empty(),
             alerts: Vec::new(),
         };

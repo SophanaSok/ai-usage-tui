@@ -25,6 +25,9 @@ pub struct Cli {
     pub refresh_interval_set: bool,
     pub check_budgets: bool,
     pub webhook_url: Option<String>,
+    pub record_routing: bool,
+    pub routing_json: bool,
+    pub routing_csv_path: Option<PathBuf>,
 }
 
 impl Default for Cli {
@@ -49,6 +52,9 @@ impl Default for Cli {
             refresh_interval_set: false,
             check_budgets: false,
             webhook_url: None,
+            record_routing: false,
+            routing_json: false,
+            routing_csv_path: None,
         }
     }
 }
@@ -107,6 +113,18 @@ where
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("--webhook requires a URL"))?;
                 cli.webhook_url = Some(value);
+            }
+            "--record-routing" => cli.record_routing = true,
+            "--routing-json" => {
+                cli.routing_json = true;
+                cli.once = true;
+            }
+            "--routing-csv" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--routing-csv requires a path"))?;
+                cli.routing_csv_path = Some(PathBuf::from(value));
+                cli.once = true;
             }
             "--db" => {
                 let value = args
@@ -174,11 +192,16 @@ where
         cli.json,
         cli.csv_path.is_some(),
         cli.check_budgets,
+        cli.record_routing,
+        cli.routing_json,
+        cli.routing_csv_path.is_some(),
     ]
     .into_iter()
     .filter(|enabled| *enabled)
     .count();
-    if actions > 1 || (cli.once && (cli.record_ollama || cli.refresh_zen || cli.check_budgets)) {
+    if actions > 1
+        || (cli.once && (cli.record_ollama || cli.refresh_zen || cli.check_budgets || cli.record_routing))
+    {
         return Err(anyhow::anyhow!(
             "collection actions and --once/--json/--csv are mutually exclusive"
         ));
@@ -222,6 +245,12 @@ OPTIONS:
     --check-budgets
                   Check budget thresholds and print alerts as JSON, exit 1 if any
     --webhook URL  Override the budget alert webhook URL from config
+    --record-routing
+                  Read a routing event JSON from stdin and journal it
+    --routing-json
+                  Export routing analytics as JSON and exit
+    --routing-csv PATH
+                  Export routing analytics as CSV and exit
 
 ENVIRONMENT:
     OPENCODE_DB_PATH    Override the OpenCode SQLite database path
@@ -235,6 +264,7 @@ KEYS:
     4              All time
     r              Refresh data
     b              Toggle budgets panel
+    t              Toggle routing panel
     j / Down       Select next model
     k / Up         Select previous model
     q / Esc        Quit

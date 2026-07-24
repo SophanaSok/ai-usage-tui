@@ -38,6 +38,12 @@
 - Added calendar-based period cutoffs (daily at 00:00 UTC, monthly on 1st).
 - Added in-memory alert dedup (1-hour window) for webhook dispatch.
 - Budget spend only counts `ProviderReported`, `Calculated`, and `Estimated` costs.
+- Added model-routing analytics: `RoutingEvent` struct, `routing_event` journal table, `--record-routing` capture.
+- Added `RoutingEngine` with aggregation (cost/task, token efficiency, retry/escalation/defect rates).
+- Added `--routing-json` and `--routing-csv` export flags.
+- Added TUI routing panel toggle (`t` key) with AGENT/MODEL/TOKENS/COST/RETRY%/DEFECTS/TASKS table.
+- Added `docs/routing-analytics.md` schema doc.
+- Privacy: routing events store only metadata — no prompts, completions, API keys, or credentials.
 
 ## 0.1.0
 
