@@ -16,7 +16,7 @@ use ratatui::{
 };
 
 use crate::cli::Cli;
-use crate::collector::load_usage;
+use crate::collector::background::CollectorHandle;
 use crate::model::{Category, CostStatus, Range, Totals, Usage, CYAN, YELLOW};
 use crate::utils::{format_clock, format_count, journal_path};
 
@@ -36,6 +36,7 @@ pub struct App {
     pub journal_path: PathBuf,
     pub provider_filter: Option<String>,
     pub model_filter: Option<String>,
+    pub collector: Option<CollectorHandle>,
 }
 
 impl App {
@@ -46,6 +47,7 @@ impl App {
         refresh_interval: Duration,
         provider_filter: Option<String>,
         model_filter: Option<String>,
+        collector: Option<CollectorHandle>,
     ) -> Self {
         let mut app = Self {
             range,
@@ -60,19 +62,25 @@ impl App {
             journal_path,
             provider_filter,
             model_filter,
+            collector,
         };
         app.refresh();
         app
     }
     pub fn refresh(&mut self) {
-        match load_usage(self.db_path.as_deref(), &self.journal_path) {
-            Ok((usages, source)) => {
-                self.usages = usages;
-                self.status = source;
-            }
-            Err(error) => {
-                self.usages.clear();
-                self.status = format!("OpenCode unavailable: {}", error);
+        if let Some(ref collector) = self.collector {
+            self.usages = collector.snapshot();
+            self.status = collector.status();
+        } else {
+            match crate::collector::load_usage(self.db_path.as_deref(), &self.journal_path) {
+                Ok((usages, source)) => {
+                    self.usages = usages;
+                    self.status = source;
+                }
+                Err(error) => {
+                    self.usages.clear();
+                    self.status = format!("OpenCode unavailable: {}", error);
+                }
             }
         }
         self.last_refresh = format_clock();
@@ -163,7 +171,11 @@ pub fn cost_display(usage: &Usage) -> String {
     }
 }
 
-pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, cli: &Cli) -> Result<()> {
+pub fn run(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    cli: &Cli,
+    collector: Option<CollectorHandle>,
+) -> Result<()> {
     let journal = cli
         .journal_path
         .clone()
@@ -176,6 +188,7 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, cli: &Cli) -> 
         cli.refresh_interval,
         cli.provider_filter.clone(),
         cli.model_filter.clone(),
+        collector,
     );
     loop {
         app.refresh_if_due();
@@ -484,6 +497,7 @@ mod tests {
             journal_path: PathBuf::from("/tmp/unused-journal.db"),
             provider_filter: None,
             model_filter: None,
+            collector: None,
         };
         assert_eq!(app.rows().len(), 2);
     }

@@ -9,6 +9,10 @@ pub mod pricing;
 pub mod ui;
 pub mod utils;
 
+pub use collector::background::{
+    Collector, CollectorHandle, JournalCollector, OpenCodeCollector, ZenPricingCollector,
+};
+
 #[cfg(test)]
 mod integration_tests {
     use std::fs;

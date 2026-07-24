@@ -22,10 +22,13 @@
 - Fixture-based HTML parsing tests for the pricing scraper
 - Library crate conversion with integration test suite (full pipeline, config precedence, exports, pricing engine)
 - Test fixtures for OpenCode DB, Ollama journal, and Zen pricing HTML
+- Background collector framework (`Collector` trait, `CollectorHandle`, `std::thread`-based polling)
+- Built-in collectors: `OpenCodeCollector`, `JournalCollector`, `ZenPricingCollector`
+- `[collectors.<name>]` config with per-collector `enabled` and `interval`
+- TUI uses background collectors by default; `--once`/`--json`/`--csv` stay synchronous
 
 ## In Progress
 
-- Background collectors
 - Budgets and alerts
 - Cross-platform release packaging
 - Model-routing analytics

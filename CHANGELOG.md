@@ -25,6 +25,12 @@
 - Converted to library crate (`src/lib.rs`) enabling integration testing.
 - Added integration test suite covering full pipeline, config precedence, export formats, and pricing engine.
 - Added test fixtures for OpenCode DB, Ollama journal, and Zen pricing HTML.
+- Added background collector framework with `Collector` trait, `CollectorHandle`, and `std::thread`-based polling.
+- Added `OpenCodeCollector`, `JournalCollector`, and `ZenPricingCollector` built-in collectors.
+- Added `[collectors.<name>]` TOML config section with `enabled` and `interval` per collector.
+- TUI now uses background collectors by default; `--once`/`--json`/`--csv` stay synchronous.
+- Added graceful shutdown via `AtomicBool` flag; `Drop` impl triggers shutdown automatically.
+- Added `docs/background-collectors.md` architecture doc.
 
 ## 0.1.0
 

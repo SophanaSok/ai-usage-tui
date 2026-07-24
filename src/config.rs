@@ -14,6 +14,20 @@ pub struct ConfigFile {
     pub days: Option<u64>,
     pub provider: Option<String>,
     pub model: Option<String>,
+    pub collectors: Option<CollectorsConfig>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct CollectorsConfig {
+    pub opencode: Option<CollectorConfig>,
+    pub journal: Option<CollectorConfig>,
+    pub zen_pricing: Option<CollectorConfig>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct CollectorConfig {
+    pub enabled: Option<bool>,
+    pub interval: Option<u64>,
 }
 
 pub fn config_path() -> Option<PathBuf> {

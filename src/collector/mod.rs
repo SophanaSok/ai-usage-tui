@@ -1,3 +1,4 @@
+pub mod background;
 pub mod journal;
 pub mod opencode;
 pub mod pricing_refresh;
