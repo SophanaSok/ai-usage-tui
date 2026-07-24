@@ -1,0 +1,273 @@
+use std::path::PathBuf;
+use std::time::Duration;
+
+use anyhow::Result;
+
+use crate::model::Range;
+
+pub struct Cli {
+    pub help: bool,
+    pub version: bool,
+    pub config_path: Option<PathBuf>,
+    pub db_path: Option<PathBuf>,
+    pub journal_path: Option<PathBuf>,
+    pub range: Range,
+    pub range_set: bool,
+    pub provider_filter: Option<String>,
+    pub model_filter: Option<String>,
+    pub once: bool,
+    pub json: bool,
+    pub csv_path: Option<PathBuf>,
+    pub record_ollama: bool,
+    pub refresh_zen: bool,
+    pub refresh_pricing: bool,
+    pub refresh_interval: Duration,
+    pub refresh_interval_set: bool,
+}
+
+impl Default for Cli {
+    fn default() -> Self {
+        Self {
+            help: false,
+            version: false,
+            config_path: None,
+            db_path: None,
+            journal_path: None,
+            range: Range::Week,
+            range_set: false,
+            provider_filter: None,
+            model_filter: None,
+            once: false,
+            json: false,
+            csv_path: None,
+            record_ollama: false,
+            refresh_zen: false,
+            refresh_pricing: false,
+            refresh_interval: Duration::from_secs(30),
+            refresh_interval_set: false,
+        }
+    }
+}
+
+pub fn parse_cli<I>(args: I) -> Result<Cli>
+where
+    I: IntoIterator,
+    I::Item: Into<String>,
+{
+    let mut cli = Cli::default();
+    let mut args = args.into_iter().map(Into::into).peekable();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-h" | "--help" => cli.help = true,
+            "--version" | "-V" => cli.version = true,
+            "--once" => cli.once = true,
+            "--today" => {
+                cli.range = Range::Today;
+                cli.range_set = true;
+            }
+            "--week" => {
+                cli.range = Range::Week;
+                cli.range_set = true;
+            }
+            "--month" => {
+                cli.range = Range::Month;
+                cli.range_set = true;
+            }
+            "--all" => {
+                cli.range = Range::All;
+                cli.range_set = true;
+            }
+            "--json" => {
+                cli.json = true;
+                cli.once = true;
+            }
+            "--csv" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--csv requires a path"))?;
+                cli.csv_path = Some(PathBuf::from(value));
+                cli.once = true;
+            }
+            "--config" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--config requires a path"))?;
+                cli.config_path = Some(PathBuf::from(value));
+            }
+            "--record-ollama" => cli.record_ollama = true,
+            "--refresh-zen" => cli.refresh_zen = true,
+            "--refresh-pricing" => cli.refresh_pricing = true,
+            "--db" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--db requires a path"))?;
+                cli.db_path = Some(PathBuf::from(value));
+            }
+            "--journal" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--journal requires a path"))?;
+                cli.journal_path = Some(PathBuf::from(value));
+            }
+            "--days" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--days requires a number"))?;
+                let days: u64 = value
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("invalid day range: {value}"))?;
+                if days == 0 {
+                    return Err(anyhow::anyhow!("day range must be greater than zero"));
+                }
+                cli.range = Range::Days(days);
+                cli.range_set = true;
+            }
+            "--provider" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--provider requires a name"))?;
+                cli.provider_filter = Some(value);
+            }
+            "--model" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--model requires a name"))?;
+                cli.model_filter = Some(value);
+            }
+            "--refresh-interval" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--refresh-interval requires seconds"))?;
+                let seconds: u64 = value
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("invalid refresh interval: {value}"))?;
+                if seconds == 0 {
+                    return Err(anyhow::anyhow!(
+                        "refresh interval must be greater than zero"
+                    ));
+                }
+                cli.refresh_interval = Duration::from_secs(seconds);
+                cli.refresh_interval_set = true;
+            }
+            other => {
+                return Err(anyhow::anyhow!(
+                    "unknown option: {other}\nUse --help for usage"
+                ))
+            }
+        }
+    }
+    let actions = [
+        cli.record_ollama,
+        cli.refresh_zen,
+        cli.refresh_pricing,
+        cli.json,
+        cli.csv_path.is_some(),
+    ]
+    .into_iter()
+    .filter(|enabled| *enabled)
+    .count();
+    if actions > 1 || (cli.once && (cli.record_ollama || cli.refresh_zen)) {
+        return Err(anyhow::anyhow!(
+            "collection actions and --once/--json/--csv are mutually exclusive"
+        ));
+    }
+    Ok(cli)
+}
+
+pub fn print_help() {
+    println!(
+        "ai-usage-tui {}
+A btop-inspired dashboard for AI token usage.
+
+USAGE:
+    ai-usage-tui [OPTIONS]
+
+OPTIONS:
+    -h, --help    Show this help message
+    -V, --version Show the version
+    --once        Collect once and exit
+    --json        Collect once and print JSON
+    --csv PATH    Collect once and write CSV
+    --config PATH Load configuration from TOML
+    --db PATH     Override the OpenCode SQLite database path
+    --journal PATH
+                  Override the local usage journal path
+    --days N       Show the last N days
+    --today        Show today
+    --week         Show the last 7 days
+    --month        Show the last 30 days
+    --all          Show all available history
+    --provider NAME
+                  Filter by provider
+    --model NAME   Filter by model
+    --record-ollama
+                  Read an Ollama response JSON from stdin and journal it
+    --refresh-zen  Refresh the cached OpenCode Zen model catalog and exit
+    --refresh-pricing
+                  Refresh the Zen pricing table from the docs page and exit
+    --refresh-interval N
+                  Refresh the dashboard every N seconds (default: 30)
+
+ENVIRONMENT:
+    OPENCODE_DB_PATH    Override the OpenCode SQLite database path
+    AI_USAGE_JOURNAL_PATH
+                        Override the local usage journal path
+
+KEYS:
+    1              Today
+    2              Last 7 days
+    3              Last 30 days
+    4              All time
+    r              Refresh data
+    j / Down       Select next model
+    k / Up         Select previous model
+    q / Esc        Quit
+
+CATEGORIES:
+    LOCAL          Local provider usage
+    CLOUD          Hosted/cloud-routed usage without authoritative cost
+    FREE           Explicitly free model usage
+    PAID           Usage with known cost
+    UNKNOWN        Usage without pricing metadata
+
+EXAMPLES:
+    ai-usage-tui
+    OPENCODE_DB_PATH=/path/to/opencode.db ai-usage-tui",
+        env!("CARGO_PKG_VERSION")
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn help_and_version_flags_are_detected() {
+        assert!(parse_cli(["--help"]).unwrap().help);
+        assert!(parse_cli(["-h"]).unwrap().help);
+        assert!(parse_cli(["--version"]).unwrap().version);
+    }
+
+    #[test]
+    fn invalid_options_are_rejected() {
+        assert!(parse_cli(["--not-a-real-option"]).is_err());
+        assert!(parse_cli(["--refresh-interval", "0"]).is_err());
+        assert!(parse_cli(["--once", "--record-ollama"]).is_err());
+    }
+
+    #[test]
+    fn day_range_and_filters_parse() {
+        let cli = parse_cli(["--days", "14", "--provider", "ollama", "--model", "model"]).unwrap();
+        assert_eq!(cli.range.label(), "14 DAYS");
+        assert!(cli.range_set);
+        assert_eq!(cli.provider_filter.as_deref(), Some("ollama"));
+        assert_eq!(cli.model_filter.as_deref(), Some("model"));
+    }
+
+    #[test]
+    fn explicit_default_flags_are_marked() {
+        let cli = parse_cli(["--week", "--refresh-interval", "30"]).unwrap();
+        assert!(cli.range_set);
+        assert!(cli.refresh_interval_set);
+    }
+}

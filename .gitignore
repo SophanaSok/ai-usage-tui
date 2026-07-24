@@ -1,0 +1,17 @@
+# Cargo
+/target/
+**/*.rs.bk
+
+# IDE/editors
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Test artifacts (generated during test runs)
+tests/fixtures/test_journal.db
+tests/fixtures/*.db-wal
+tests/fixtures/*.db-shm
+
+# OS
+Thumbs.db

@@ -1,0 +1,31 @@
+# Changelog
+
+## Unreleased
+
+- Added explicit local, free, calculated, estimated, reported, and unavailable cost states.
+- Added read-only OpenCode database access with a busy timeout.
+- Added automatic dashboard refresh.
+- Added `--once`, `--json`, `--db`, `--refresh-interval`, and `--version` options.
+- Added production-readiness and contribution documentation.
+- Added an opt-in Ollama response journal via `--record-ollama`.
+- Added `--journal` and `--refresh-zen` commands.
+- Added a distinct Cloud usage category.
+- Added arbitrary `--days` ranges and provider/model filters.
+- Added journal idempotency and atomic Zen cache updates.
+- Added cost-provenance, timestamp, range, and filter tests.
+- Added completed-response validation and mutually exclusive action checks.
+- Added TOML configuration and CSV export.
+- Added cross-source deduplication between OpenCode history and the local journal.
+- Added modularization into 11 source modules (cli, config, model, classify, collectors, export, ui, utils, helpers, pricing).
+- Added bundled Zen pricing table with context-tier support.
+- Added estimated pricing for unknown-cost events using the bundled table.
+- Added `--refresh-pricing` command that scrapes the Zen docs page into `~/.local/share/ai-usage-tui/zen-pricing.toml`.
+- Added HTTP retry/backoff for rate-limited Zen pricing fetches.
+- Added fixture-based HTML parsing tests for the pricing scraper.
+- Converted to library crate (`src/lib.rs`) enabling integration testing.
+- Added integration test suite covering full pipeline, config precedence, export formats, and pricing engine.
+- Added test fixtures for OpenCode DB, Ollama journal, and Zen pricing HTML.
+
+## 0.1.0
+
+- Initial btop-inspired OpenCode usage dashboard.

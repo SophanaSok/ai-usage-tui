@@ -1,0 +1,8 @@
+# Optional configuration for ai-usage-tui.
+# Command-line options take precedence over these values.
+
+# db = "/home/user/.local/share/opencode/opencode.db"
+# journal = "/home/user/.local/share/ai-usage-tui/usage.db"
+refresh_interval = 30
+# provider = "opencode"
+# model = "gpt-5.6-luna"

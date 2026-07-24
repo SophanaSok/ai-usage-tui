@@ -1,0 +1,27 @@
+# Example policy for an external orchestration layer.
+# Model IDs should be updated as provider catalogs change.
+
+[tiers]
+local = ["ollama/*", "lmstudio/*", "llamacpp/*", "vllm/*"]
+free = ["opencode/*-free"]
+fast = ["opencode/gpt-5.4-mini", "opencode/deepseek-v4-flash"]
+balanced = ["opencode/gpt-5.6-luna"]
+strong = ["opencode/claude-sonnet-4-6", "opencode/gpt-5.6-sol"]
+
+[phases]
+exploration = "local"
+requirements = "fast"
+planning = "balanced"
+implementation = "balanced"
+complex_implementation = "strong"
+debugging = "balanced"
+testing = "local"
+refactoring = "balanced"
+security_review = "strong"
+documentation = "local"
+verification = "local"
+
+[policy]
+max_retries_before_escalation = 2
+use_independent_review_model = true
+allow_hosted_models_for_private_code = false
