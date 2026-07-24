@@ -37,10 +37,14 @@
 - `scripts/release.sh` pre-flight checklist
 - Tag-triggered GitHub Actions release workflow with multi-OS matrix, SHA256 checksums, auto GitHub Release
 - Package manager templates: Homebrew formula, Scoop manifest, Chocolatey nuspec
+- Documentation updated for v0.2.0: README, architecture, data-model, provider-support, release-process
+- Version bumped to 0.2.0; CHANGELOG restructured to Keep-a-Changelog format
+- Pre-flight checks passed (51 tests, clippy clean, release build verified)
+- Security audit passed (cost provenance, privacy, SQL injection, thread safety, no secrets in packaging)
 
-## In Progress
+## Released
 
-- Integration, polish, final v0.2.0 release
+- v0.2.0 — 2026-07-24
 
 ## Agent Routing
 
