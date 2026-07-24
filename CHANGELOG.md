@@ -31,6 +31,13 @@
 - TUI now uses background collectors by default; `--once`/`--json`/`--csv` stay synchronous.
 - Added graceful shutdown via `AtomicBool` flag; `Drop` impl triggers shutdown automatically.
 - Added `docs/background-collectors.md` architecture doc.
+- Added budgets and alerts: `BudgetEngine`, `AlertDispatcher`, per-provider/model/global scopes.
+- Added `[[budgets.entry]]` TOML config with `scope`, `period`, `limit`, `warn`, `critical`.
+- Added `--check-budgets` (JSON output, exit 1 if alerts active) and `--webhook URL` CLI flags.
+- Added TUI alert banner (yellow/critical) and budget panel toggle (`b` key).
+- Added calendar-based period cutoffs (daily at 00:00 UTC, monthly on 1st).
+- Added in-memory alert dedup (1-hour window) for webhook dispatch.
+- Budget spend only counts `ProviderReported`, `Calculated`, and `Estimated` costs.
 
 ## 0.1.0
 

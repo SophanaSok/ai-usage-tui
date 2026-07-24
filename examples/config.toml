@@ -20,3 +20,25 @@ interval = 60
 [collectors.zen_pricing]
 enabled = false
 interval = 3600
+
+# Budget alerts (checked on each TUI refresh and via --check-budgets).
+# webhook = "https://hooks.example.com/budget-alerts"
+
+[[budgets.entry]]
+scope = "global"
+period = "monthly"
+limit = 50.0
+# warn = 75.0      # default 75%
+# critical = 90.0  # default 90%
+
+[[budgets.entry]]
+scope = "provider"
+name = "opencode"
+period = "daily"
+limit = 5.0
+
+[[budgets.entry]]
+scope = "model"
+name = "gpt-5.6-sol"
+period = "monthly"
+limit = 20.0

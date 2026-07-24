@@ -5,6 +5,7 @@ use serde::Deserialize;
 
 use crate::cli::Cli;
 use crate::model::Range;
+use crate::budget::BudgetsConfig;
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ConfigFile {
@@ -15,6 +16,7 @@ pub struct ConfigFile {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub collectors: Option<CollectorsConfig>,
+    pub budgets: Option<BudgetsConfig>,
 }
 
 #[derive(Debug, Default, Deserialize)]

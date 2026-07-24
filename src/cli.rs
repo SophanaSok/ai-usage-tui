@@ -23,6 +23,8 @@ pub struct Cli {
     pub refresh_pricing: bool,
     pub refresh_interval: Duration,
     pub refresh_interval_set: bool,
+    pub check_budgets: bool,
+    pub webhook_url: Option<String>,
 }
 
 impl Default for Cli {
@@ -45,6 +47,8 @@ impl Default for Cli {
             refresh_pricing: false,
             refresh_interval: Duration::from_secs(30),
             refresh_interval_set: false,
+            check_budgets: false,
+            webhook_url: None,
         }
     }
 }
@@ -97,6 +101,13 @@ where
             "--record-ollama" => cli.record_ollama = true,
             "--refresh-zen" => cli.refresh_zen = true,
             "--refresh-pricing" => cli.refresh_pricing = true,
+            "--check-budgets" => cli.check_budgets = true,
+            "--webhook" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--webhook requires a URL"))?;
+                cli.webhook_url = Some(value);
+            }
             "--db" => {
                 let value = args
                     .next()
@@ -162,11 +173,12 @@ where
         cli.refresh_pricing,
         cli.json,
         cli.csv_path.is_some(),
+        cli.check_budgets,
     ]
     .into_iter()
     .filter(|enabled| *enabled)
     .count();
-    if actions > 1 || (cli.once && (cli.record_ollama || cli.refresh_zen)) {
+    if actions > 1 || (cli.once && (cli.record_ollama || cli.refresh_zen || cli.check_budgets)) {
         return Err(anyhow::anyhow!(
             "collection actions and --once/--json/--csv are mutually exclusive"
         ));
@@ -207,6 +219,9 @@ OPTIONS:
                   Refresh the Zen pricing table from the docs page and exit
     --refresh-interval N
                   Refresh the dashboard every N seconds (default: 30)
+    --check-budgets
+                  Check budget thresholds and print alerts as JSON, exit 1 if any
+    --webhook URL  Override the budget alert webhook URL from config
 
 ENVIRONMENT:
     OPENCODE_DB_PATH    Override the OpenCode SQLite database path
@@ -219,6 +234,7 @@ KEYS:
     3              Last 30 days
     4              All time
     r              Refresh data
+    b              Toggle budgets panel
     j / Down       Select next model
     k / Up         Select previous model
     q / Esc        Quit

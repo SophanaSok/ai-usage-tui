@@ -26,10 +26,12 @@
 - Built-in collectors: `OpenCodeCollector`, `JournalCollector`, `ZenPricingCollector`
 - `[collectors.<name>]` config with per-collector `enabled` and `interval`
 - TUI uses background collectors by default; `--once`/`--json`/`--csv` stay synchronous
+- Budgets and alerts: `BudgetEngine`, `AlertDispatcher`, per-provider/model/global scopes
+- `[[budgets.entry]]` config with `--check-budgets` (exit 1 on alerts) and `--webhook` CLI
+- TUI alert banner and budget panel toggle (`b` key) with calendar-based period cutoffs
 
 ## In Progress
 
-- Budgets and alerts
 - Cross-platform release packaging
 - Model-routing analytics
 

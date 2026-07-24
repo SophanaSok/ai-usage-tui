@@ -17,7 +17,8 @@ use ratatui::{
 
 use crate::cli::Cli;
 use crate::collector::background::CollectorHandle;
-use crate::model::{Category, CostStatus, Range, Totals, Usage, CYAN, YELLOW};
+use crate::budget::{Alert, AlertLevel, BudgetEngine};
+use crate::model::{Category, CostStatus, Range, Totals, Usage, CYAN, YELLOW, RED};
 use crate::utils::{format_clock, format_count, journal_path};
 
 const MUTED: Color = Color::Rgb(125, 145, 160);
@@ -37,9 +38,13 @@ pub struct App {
     pub provider_filter: Option<String>,
     pub model_filter: Option<String>,
     pub collector: Option<CollectorHandle>,
+    pub show_budgets: bool,
+    pub budget_engine: BudgetEngine,
+    pub alerts: Vec<Alert>,
 }
 
 impl App {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         db_path: Option<PathBuf>,
         journal_path: PathBuf,
@@ -48,6 +53,7 @@ impl App {
         provider_filter: Option<String>,
         model_filter: Option<String>,
         collector: Option<CollectorHandle>,
+        budget_engine: BudgetEngine,
     ) -> Self {
         let mut app = Self {
             range,
@@ -63,6 +69,9 @@ impl App {
             provider_filter,
             model_filter,
             collector,
+            show_budgets: false,
+            budget_engine,
+            alerts: Vec::new(),
         };
         app.refresh();
         app
@@ -86,6 +95,9 @@ impl App {
         self.last_refresh = format_clock();
         self.refreshed_at = Instant::now();
         self.selected = self.selected.min(self.rows().len().saturating_sub(1));
+        if !self.budget_engine.is_empty() {
+            self.alerts = self.budget_engine.check(&self.usages);
+        }
     }
     pub fn refresh_if_due(&mut self) {
         if self.refreshed_at.elapsed() >= self.refresh_interval {
@@ -175,6 +187,7 @@ pub fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     cli: &Cli,
     collector: Option<CollectorHandle>,
+    budget_engine: BudgetEngine,
 ) -> Result<()> {
     let journal = cli
         .journal_path
@@ -189,6 +202,7 @@ pub fn run(
         cli.provider_filter.clone(),
         cli.model_filter.clone(),
         collector,
+        budget_engine,
     );
     loop {
         app.refresh_if_due();
@@ -202,6 +216,7 @@ pub fn run(
                     KeyCode::Char('q') | KeyCode::Esc => break,
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
                     KeyCode::Char('r') => app.refresh(),
+                    KeyCode::Char('b') => app.show_budgets = !app.show_budgets,
                     KeyCode::Char('1') => app.range = Range::Today,
                     KeyCode::Char('2') => app.range = Range::Week,
                     KeyCode::Char('3') => app.range = Range::Month,
@@ -234,23 +249,36 @@ fn panel<'a>(title: &'a str, color: Color) -> Block<'a> {
 
 fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
+    let alert_banner_height = if app.alerts.iter().any(|a| a.is_actionable()) {
+        1u16
+    } else {
+        0u16
+    };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
+            Constraint::Length(alert_banner_height),
             Constraint::Length(7),
             Constraint::Min(8),
             Constraint::Length(2),
         ])
         .split(area);
     draw_header(frame, chunks[0], app);
-    draw_metrics(frame, chunks[1], app);
+    if alert_banner_height > 0 {
+        draw_alert_banner(frame, chunks[1], app);
+    }
+    draw_metrics(frame, chunks[2], app);
     let body = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(36), Constraint::Percentage(64)])
-        .split(chunks[2]);
+        .split(chunks[3]);
     draw_breakdown(frame, body[0], app);
-    draw_models(frame, body[1], app);
+    if app.show_budgets {
+        draw_budgets(frame, body[1], app);
+    } else {
+        draw_models(frame, body[1], app);
+    }
     let footer = Paragraph::new(Line::from(vec![
         Span::styled(
             " 1-4 ",
@@ -259,6 +287,8 @@ fn draw(frame: &mut Frame, app: &App) {
         Span::raw("range  "),
         Span::styled("r", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
         Span::raw(" refresh  "),
+        Span::styled("b", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
+        Span::raw(" budgets  "),
         Span::styled(
             "j/k",
             Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
@@ -268,7 +298,7 @@ fn draw(frame: &mut Frame, app: &App) {
         Span::raw(" quit"),
     ]))
     .style(Style::default().fg(MUTED));
-    frame.render_widget(footer, chunks[3]);
+    frame.render_widget(footer, chunks[4]);
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
@@ -447,6 +477,97 @@ fn draw_models(frame: &mut Frame, area: Rect, app: &App) {
     );
 }
 
+fn draw_alert_banner(frame: &mut Frame, area: Rect, app: &App) {
+    let actionable: Vec<&Alert> = app.alerts.iter().filter(|a| a.is_actionable()).collect();
+    if actionable.is_empty() {
+        return;
+    }
+    let spans: Vec<Span> = actionable
+        .iter()
+        .flat_map(|alert| {
+            let color = match alert.level {
+                AlertLevel::Warn => YELLOW,
+                AlertLevel::Critical | AlertLevel::Exceeded => RED,
+                AlertLevel::Ok => MUTED,
+            };
+            let period_str = match alert.period {
+                crate::budget::BudgetPeriod::Daily => "daily",
+                crate::budget::BudgetPeriod::Monthly => "monthly",
+            };
+            vec![
+                Span::styled(
+                    format!(" {} ", alert.level.label()),
+                    Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{} {}/${:.2}/${:.2} ({}%)  ", alert.scope.label(), period_str, alert.spend, alert.limit, alert.pct as u64),
+                    Style::default().fg(color),
+                ),
+            ]
+        })
+        .collect();
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(Color::Rgb(10, 18, 24))),
+        area,
+    );
+}
+
+fn draw_budgets(frame: &mut Frame, area: Rect, app: &App) {
+    let budgets = app.budget_engine.budgets();
+    if budgets.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No budgets configured.\nAdd [[budgets.entry]] to your config.toml.")
+                .style(Style::default().fg(MUTED))
+                .block(panel("BUDGETS", CYAN)),
+            area,
+        );
+        return;
+    }
+    let alerts_map: std::collections::HashMap<_, _> = app
+        .alerts
+        .iter()
+        .map(|a| ((a.scope.clone(), a.period), a))
+        .collect();
+    let table_rows = budgets.iter().map(|budget| {
+        let alert = alerts_map.get(&(budget.scope.clone(), budget.period));
+        let (spend, pct, level_str, color) = if let Some(alert) = alert {
+            let c = match alert.level {
+                AlertLevel::Warn => YELLOW,
+                AlertLevel::Critical | AlertLevel::Exceeded => RED,
+                AlertLevel::Ok => MUTED,
+            };
+            (alert.spend, alert.pct, alert.level.label(), c)
+        } else {
+            (0.0, 0.0, "OK", MUTED)
+        };
+        Row::new(vec![
+            Cell::from(budget.scope.label().to_string()),
+            Cell::from(format!("{:?}", budget.period).to_lowercase()),
+            Cell::from(format!("${:.2}", spend)),
+            Cell::from(format!("${:.2}", budget.limit)),
+            Cell::from(format!("{}%", pct as u64)),
+            Cell::from(level_str).style(Style::default().fg(color)),
+        ])
+    });
+    let header = Row::new(vec!["SCOPE", "PERIOD", "SPEND", "LIMIT", "PCT", "STATUS"])
+        .style(Style::default().fg(MUTED).add_modifier(Modifier::BOLD));
+    let widths = [
+        Constraint::Min(20),
+        Constraint::Length(10),
+        Constraint::Length(10),
+        Constraint::Length(10),
+        Constraint::Length(8),
+        Constraint::Length(10),
+    ];
+    frame.render_widget(
+        Table::new(table_rows, widths)
+            .header(header)
+            .column_spacing(1)
+            .block(panel("BUDGETS", CYAN)),
+        area,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,6 +619,9 @@ mod tests {
             provider_filter: None,
             model_filter: None,
             collector: None,
+            show_budgets: false,
+            budget_engine: BudgetEngine::empty(),
+            alerts: Vec::new(),
         };
         assert_eq!(app.rows().len(), 2);
     }

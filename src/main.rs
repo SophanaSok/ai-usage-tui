@@ -10,12 +10,14 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 use ai_usage_tui::{
+    budget::BudgetEngine,
     cli::{parse_cli, print_help},
     collector::{
         background::{
             Collector, CollectorHandle, JournalCollector, OpenCodeCollector, ZenPricingCollector,
         },
         journal::record_ollama,
+        load_usage,
         pricing_refresh::refresh_pricing,
         zen::refresh_zen_catalog,
     },
@@ -53,12 +55,16 @@ fn main() -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
         return record_ollama(&path);
     }
+    if cli.check_budgets {
+        return check_budgets(&cli);
+    }
     if cli.once || cli.json {
         return print_once(&cli);
     }
 
+    let budget_engine = load_budget_engine(&cli);
     let collector_handle = build_collectors(&cli);
-    run_tui(&cli, collector_handle)
+    run_tui(&cli, collector_handle, budget_engine)
 }
 
 fn build_collectors(cli: &ai_usage_tui::cli::Cli) -> Option<CollectorHandle> {
@@ -120,13 +126,14 @@ fn load_collector_config(cli: &ai_usage_tui::cli::Cli) -> CollectorsConfig {
 fn run_tui(
     cli: &ai_usage_tui::cli::Cli,
     collector: Option<CollectorHandle>,
+    budget_engine: BudgetEngine,
 ) -> Result<()> {
     enable_raw_mode()?;
     let mut out = stdout();
     execute!(out, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(out);
     let mut terminal = Terminal::new(backend)?;
-    let result = catch_unwind(AssertUnwindSafe(|| run(&mut terminal, cli, collector)));
+    let result = catch_unwind(AssertUnwindSafe(|| run(&mut terminal, cli, collector, budget_engine)));
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -134,4 +141,69 @@ fn run_tui(
         Ok(result) => result,
         Err(payload) => resume_unwind(payload),
     }
+}
+
+fn load_budget_engine(cli: &ai_usage_tui::cli::Cli) -> BudgetEngine {
+    let config = load_full_config(cli);
+    match &config.budgets {
+        Some(budgets) => BudgetEngine::from_config(budgets),
+        None => BudgetEngine::empty(),
+    }
+}
+
+fn load_full_config(cli: &ai_usage_tui::cli::Cli) -> ai_usage_tui::config::ConfigFile {
+    let path = cli
+        .config_path
+        .clone()
+        .or_else(ai_usage_tui::config::config_path);
+
+    let Some(path) = path else {
+        return ai_usage_tui::config::ConfigFile::default();
+    };
+    if !path.exists() {
+        return ai_usage_tui::config::ConfigFile::default();
+    }
+    let contents = std::fs::read_to_string(&path).unwrap_or_default();
+    toml::from_str(&contents).unwrap_or_default()
+}
+
+fn check_budgets(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
+    let budget_engine = load_budget_engine(cli);
+    if budget_engine.is_empty() {
+        println!("{{\"budgets\": 0, \"alerts\": []}}");
+        return Ok(());
+    }
+
+    let journal = cli
+        .journal_path
+        .clone()
+        .or_else(ai_usage_tui::utils::journal_path)
+        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+
+    let (usages, _) = load_usage(cli.db_path.as_deref(), &journal)?;
+    let alerts = budget_engine.check(&usages);
+    let has_alerts = alerts.iter().any(|a| a.is_actionable());
+
+    let json = serde_json::json!({
+        "budgets": budget_engine.budgets().len(),
+        "alerts": alerts.iter().filter(|a| a.is_actionable()).map(|a| {
+            serde_json::json!({
+                "scope": a.scope.label(),
+                "period": match a.period {
+                    ai_usage_tui::budget::BudgetPeriod::Daily => "daily",
+                    ai_usage_tui::budget::BudgetPeriod::Monthly => "monthly",
+                },
+                "level": a.level.label(),
+                "spend": a.spend,
+                "limit": a.limit,
+                "pct": a.pct,
+            })
+        }).collect::<Vec<_>>(),
+    });
+    println!("{}", serde_json::to_string_pretty(&json)?);
+
+    if has_alerts {
+        std::process::exit(1);
+    }
+    Ok(())
 }
