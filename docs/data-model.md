@@ -15,13 +15,31 @@ reasoning_tokens
 cache_read_tokens
 cache_write_tokens
 cost
-latency
-error_status
-project
-session
-source
+latency (planned)
+error_status (planned)
+project (planned)
+session (planned)
+source (planned)
 ```
 
 Historical records should retain the pricing snapshot or source used to calculate their cost. Provider adapters should tolerate missing optional fields and preserve the event with an explicit unknown status.
 
 The local journal currently stores usage metadata in `usage_event`. It intentionally excludes prompt and completion content.
+
+## Budget Configuration
+
+```text
+scope: global | provider | model
+period: daily | weekly | monthly
+limit: float
+```
+
+Budget alerts fire when spend exceeds the configured threshold and are displayed in the TUI banner. Webhook dispatch is optional and configured under `[budgets.webhook]`.
+
+## Routing Event
+
+The routing event captures agent-to-model routing decisions:
+task, phase, agent, model, provider, category, tokens, cost,
+retries, escalations, test_result, review_defects, created
+
+Stored in `routing_event` table. See [`routing-analytics.md`](routing-analytics.md).

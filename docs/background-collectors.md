@@ -1,104 +1,51 @@
 # Background Collectors
 
-## Overview
+Background collectors run in dedicated Tokio tasks and poll data sources on a configurable interval. They write normalized usage events to the local journal database. The TUI reads from the journal for display, keeping the UI responsive regardless of collector latency.
 
-The background collector framework replaces the synchronous pull-based model with independent polling threads that feed a shared snapshot. This keeps the UI thread non-blocking and allows each data source to poll at its own interval.
+## Collector Architecture
 
-## Threading Model
-
-The application uses `std::thread` (not tokio). All existing collectors are synchronous (`rusqlite`, `reqwest::blocking`), so a full async runtime would add complexity without benefit.
+Each collector runs in its own Tokio task with its own interval timer. Collectors share the journal database connection pool. They write normalized `UsageEvent` records using the same schema as the TUI reads.
 
 ```text
-main thread (UI / TUI)
-  ├─ spawn OpenCodeCollector   (interval: 30s, default enabled)
-  ├─ spawn JournalCollector    (interval: 60s, default enabled)
-  └─ spawn ZenPricingCollector (interval: 3600s, default disabled)
-       │
-       ▼
-  Arc<RwLock<CollectorState>>  ← UI reads snapshot via .snapshot()
-  Arc<AtomicBool> shutdown     ← UI or SIGINT sets to true
+[Collector Task] --poll interval--> [Data Source] --parse--> [UsageEvent] --> [Journal DB] <-- [TUI]
 ```
 
-## Core Types
+## OpenCode Collector
 
-### Collector Trait
+Reads assistant message records from the OpenCode SQLite database. Polls every 30 seconds by default (configurable via `[collectors.opencode.interval]`). Extracts model, tokens, cost, timestamps, and project/session metadata.
 
-Every data source implements `Collector`:
-
-```rust
-pub trait Collector: Send + 'static {
-    fn name(&self) -> &str;
-    fn interval(&self) -> Duration;
-    fn poll(&mut self) -> Result<Vec<Usage>>;
-}
+Configuration:
+```toml
+[collectors.opencode]
+enabled = true
+interval = 30
 ```
 
-- `poll()` returns a fresh batch of `Usage` events (may be empty).
-- `poll()` must not panic; errors are captured into `CollectorState::errors`.
-- Collectors that produce side effects only (e.g., Zen pricing cache refresh) return an empty `Vec` and log a status message.
+## Journal Collector (Ollama)
 
-### CollectorState
+Polls the local journal database for new Ollama events recorded via `--record-ollama`. Polls every 60 seconds by default (configurable via `[collectors.journal.interval]`). Aggregates events into the normalized schema.
 
-Shared state written by collector threads, read by the UI:
-
-```rust
-pub struct CollectorState {
-    pub usages: Vec<Usage>,
-    pub sources: Vec<String>,
-    pub last_poll: HashMap<String, Instant>,
-    pub errors: HashMap<String, String>,
-}
+Configuration:
+```toml
+[collectors.journal]
+enabled = true
+interval = 60
 ```
 
-### CollectorHandle
+## Zen Pricing Collector
 
-Returned by `spawn()`, owned by the UI:
+Scrapes the live Zen pricing table from the OpenCode docs with retry/backoff. Caches pricing at `~/.local/share/ai-usage-tui/zen-pricing.json`. Refreshes hourly when enabled. Applies pricing snapshots to historical events for cost calculation.
 
-```rust
-pub struct CollectorHandle {
-    state: Arc<RwLock<CollectorState>>,
-    shutdown: Arc<AtomicBool>,
-}
-
-impl CollectorHandle {
-    pub fn spawn(collectors: Vec<Box<dyn Collector>>) -> Self;
-    pub fn snapshot(&self) -> Vec<Usage>;
-    pub fn status(&self) -> String;
-    pub fn shutdown(&self);
-}
+Configuration:
+```toml
+[collectors.zen_pricing]
+enabled = true
+interval = 3600
 ```
 
-## Built-in Collectors
+## Configuration
 
-| Collector | Wraps | Default Interval | Default Enabled |
-|-----------|-------|-----------------|-----------------|
-| `OpenCodeCollector` | `load_opencode()` | 30s | yes |
-| `JournalCollector` | `load_journal()` | 60s | yes |
-| `ZenPricingCollector` | `refresh_pricing()` | 3600s | no |
-
-Each built-in wraps existing logic — no rewrite of `load_opencode` / `load_journal`. The trait adds polling cadence and error capture.
-
-## Polling Loop (per thread)
-
-1. Check `shutdown` flag → if true, exit.
-2. Call `poll()`.
-3. On success: merge results into `CollectorState`, update `last_poll`, clear error.
-4. On error: write error message to `CollectorState::errors`.
-5. Sleep for `interval()` (check `shutdown` flag on wake).
-6. Loop.
-
-## Dedup and Pricing
-
-Deduplication and estimated pricing are applied in the collector thread (not the UI thread) after merging results from all collectors. This keeps `snapshot()` reads instant.
-
-## Shutdown
-
-- UI `q`/`Esc`/`Ctrl-C` → `CollectorHandle::shutdown()` sets `AtomicBool`.
-- Each collector thread checks the flag at the top of every poll cycle and after sleep.
-- Maximum shutdown latency = longest collector interval.
-- `--once`/`--json`/`--csv` modes bypass background collectors entirely (synchronous path).
-
-## Config Schema
+All collectors are configured in the TOML config file under their respective sections. The `[collectors]` table is optional; defaults are used when omitted.
 
 ```toml
 [collectors.opencode]
@@ -110,16 +57,38 @@ enabled = true
 interval = 60
 
 [collectors.zen_pricing]
-enabled = false
+enabled = true
 interval = 3600
 ```
 
-## Fallback Behavior
+## Journal Database
 
-| Scenario | Behavior |
-|----------|----------|
-| OpenCode DB missing | Collector returns empty vec, status shows "No OpenCode database" |
-| Journal not initialized | Collector returns empty vec, status shows "journal: not initialized" |
-| Zen pricing fetch fails | Error logged to `CollectorState::errors`, bundled pricing used |
-| Collector thread panics | `catch_unwind` captures panic, writes to errors map |
-| `--once` / `--json` / `--csv` | Synchronous `load_usage()`, no background threads |
+The journal is a SQLite database at `~/.local/share/ai-usage-tui/usage.db` by default. Override with `--journal PATH` or the `journal` config key / `AI_USAGE_JOURNAL_PATH` environment variable.
+
+Schema:
+```sql
+CREATE TABLE usage_event (
+    id INTEGER PRIMARY KEY,
+    timestamp INTEGER NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    category TEXT NOT NULL,
+    cost_status TEXT NOT NULL,
+    request_count INTEGER NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    reasoning_tokens INTEGER NOT NULL,
+    cache_read_tokens INTEGER NOT NULL,
+    cache_write_tokens INTEGER NOT NULL,
+    cost REAL,
+    latency INTEGER,
+    error_status TEXT,
+    project TEXT,
+    session TEXT,
+    source TEXT NOT NULL
+);
+```
+
+## TUI Integration
+
+The TUI reads from the journal database on each refresh cycle (default 30s, configurable via `refresh_interval` / `--refresh-interval`). Background collectors write asynchronously; the TUI never blocks on collector I/O.
