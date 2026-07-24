@@ -44,6 +44,11 @@
 - Added TUI routing panel toggle (`t` key) with AGENT/MODEL/TOKENS/COST/RETRY%/DEFECTS/TASKS table.
 - Added `docs/routing-analytics.md` schema doc.
 - Privacy: routing events store only metadata — no prompts, completions, API keys, or credentials.
+- Added cross-platform packaging: `.tar.gz`, `.deb`, `.rpm` (Linux), `.tar.gz` + Homebrew (macOS), `.zip` + Scoop + Chocolatey (Windows).
+- Added `scripts/release.sh` pre-flight checklist (branch check, tests, clippy, build, version verification).
+- Added tag-triggered GitHub Actions release workflow with multi-OS matrix build, SHA256 checksums, and auto-generated GitHub Release from CHANGELOG.
+- Added `[package.metadata.deb]` and `[package.metadata.generate-rpm]` Cargo.toml sections.
+- Added package manager templates: Homebrew formula, Scoop manifest, Chocolatey nuspec + install script.
 
 ## 0.1.0
 

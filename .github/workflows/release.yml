@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: ai-usage-tui-${{ github.ref_name }}-x86_64-linux.tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: ai-usage-tui-${{ github.ref_name }}-x86_64-macos.tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-gnu
+            artifact: ai-usage-tui-${{ github.ref_name }}-x86_64-windows.zip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - if: matrix.os == 'windows-latest'
+        run: cargo build --release --target ${{ matrix.target }}
+      - if: matrix.os != 'windows-latest'
+        run: cargo build --release
+      - if: matrix.os != 'windows-latest'
+        run: strip target/release/ai-usage-tui
+      - if: matrix.os != 'windows-latest'
+        run: tar czf ${{ matrix.artifact }} -C target/release ai-usage-tui
+      - if: matrix.os == 'windows-latest'
+        run: 7z a ${{ matrix.artifact }} ./target/${{ matrix.target }}/release/ai-usage-tui.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum */* > checksums.txt
+      - name: Extract changelog
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            /^## / {
+              if (found) exit
+              if (index($0, ver)) found=1
+              next
+            }
+            found { print }
+          ' CHANGELOG.md > body.txt
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          cat body.txt >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: false
+          body: ${{ steps.changelog.outputs.body }}
+          files: |
+            artifacts/*/ai-usage-tui-*
+            artifacts/checksums.txt

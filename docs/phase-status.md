@@ -33,10 +33,14 @@
 - `RoutingEngine` aggregation: cost/task, token efficiency, retry/escalation/defect rates
 - `--routing-json` and `--routing-csv` export flags
 - TUI routing panel toggle (`t` key) with sortable aggregate table
+- Cross-platform packaging: `.tar.gz`/`.deb`/`.rpm` (Linux), `.tar.gz`+Homebrew (macOS), `.zip`+Scoop+Chocolatey (Windows)
+- `scripts/release.sh` pre-flight checklist
+- Tag-triggered GitHub Actions release workflow with multi-OS matrix, SHA256 checksums, auto GitHub Release
+- Package manager templates: Homebrew formula, Scoop manifest, Chocolatey nuspec
 
 ## In Progress
 
-- Cross-platform release packaging
+- Integration, polish, final v0.2.0 release
 
 ## Agent Routing
 

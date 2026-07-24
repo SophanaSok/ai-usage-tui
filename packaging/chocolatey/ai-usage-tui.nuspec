@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>ai-usage-tui</id>
+    <version>0.2.0</version>
+    <title>AI Usage TUI</title>
+    <authors>Sophana Sok</authors>
+    <projectUrl>https://github.com/SophanaSok/ai-usage-tui</projectUrl>
+    <licenseUrl>https://github.com/SophanaSok/ai-usage-tui/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>A btop-inspired dashboard for local and hosted AI usage</description>
+    <tags>ai tui dashboard usage opencode cli</tags>
+  </metadata>
+  <files>
+    <file src="tools/**" target="tools/" />
+  </files>
+</package>
