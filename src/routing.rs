@@ -1,4 +1,4 @@
-use crate::model::{RoutingEvent, RoutingAggregates};
+use crate::model::{RoutingAggregates, RoutingEvent};
 use std::collections::BTreeMap;
 
 pub fn aggregate(events: &[RoutingEvent]) -> Vec<RoutingAggregates> {
@@ -75,11 +75,21 @@ pub fn load_routing_events(path: &std::path::Path) -> anyhow::Result<Vec<Routing
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{RoutingEvent, Category, CostStatus};
+    use crate::model::{Category, CostStatus, RoutingEvent};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[allow(clippy::too_many_arguments)]
-    fn make_event(agent: &str, model: &str, provider: &str, tokens: u64, cost: Option<f64>, retries: u32, escalations: u32, test_result: Option<bool>, review_defects: u32) -> RoutingEvent {
+    fn make_event(
+        agent: &str,
+        model: &str,
+        provider: &str,
+        tokens: u64,
+        cost: Option<f64>,
+        retries: u32,
+        escalations: u32,
+        test_result: Option<bool>,
+        review_defects: u32,
+    ) -> RoutingEvent {
         RoutingEvent {
             task: "test".to_string(),
             phase: "test".to_string(),
@@ -95,16 +105,49 @@ mod tests {
             escalations,
             test_result,
             review_defects,
-            created: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64,
+            created: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
         }
     }
 
     #[test]
     fn aggregate_groups_by_agent_model() {
         let events = vec![
-            make_event("agent1", "model1", "provider1", 100, Some(0.01), 0, 0, None, 0),
-            make_event("agent1", "model1", "provider1", 200, Some(0.02), 1, 0, Some(true), 0),
-            make_event("agent2", "model2", "provider2", 300, Some(0.03), 0, 1, Some(false), 1),
+            make_event(
+                "agent1",
+                "model1",
+                "provider1",
+                100,
+                Some(0.01),
+                0,
+                0,
+                None,
+                0,
+            ),
+            make_event(
+                "agent1",
+                "model1",
+                "provider1",
+                200,
+                Some(0.02),
+                1,
+                0,
+                Some(true),
+                0,
+            ),
+            make_event(
+                "agent2",
+                "model2",
+                "provider2",
+                300,
+                Some(0.03),
+                0,
+                1,
+                Some(false),
+                1,
+            ),
         ];
         let result = aggregate(&events);
         assert_eq!(result.len(), 2);
@@ -131,8 +174,28 @@ mod tests {
     #[test]
     fn aggregate_sums_tokens_and_cost() {
         let events = vec![
-            make_event("agent1", "model1", "provider1", 100, Some(0.01), 0, 0, None, 0),
-            make_event("agent1", "model1", "provider1", 200, Some(0.02), 0, 0, None, 0),
+            make_event(
+                "agent1",
+                "model1",
+                "provider1",
+                100,
+                Some(0.01),
+                0,
+                0,
+                None,
+                0,
+            ),
+            make_event(
+                "agent1",
+                "model1",
+                "provider1",
+                200,
+                Some(0.02),
+                0,
+                0,
+                None,
+                0,
+            ),
         ];
         let result = aggregate(&events);
         assert_eq!(result.len(), 1);

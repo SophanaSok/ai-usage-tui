@@ -144,7 +144,9 @@ fn run_tui(
     execute!(out, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(out);
     let mut terminal = Terminal::new(backend)?;
-    let result = catch_unwind(AssertUnwindSafe(|| run(&mut terminal, cli, collector, budget_engine)));
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        run(&mut terminal, cli, collector, budget_engine)
+    }));
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;

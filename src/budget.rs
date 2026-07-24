@@ -184,16 +184,14 @@ impl BudgetEngine {
 fn period_cutoff(period: BudgetPeriod) -> i64 {
     let now = Utc::now();
     match period {
-        BudgetPeriod::Daily => {
-            Utc.with_ymd_and_hms(now.year(), now.month(), now.day(), 0, 0, 0)
-                .unwrap()
-                .timestamp()
-        }
-        BudgetPeriod::Monthly => {
-            Utc.with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0)
-                .unwrap()
-                .timestamp()
-        }
+        BudgetPeriod::Daily => Utc
+            .with_ymd_and_hms(now.year(), now.month(), now.day(), 0, 0, 0)
+            .unwrap()
+            .timestamp(),
+        BudgetPeriod::Monthly => Utc
+            .with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0)
+            .unwrap()
+            .timestamp(),
     }
 }
 
@@ -287,8 +285,10 @@ impl AlertDispatcher {
             .error_for_status()?;
 
         for alert in to_send {
-            self.last_dispatched
-                .insert((alert.scope.clone(), alert.period), (alert.level, Instant::now()));
+            self.last_dispatched.insert(
+                (alert.scope.clone(), alert.period),
+                (alert.level, Instant::now()),
+            );
         }
         Ok(())
     }
@@ -393,7 +393,12 @@ mod tests {
             ..Default::default()
         };
         let engine = BudgetEngine::from_config(&config);
-        let usages = vec![make_usage("opencode", "gpt-5.6-luna", 15.0, crate::utils::now())];
+        let usages = vec![make_usage(
+            "opencode",
+            "gpt-5.6-luna",
+            15.0,
+            crate::utils::now(),
+        )];
         let alerts = engine.check(&usages);
         assert_eq!(alerts[0].level, AlertLevel::Exceeded);
     }
@@ -448,9 +453,10 @@ mod tests {
             level: AlertLevel::Critical,
         };
         assert!(dispatcher.should_dispatch(&alert));
-        dispatcher
-            .last_dispatched
-            .insert((alert.scope.clone(), alert.period), (alert.level, Instant::now()));
+        dispatcher.last_dispatched.insert(
+            (alert.scope.clone(), alert.period),
+            (alert.level, Instant::now()),
+        );
         assert!(!dispatcher.should_dispatch(&alert));
     }
 
@@ -470,7 +476,12 @@ mod tests {
     #[test]
     fn empty_engine_produces_no_alerts() {
         let engine = BudgetEngine::empty();
-        let alerts = engine.check(&[make_usage("opencode", "gpt-5.6-luna", 100.0, crate::utils::now())]);
+        let alerts = engine.check(&[make_usage(
+            "opencode",
+            "gpt-5.6-luna",
+            100.0,
+            crate::utils::now(),
+        )]);
         assert!(alerts.is_empty());
     }
 }

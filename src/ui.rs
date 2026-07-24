@@ -15,10 +15,10 @@ use ratatui::{
     Frame, Terminal,
 };
 
+use crate::budget::{Alert, AlertLevel, BudgetEngine};
 use crate::cli::Cli;
 use crate::collector::background::CollectorHandle;
-use crate::budget::{Alert, AlertLevel, BudgetEngine};
-use crate::model::{Category, CostStatus, Range, Totals, Usage, CYAN, YELLOW, RED};
+use crate::model::{Category, CostStatus, Range, Totals, Usage, CYAN, RED, YELLOW};
 use crate::utils::{format_clock, format_count, journal_path};
 
 const MUTED: Color = Color::Rgb(125, 145, 160);
@@ -504,10 +504,20 @@ fn draw_alert_banner(frame: &mut Frame, area: Rect, app: &App) {
             vec![
                 Span::styled(
                     format!(" {} ", alert.level.label()),
-                    Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(color)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    format!("{} {}/${:.2}/${:.2} ({}%)  ", alert.scope.label(), period_str, alert.spend, alert.limit, alert.pct as u64),
+                    format!(
+                        "{} {}/${:.2}/${:.2} ({}%)  ",
+                        alert.scope.label(),
+                        period_str,
+                        alert.spend,
+                        alert.limit,
+                        alert.pct as u64
+                    ),
                     Style::default().fg(color),
                 ),
             ]
@@ -598,8 +608,10 @@ fn draw_routing(frame: &mut Frame, area: Rect, app: &App) {
             Cell::from(agg.tasks.to_string()),
         ])
     });
-    let header = Row::new(vec!["AGENT", "MODEL", "TOKENS", "COST", "RETRY%", "DEFECTS", "TASKS"])
-        .style(Style::default().fg(MUTED).add_modifier(Modifier::BOLD));
+    let header = Row::new(vec![
+        "AGENT", "MODEL", "TOKENS", "COST", "RETRY%", "DEFECTS", "TASKS",
+    ])
+    .style(Style::default().fg(MUTED).add_modifier(Modifier::BOLD));
     let widths = [
         Constraint::Min(18),
         Constraint::Min(20),

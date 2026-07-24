@@ -3,9 +3,9 @@ use std::{env, fs, path::PathBuf, time::Duration};
 use anyhow::Result;
 use serde::Deserialize;
 
+use crate::budget::BudgetsConfig;
 use crate::cli::Cli;
 use crate::model::Range;
-use crate::budget::BudgetsConfig;
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ConfigFile {

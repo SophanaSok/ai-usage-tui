@@ -200,7 +200,8 @@ where
     .filter(|enabled| *enabled)
     .count();
     if actions > 1
-        || (cli.once && (cli.record_ollama || cli.refresh_zen || cli.check_budgets || cli.record_routing))
+        || (cli.once
+            && (cli.record_ollama || cli.refresh_zen || cli.check_budgets || cli.record_routing))
     {
         return Err(anyhow::anyhow!(
             "collection actions and --once/--json/--csv are mutually exclusive"

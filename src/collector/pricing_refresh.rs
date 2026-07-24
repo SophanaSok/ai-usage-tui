@@ -46,8 +46,7 @@ fn fetch_with_backoff(client: &reqwest::blocking::Client) -> Result<String> {
             Ok(response) => return response.text().map_err(Into::into),
             Err(err) => {
                 let status = err.status();
-                let is_rate_limited =
-                    status.is_some_and(|s| s == 429 || s.as_u16() == 529);
+                let is_rate_limited = status.is_some_and(|s| s == 429 || s.as_u16() == 529);
                 let is_retryable = status.is_none_or(|s| {
                     s.is_server_error() || s == 429 || s.as_u16() == 529 || s == 408
                 });
@@ -447,9 +446,10 @@ mod tests {
 
     #[test]
     fn parse_fixture_produces_valid_toml() {
-        let html = std::fs::read_to_string(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/zen_pricing.html"),
-        )
+        let html = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/zen_pricing.html"
+        ))
         .expect("missing fixture tests/fixtures/zen_pricing.html; run curl to capture it");
         let toml = parse_pricing_html(&html).expect("fixture should parse successfully");
         assert!(toml.contains("[model.\"big-pickle\"]\nfree = true"));
@@ -457,6 +457,8 @@ mod tests {
         assert!(toml.contains("[model.\"gpt-5.6-luna\".tier-272000]"));
         assert!(toml.contains("[model.\"claude-sonnet-4.5\".tier-200000]"));
         // Ensure the parsed output is valid TOML.
-        let _: toml::Value = toml.parse().expect("generated pricing TOML should be valid");
+        let _: toml::Value = toml
+            .parse()
+            .expect("generated pricing TOML should be valid");
     }
 }
