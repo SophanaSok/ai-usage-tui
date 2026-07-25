@@ -11,6 +11,10 @@ Ollama responses, and presents the combined data in an interactive TUI or as
 JSON, CSV, or plain text. It tracks requests, input/output/reasoning/cache
 tokens, cost provenance, budgets, and opt-in model-routing events.
 
+![Dashboard showing token totals, model activity, and cost provenance](docs/assets/dashboard.png)
+
+*Fixture-backed demo data from `tests/fixtures/opencode_test.db`.*
+
 ## What it shows
 
 - Usage grouped by provider and model
@@ -157,6 +161,19 @@ ai-usage-tui --refresh-interval 15
 
 The dashboard refreshes every 30 seconds by default. OpenCode and journal
 collectors run in the background at their configured intervals.
+
+The main view combines summary metrics, token-flow breakdown, and per-model
+activity. Press `b` for budget status or `t` for routing analytics:
+
+| View | Keys | Screenshot |
+| --- | --- | --- |
+| Model activity | default | [dashboard](docs/assets/dashboard.png) |
+| Budgets | `b` | [budgets](docs/assets/budgets.png) |
+| Routing | `t` | [routing](docs/assets/routing.png) |
+
+![Budget status panel](docs/assets/budgets.png)
+
+![Routing analytics panel](docs/assets/routing.png)
 
 | Key | Action |
 | --- | --- |
@@ -406,6 +423,12 @@ cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets
 cargo build --release
+```
+
+Regenerate README screenshots on a machine with an X11 desktop:
+
+```sh
+./scripts/capture-readme-screenshots.sh
 ```
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution guidelines.
