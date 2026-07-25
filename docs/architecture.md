@@ -24,7 +24,7 @@ See [`background-collectors.md`](background-collectors.md) for the `Collector` t
 
 ## Budget Engine
 
-`BudgetEngine` checks spend against configured limits on each aggregation cycle. `AlertDispatcher` evaluates thresholds and dispatches webhook alerts when configured.
+`BudgetEngine` checks spend against configured limits on each aggregation cycle. `AlertDispatcher` can evaluate thresholds and post webhook alerts, but the current TUI and CLI do not wire webhook dispatch yet.
 
 See [`data-model.md`](data-model.md#budget-configuration) for budget schema.
 

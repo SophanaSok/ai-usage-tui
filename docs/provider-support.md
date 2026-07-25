@@ -18,7 +18,7 @@ Token counts can be observed when returned by the client response. Account quota
 
 ## OpenCode Zen
 
-Zen usage can be read from OpenCode history. `--refresh-pricing` scrapes the live Zen pricing table from the docs page with retry/backoff and caches it at `~/.local/share/ai-usage-tui/zen-pricing.json`. The background `ZenPricingCollector` refreshes hourly when enabled via `[collectors.zen_pricing.enabled]`. Pricing snapshots are applied to historical events for cost calculation.
+Zen usage can be read from OpenCode history. `--refresh-pricing` scrapes the live Zen pricing table from the docs page with retry/backoff and caches it at `~/.local/share/ai-usage-tui/zen-pricing.toml`. The background `ZenPricingCollector` refreshes hourly when enabled via `[collectors.zen_pricing.enabled]`. Pricing snapshots are applied to historical events for cost calculation.
 
 ## Background Collectors
 
@@ -30,4 +30,4 @@ All collectors write to the journal database; the TUI reads from the journal on 
 
 ## Budgets
 
-Budget limits can be configured per provider, model, or globally with daily, weekly, or monthly periods. Alerts appear in the TUI banner and can be dispatched to a webhook configured under `[budgets.webhook]`. Check budgets from CLI with `ai-usage-tui --check-budgets` (exits 1 if thresholds exceeded).
+Budget limits can be configured per provider, model, or globally with daily or monthly periods. Alerts appear in the TUI banner. The CLI accepts `--webhook URL` and config accepts `budgets.webhook`, but webhook dispatch is not currently wired. Check budgets from CLI with `ai-usage-tui --check-budgets` (exits 1 if thresholds exceeded).

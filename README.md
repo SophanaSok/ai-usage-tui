@@ -1,10 +1,12 @@
 # ai-usage-tui
 
+> A btop-inspired terminal dashboard for AI token usage, cost, and model-routing analytics.
+
 [![CI](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/ci.yml)
 [![Release](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/release.yml/badge.svg)](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/release.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A btop-inspired terminal dashboard for understanding AI token usage and cost.
+[Quick start](#quick-start) · [Install](#installation) · [Configuration](#configuration) · [Docs](#more-documentation) · [Contributing](CONTRIBUTING.md)
 
 `ai-usage-tui` reads OpenCode's local usage database, can journal completed
 Ollama responses, and presents the combined data in an interactive TUI or as
@@ -15,11 +17,30 @@ tokens, cost provenance, budgets, and opt-in model-routing events.
 
 *Fixture-backed demo data from `tests/fixtures/opencode_test.db`.*
 
+## Contents
+
+- [What it shows](#what-it-shows)
+- [Prerequisites](#prerequisites)
+- [Quick start](#quick-start)
+- [Installation](#installation)
+- [Data sources](#data-sources)
+- [Interactive dashboard](#interactive-dashboard)
+- [Non-interactive output](#non-interactive-output)
+- [Configuration](#configuration)
+- [Budget checks](#budget-checks)
+- [Model-routing analytics](#model-routing-analytics)
+- [CLI reference](#cli-reference)
+- [Privacy and network behavior](#privacy-and-network-behavior)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [More documentation](#more-documentation)
+- [License](#license)
+
 ## What it shows
 
 - Usage grouped by provider and model
 - Input, output, reasoning, cache-read, and cache-write tokens
-- Today, trailing 7-day, trailing 30-day, all-time, or custom-day ranges
+- Last 24 hours, trailing 7-day, trailing 30-day, all-time, or custom-day ranges
 - `LOCAL`, `CLOUD`, `FREE`, `PAID`, and `UNKNOWN` classifications
 - Provider-reported, calculated, estimated, free, local, or unavailable cost
 - Daily and monthly budget status
@@ -40,16 +61,28 @@ Cost status is reported separately from category: `reported` comes from the
 provider, `calculated` or `estimated` comes from pricing data, `free` and
 `local` are non-billable, and `unavailable` remains unknown.
 
+## Prerequisites
+
+- **Data:** An OpenCode SQLite database (default:
+  `~/.local/share/opencode/opencode.db`) and/or journaled Ollama usage
+- **Build (optional):** Stable Rust via [rustup](https://rustup.rs/)
+- **Platforms:** Linux, macOS, and Windows x86_64 prebuilts from
+  [GitHub Releases](https://github.com/SophanaSok/ai-usage-tui/releases)
+
+A missing OpenCode database is not fatal. The dashboard starts with no
+OpenCode rows and can still display journaled Ollama usage.
+
 ## Quick start
 
-The default data source is OpenCode's SQLite database:
-`~/.local/share/opencode/opencode.db`.
+Download a prebuilt binary, put it on your `PATH`, and run the dashboard:
 
 ```sh
-# Install from a local checkout (requires the stable Rust toolchain)
-cargo install --path . --locked
+# Linux x86_64 example — replace VERSION with the latest release tag
+VERSION=v0.2.0
+curl -fsSL "https://github.com/SophanaSok/ai-usage-tui/releases/download/${VERSION}/ai-usage-tui-${VERSION}-x86_64-linux.tar.gz" \
+  | tar xz
+install -m 755 ai-usage-tui ~/.local/bin/   # or sudo install ... /usr/local/bin/
 
-# Open the dashboard
 ai-usage-tui
 ```
 
@@ -62,17 +95,41 @@ ai-usage-tui --db /path/to/opencode.db
 OPENCODE_DB_PATH=/path/to/opencode.db ai-usage-tui
 ```
 
-A missing OpenCode database is not fatal. The dashboard starts with no
-OpenCode rows and can still display journaled Ollama usage.
+See [Installation](#installation) for macOS and Windows archives, source
+builds, and packaging templates.
 
 ## Installation
 
 ### Prebuilt release
 
-Download the archive for Linux, macOS, or Windows from
-[GitHub Releases](https://github.com/SophanaSok/ai-usage-tui/releases), extract
-it, and place `ai-usage-tui` (or `ai-usage-tui.exe`) on your `PATH`.
+Download the archive for your platform from
+[GitHub Releases](https://github.com/SophanaSok/ai-usage-tui/releases),
+extract it, and place `ai-usage-tui` (or `ai-usage-tui.exe`) on your `PATH`.
 Checksums are published with each release.
+
+| Platform | Archive name pattern |
+| --- | --- |
+| Linux x86_64 | `ai-usage-tui-VERSION-x86_64-linux.tar.gz` |
+| macOS x86_64 | `ai-usage-tui-VERSION-x86_64-macos.tar.gz` |
+| Windows x86_64 | `ai-usage-tui-VERSION-x86_64-windows.zip` |
+
+macOS example:
+
+```sh
+VERSION=v0.2.0
+curl -fsSL "https://github.com/SophanaSok/ai-usage-tui/releases/download/${VERSION}/ai-usage-tui-${VERSION}-x86_64-macos.tar.gz" \
+  | tar xz
+install -m 755 ai-usage-tui /usr/local/bin/
+```
+
+On Windows, extract the zip and add the directory containing
+`ai-usage-tui.exe` to your `PATH`.
+
+### Package managers
+
+Release packaging templates for Homebrew, Scoop, and Chocolatey live under
+[`packaging/`](packaging/). Use GitHub Releases until a formula or manifest is
+published to those registries.
 
 ### Build or install from source
 
@@ -89,6 +146,10 @@ cargo build --release
 ```
 
 ## Data sources
+
+```text
+OpenCode DB / Ollama journal -> background collectors -> TUI or JSON/CSV export
+```
 
 ### OpenCode
 
@@ -171,13 +232,9 @@ activity. Press `b` for budget status or `t` for routing analytics:
 | Budgets | `b` | [budgets](docs/assets/budgets.png) |
 | Routing | `t` | [routing](docs/assets/routing.png) |
 
-![Budget status panel](docs/assets/budgets.png)
-
-![Routing analytics panel](docs/assets/routing.png)
-
 | Key | Action |
 | --- | --- |
-| `1` | Show today |
+| `1` | Show the last 24 hours |
 | `2` | Show the trailing 7 days |
 | `3` | Show the trailing 30 days |
 | `4` | Show all history |
@@ -227,15 +284,9 @@ exist. Command-line values override config values; for data paths, config
 values override environment variables and defaults.
 
 ```toml
-# Top-level defaults
-db = "/home/user/.local/share/opencode/opencode.db"
-journal = "/home/user/.local/share/ai-usage-tui/usage.db"
 refresh_interval = 30
 days = 7
-provider = "opencode"
-model = "gpt-5.6-sol"
 
-# These collectors apply to interactive TUI mode.
 [collectors.opencode]
 enabled = true
 interval = 30
@@ -244,35 +295,15 @@ interval = 30
 enabled = true
 interval = 60
 
-[collectors.zen_pricing]
-enabled = false
-interval = 3600
-
-# Daily or monthly global budget.
 [[budgets.entry]]
 scope = "global"
 period = "monthly"
 limit = 50.0
-warn = 75.0
-critical = 90.0
-
-# Provider and model scopes require a name.
-[[budgets.entry]]
-scope = "provider"
-name = "opencode"
-period = "daily"
-limit = 5.0
-
-[[budgets.entry]]
-scope = "model"
-name = "gpt-5.6-sol"
-period = "monthly"
-limit = 20.0
 ```
 
 `warn` and `critical` are percentages of `limit`; they default to 75 and 90.
-The complete annotated example is in
-[`examples/config.toml`](examples/config.toml).
+The complete annotated example — including data paths, filters, collectors, and
+budget scopes — is in [`examples/config.toml`](examples/config.toml).
 
 ## Budget checks
 
@@ -352,7 +383,7 @@ does not load it automatically.
 | `--config PATH` | Load a specific TOML config file |
 | `--db PATH` | Override the OpenCode database path |
 | `--journal PATH` | Override the local journal path |
-| `--today` | Use the trailing 24 hours |
+| `--today` | Use the last 24 hours |
 | `--week` | Use the trailing 7 days (default) |
 | `--month` | Use the trailing 30 days |
 | `--days N` | Use the trailing `N` days; `N` must be greater than zero |
@@ -435,13 +466,19 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution guidelines.
 
 ## More documentation
 
+**User guides**
+
+- [`docs/provider-support.md`](docs/provider-support.md) — provider support matrix
+- [`docs/routing-analytics.md`](docs/routing-analytics.md) — routing analytics
+
+**Contributor docs**
+
 - [`docs/architecture.md`](docs/architecture.md) — architecture and data flow
 - [`docs/background-collectors.md`](docs/background-collectors.md) — collector design
 - [`docs/data-model.md`](docs/data-model.md) — data model and schema
-- [`docs/provider-support.md`](docs/provider-support.md) — provider support matrix
-- [`docs/routing-analytics.md`](docs/routing-analytics.md) — routing analytics
 - [`docs/release-process.md`](docs/release-process.md) — release process
 - [`docs/phase-status.md`](docs/phase-status.md) — implementation status
+- [`docs/execution-log.md`](docs/execution-log.md) — development history
 - [`MODEL_ROUTING.md`](MODEL_ROUTING.md) — development agent-routing policy
 - [`SECURITY.md`](SECURITY.md) — security policy
 - [`CHANGELOG.md`](CHANGELOG.md) — release notes
