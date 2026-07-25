@@ -1,156 +1,224 @@
 # ai-usage-tui
 
-![CI](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/ci.yml/badge.svg)
-![Release](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/release.yml/badge.svg)
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Version](https://img.shields.io/badge/version-0.2.0-green.svg)
+[![CI](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/ci.yml)
+[![Release](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/release.yml/badge.svg)](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/release.yml)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> Track your AI token usage and costs across local and hosted providers — without leaving the terminal.
+A btop-inspired terminal dashboard for understanding AI token usage and cost.
 
-![TUI Screenshot](docs/screenshot.png)
+`ai-usage-tui` reads OpenCode's local usage database, can journal completed
+Ollama responses, and presents the combined data in an interactive TUI or as
+JSON, CSV, or plain text. It tracks requests, input/output/reasoning/cache
+tokens, cost provenance, budgets, and opt-in model-routing events.
 
-`ai-usage-tui` is a btop-inspired terminal dashboard that reads usage data from
-the OpenCode SQLite database, journals Ollama responses, and estimates costs using
-the OpenCode Zen pricing table. It supports budgets, alerts, model-routing analytics,
-and background collectors that keep the UI responsive.
+## What it shows
 
-## Table of Contents
+- Usage grouped by provider and model
+- Input, output, reasoning, cache-read, and cache-write tokens
+- Today, trailing 7-day, trailing 30-day, all-time, or custom-day ranges
+- `LOCAL`, `CLOUD`, `FREE`, `PAID`, and `UNKNOWN` classifications
+- Provider-reported, calculated, estimated, free, local, or unavailable cost
+- Daily and monthly budget status
+- Routing aggregates including retries, escalations, tests, and review defects
 
-- [Quick Start](#quick-start)
-- [Installation](#installation)
-- [Usage](#usage)
-  - [Interactive TUI](#interactive-tui)
-  - [Non-Interactive CLI](#non-interactive-cli)
-- [Configuration](#configuration)
-- [Budgets](#budgets)
-- [Routing Analytics](#routing-analytics)
-- [Ollama Journaling](#ollama-journaling)
-- [Categories & Cost Provenance](#categories--cost-provenance)
-- [Data Storage & Privacy](#data-storage--privacy)
-- [FAQ](#faq)
-- [Documentation](#documentation)
+Unknown cost is kept unknown rather than displayed as paid usage with a zero
+cost. Local and explicitly free usage is excluded from budget spend.
 
-## Quick Start
+| Category | Meaning |
+| --- | --- |
+| `LOCAL` | Usage identified as running on a local endpoint |
+| `CLOUD` | Hosted or cloud-routed usage without authoritative cost |
+| `FREE` | Usage from a model explicitly identified as free |
+| `PAID` | Usage with a known billable cost |
+| `UNKNOWN` | Usage without enough metadata to classify or price |
+
+Cost status is reported separately from category: `reported` comes from the
+provider, `calculated` or `estimated` comes from pricing data, `free` and
+`local` are non-billable, and `unavailable` remains unknown.
+
+## Quick start
+
+The default data source is OpenCode's SQLite database:
+`~/.local/share/opencode/opencode.db`.
 
 ```sh
-# Install (pick one):
-cargo install --path . --locked     # from source
-sudo dpkg -i ai-usage-tui-*.deb     # Linux .deb
-brew install ai-usage-tui           # macOS
-
-# Run the dashboard:
-ai-usage-tui
-
-# Or get JSON output for scripts:
-ai-usage-tui --once --json
-```
-
-That's it. The dashboard reads from `~/.local/share/opencode/opencode.db` by default.
-
-## Installation
-
-### From source
-```sh
-git clone https://github.com/SophanaSok/ai-usage-tui.git
-cd ai-usage-tui
+# Install from a local checkout (requires the stable Rust toolchain)
 cargo install --path . --locked
-```
 
-### Linux
-
-| Format | Command |
-|--------|---------|
-| `.deb` | `sudo dpkg -i ai-usage-tui-*.deb` |
-| `.rpm` | `sudo rpm -i ai-usage-tui-*.rpm` |
-| `.tar.gz` | `tar xzf ai-usage-tui-*.tar.gz && sudo cp ai-usage-tui /usr/local/bin/` |
-
-### macOS
-```sh
-brew install ai-usage-tui
-# Or download the .tar.gz from GitHub Releases
-```
-
-### Windows
-```sh
-scoop install ai-usage-tui
-# Or: choco install ai-usage-tui
-# Or: download the .zip from GitHub Releases
-```
-
-## Usage
-
-### Interactive TUI
-
-```sh
+# Open the dashboard
 ai-usage-tui
 ```
 
-The dashboard shows a live overview of your AI token usage:
-
-- **Header**: current time range, last refresh, data source status
-- **Metrics**: total tokens, requests, and per-category breakdowns
-- **Token Flow**: input/output/reasoning/cache tokens + estimated paid cost
-- **Model Activity**: per-model table with provider, class, tokens, cost, requests
-
-Press a key to switch views:
-
-| Key | Action |
-|-----|--------|
-| `1` | Today |
-| `2` | Last 7 days |
-| `3` | Last 30 days |
-| `4` | All time |
-| `r` | Refresh data |
-| `b` | Toggle budgets panel |
-| `t` | Toggle routing panel |
-| `j` / `↓` | Select next model |
-| `k` / `↑` | Select previous model |
-| `q` / `Esc` | Quit |
-
-### Non-Interactive CLI
-
-For scripts, cron jobs, and CI pipelines:
-
-```sh
-# JSON output (great for piping to jq)
-ai-usage-tui --once --json
-
-# CSV export
-ai-usage-tui --once --csv usage.csv
-
-# Filter by time range, provider, or model
-ai-usage-tui --once --json --days 14 --provider opencode
-ai-usage-tui --once --json --today --model gpt-5.6-luna
-
-# Refresh the Zen pricing table from the docs page
-ai-usage-tui --refresh-pricing
-
-# Check budget thresholds (exits 1 if any exceeded — perfect for cron)
-ai-usage-tui --check-budgets
-
-# Export routing analytics
-ai-usage-tui --routing-json
-ai-usage-tui --routing-csv routing.csv
-```
-
-**Database location**: defaults to `~/.local/share/opencode/opencode.db`. Override with:
+If OpenCode stores its database elsewhere:
 
 ```sh
 ai-usage-tui --db /path/to/opencode.db
-# Or:
+
+# Equivalent environment-variable form
 OPENCODE_DB_PATH=/path/to/opencode.db ai-usage-tui
+```
+
+A missing OpenCode database is not fatal. The dashboard starts with no
+OpenCode rows and can still display journaled Ollama usage.
+
+## Installation
+
+### Prebuilt release
+
+Download the archive for Linux, macOS, or Windows from
+[GitHub Releases](https://github.com/SophanaSok/ai-usage-tui/releases), extract
+it, and place `ai-usage-tui` (or `ai-usage-tui.exe`) on your `PATH`.
+Checksums are published with each release.
+
+### Build or install from source
+
+Install the stable Rust toolchain with [rustup](https://rustup.rs/), clone this
+repository, and run one of:
+
+```sh
+# Install to Cargo's binary directory
+cargo install --path . --locked
+
+# Or build without installing
+cargo build --release
+./target/release/ai-usage-tui
+```
+
+## Data sources
+
+### OpenCode
+
+OpenCode collection is automatic. The database is opened read-only and only
+assistant-message usage metadata is read. The default path follows
+`XDG_DATA_HOME` when set, otherwise it is:
+
+```text
+~/.local/share/opencode/opencode.db
+```
+
+Select another database with `--db PATH`, the `db` config setting, or
+`OPENCODE_DB_PATH`.
+
+### Ollama
+
+Ollama usage is opt-in. Pipe a completed response into
+`--record-ollama`; the command stores token counts in the local journal.
+
+```sh
+curl -s http://localhost:11434/api/generate \
+  -d '{"model":"qwen3-coder:30b","prompt":"hello","stream":false}' \
+  | ai-usage-tui --record-ollama
+```
+
+Newline-delimited streaming responses also work:
+
+```sh
+curl -s http://localhost:11434/api/generate \
+  -d '{"model":"qwen3-coder:30b","prompt":"hello","stream":true}' \
+  | ai-usage-tui --record-ollama
+```
+
+For a stream, only the final event with `done: true` is recorded. Replaying the
+same completed event does not duplicate it. The journal defaults to:
+
+```text
+~/.local/share/ai-usage-tui/usage.db
+```
+
+Override it with `--journal PATH`, the `journal` config setting, or
+`AI_USAGE_JOURNAL_PATH`.
+
+### Zen catalog and pricing
+
+The bundled Zen pricing table is used to estimate cost when authoritative cost
+is unavailable. These optional network commands update local caches and exit:
+
+```sh
+# Scrape the current Zen pricing table
+ai-usage-tui --refresh-pricing
+
+# Cache the OpenCode Zen model catalog
+ai-usage-tui --refresh-zen
+```
+
+The model catalog is informational. Refreshing it does not create usage data.
+Automatic pricing refresh is disabled unless enabled in the collector config.
+
+## Interactive dashboard
+
+Run without an output or action flag:
+
+```sh
+ai-usage-tui
+ai-usage-tui --month --provider opencode
+ai-usage-tui --days 14 --model qwen3-coder:30b
+ai-usage-tui --refresh-interval 15
+```
+
+The dashboard refreshes every 30 seconds by default. OpenCode and journal
+collectors run in the background at their configured intervals.
+
+| Key | Action |
+| --- | --- |
+| `1` | Show today |
+| `2` | Show the trailing 7 days |
+| `3` | Show the trailing 30 days |
+| `4` | Show all history |
+| `r` | Refresh now |
+| `b` | Toggle the budgets panel |
+| `t` | Toggle routing analytics |
+| `j` / `Down` | Select the next model |
+| `k` / `Up` | Select the previous model |
+| `q` / `Esc` | Quit |
+
+## Non-interactive output
+
+Use one-shot mode in scripts and scheduled jobs:
+
+```sh
+# Human-readable rows
+ai-usage-tui --once
+
+# JSON to stdout
+ai-usage-tui --json --week
+
+# CSV to a file
+ai-usage-tui --csv usage.csv --days 14
+
+# Exact, case-insensitive provider and model filters
+ai-usage-tui --json --all --provider opencode --model gpt-5.6-sol
+```
+
+`--json` and `--csv` imply `--once`. JSON includes the source description,
+selected range, and usage rows. Usage CSV columns are:
+
+```text
+provider,model,category,cost_status,requests,input_tokens,output_tokens,
+reasoning_tokens,cache_read_tokens,cache_write_tokens,cost,created
 ```
 
 ## Configuration
 
-An optional TOML file at `~/.config/ai-usage-tui/config.toml`. CLI flags override config values.
-See [`examples/config.toml`](examples/config.toml) for a full annotated example.
+The optional TOML file defaults to:
+
+```text
+${XDG_CONFIG_HOME:-~/.config}/ai-usage-tui/config.toml
+```
+
+Use `--config PATH` to select another file. An explicitly selected file must
+exist. Command-line values override config values; for data paths, config
+values override environment variables and defaults.
 
 ```toml
+# Top-level defaults
+db = "/home/user/.local/share/opencode/opencode.db"
+journal = "/home/user/.local/share/ai-usage-tui/usage.db"
 refresh_interval = 30
 days = 7
+provider = "opencode"
+model = "gpt-5.6-sol"
 
-# Background collectors (TUI mode only)
+# These collectors apply to interactive TUI mode.
 [collectors.opencode]
 enabled = true
 interval = 30
@@ -163,13 +231,20 @@ interval = 60
 enabled = false
 interval = 3600
 
-# Budget alerts
+# Daily or monthly global budget.
 [[budgets.entry]]
-scope = "global"           # "global" | "provider" | "model"
-period = "monthly"         # "daily" | "monthly"
-limit = 50.0               # USD
-# warn = 75.0               # warn at 75% (default)
-# critical = 90.0          # critical at 90% (default)
+scope = "global"
+period = "monthly"
+limit = 50.0
+warn = 75.0
+critical = 90.0
+
+# Provider and model scopes require a name.
+[[budgets.entry]]
+scope = "provider"
+name = "opencode"
+period = "daily"
+limit = 5.0
 
 [[budgets.entry]]
 scope = "model"
@@ -178,177 +253,176 @@ period = "monthly"
 limit = 20.0
 ```
 
-## Budgets
+`warn` and `critical` are percentages of `limit`; they default to 75 and 90.
+The complete annotated example is in
+[`examples/config.toml`](examples/config.toml).
 
-Set spend limits per provider, per model, or globally. The TUI shows an alert banner
-when thresholds are reached, and you can dispatch alerts to a webhook:
+## Budget checks
 
-```toml
-[budgets]
-webhook = "https://hooks.example.com/budget-alerts"
-```
-
-Check from CLI (great for cron or CI):
+Configured budgets appear in the TUI. To check them non-interactively:
 
 ```sh
 ai-usage-tui --check-budgets
-# Exits 0 if all budgets OK, exits 1 if any threshold exceeded
-# Prints JSON: {"budgets": 2, "alerts": [...]}
 ```
 
-Or override the webhook URL:
+The command prints JSON and exits with status `1` when any budget is at the
+warning, critical, or exceeded threshold. It exits with status `0` when all
+budgets are below their warning thresholds or no budgets are configured.
+
+Only usage with a reported, calculated, or estimated cost contributes to
+spend. Budget periods begin at midnight UTC for daily budgets and the first
+day of the current UTC month for monthly budgets.
+
+The CLI accepts `--webhook URL` and config accepts `budgets.webhook`, but the
+current command and TUI do not dispatch webhook requests.
+
+## Model-routing analytics
+
+Routing events are separate, opt-in records for evaluating model-selection
+outcomes. Record an event as JSON on stdin:
 
 ```sh
-ai-usage-tui --check-budgets --webhook https://my-hook.example.com/alerts
+echo '{
+  "agent":"@heavy",
+  "model":"glm-5.2:cloud",
+  "provider":"opencode",
+  "task":"refactor",
+  "phase":"implementation",
+  "tokens":15000,
+  "cost":0.02,
+  "retries":1,
+  "escalations":0,
+  "test_result":true,
+  "review_defects":0
+}' | ai-usage-tui --record-routing
 ```
 
-## Routing Analytics
+`agent`, `model`, `task`, and `tokens` are the useful minimum fields. Optional
+fields include `provider`, `phase`, `category`, `cost_status`, `requests`,
+`cost`, `retries`, `escalations`, `test_result`, `review_defects`, and a Unix
+`created` timestamp. Missing optional counters default to zero, `requests`
+defaults to one, and missing strings use empty or `unknown` values.
 
-Track which agents and models were used for each development task:
+View aggregates with `t` in the TUI or export them:
 
 ```sh
-echo '{"agent":"@heavy","model":"glm-5.2:cloud","task":"refactor","phase":"implementation","provider":"ollama","tokens":15000,"cost":0.02,"retries":0,"escalations":0,"test_result":true,"review_defects":0}' \
-  | ai-usage-tui --record-routing
+ai-usage-tui --routing-json
+ai-usage-tui --routing-csv routing.csv
 ```
 
-View in the TUI with the `t` key — see cost per agent, retry rate, and defect rate.
-Export for reporting:
+Routing output is aggregated by agent, model, and provider. JSON also includes
+retry, escalation, and defect rates. Routing CSV columns are:
+
+```text
+agent,model,provider,tasks,tokens,cost,retries,escalations,test_passes,
+test_failures,review_defects
+```
+
+See [`docs/routing-analytics.md`](docs/routing-analytics.md) for the underlying
+design and [`examples/model-routing.toml`](examples/model-routing.toml) for an
+example routing policy. The policy is an orchestration example; the binary
+does not load it automatically.
+
+## CLI reference
+
+| Option | Meaning |
+| --- | --- |
+| `-h`, `--help` | Print help |
+| `-V`, `--version` | Print the version |
+| `--once` | Collect once, print plain text, and exit |
+| `--json` | Collect once and print usage JSON |
+| `--csv PATH` | Collect once and write usage CSV |
+| `--config PATH` | Load a specific TOML config file |
+| `--db PATH` | Override the OpenCode database path |
+| `--journal PATH` | Override the local journal path |
+| `--today` | Use the trailing 24 hours |
+| `--week` | Use the trailing 7 days (default) |
+| `--month` | Use the trailing 30 days |
+| `--days N` | Use the trailing `N` days; `N` must be greater than zero |
+| `--all` | Use all available history |
+| `--provider NAME` | Filter by exact provider name, ignoring case |
+| `--model NAME` | Filter by exact model name, ignoring case |
+| `--refresh-interval N` | Refresh the TUI every `N` seconds |
+| `--record-ollama` | Read an Ollama response from stdin and journal it |
+| `--refresh-zen` | Refresh the cached Zen model catalog and exit |
+| `--refresh-pricing` | Refresh the Zen pricing cache and exit |
+| `--check-budgets` | Print actionable budget alerts as JSON |
+| `--webhook URL` | Set the parsed webhook override; dispatch is not currently wired |
+| `--record-routing` | Read one routing event from stdin and journal it |
+| `--routing-json` | Print aggregated routing analytics as JSON |
+| `--routing-csv PATH` | Write aggregated routing analytics as CSV |
+
+Recording, refresh, budget, usage export, and routing export modes are
+single-purpose actions; do not combine action flags.
+
+Environment variables:
+
+| Variable | Meaning |
+| --- | --- |
+| `OPENCODE_DB_PATH` | OpenCode SQLite database path |
+| `AI_USAGE_JOURNAL_PATH` | Usage and routing journal path |
+| `XDG_CONFIG_HOME` | Base directory for the default config path |
+| `XDG_DATA_HOME` | Base directory for default database, journal, and cache paths |
+
+## Privacy and network behavior
+
+- OpenCode data is read locally from SQLite in read-only mode.
+- Ollama journaling stores usage metadata, not prompt or response content.
+- Routing events contain only the JSON fields supplied by the caller.
+- Prompts, completions, API keys, credentials, and interaction content are not
+  collected.
+- Normal dashboard and export operation does not require a network request.
+- `--refresh-pricing`, `--refresh-zen`, and an enabled `zen_pricing`
+  background collector make outbound requests to OpenCode/Zen endpoints.
+
+Default local storage paths (when the corresponding XDG variable is unset):
+
+| Data | Path |
+| --- | --- |
+| OpenCode usage, read-only | `~/.local/share/opencode/opencode.db` |
+| Ollama and routing journal | `~/.local/share/ai-usage-tui/usage.db` |
+| Zen pricing cache | `~/.local/share/ai-usage-tui/zen-pricing.toml` |
+| Zen model catalog | `~/.local/share/ai-usage-tui/zen-models.json` |
+| Configuration | `~/.config/ai-usage-tui/config.toml` |
+
+## Troubleshooting
+
+- **No OpenCode rows:** check that the database exists at the displayed source
+  path, or pass `--db PATH`.
+- **No Ollama rows:** first pipe a completed response containing `done: true`
+  through `--record-ollama`, then verify the journal path.
+- **No cost shown:** the model may be local, free, absent from pricing data, or
+  missing authoritative cost metadata. Try `--refresh-pricing`; unknown cost
+  remains unavailable by design.
+- **Config not applied:** verify TOML syntax and the path shown above. A custom
+  `--config PATH` fails immediately when the file does not exist.
+- **`HOME is not set`:** set `HOME`, or provide explicit database and journal
+  paths as needed.
+
+## Development
 
 ```sh
-ai-usage-tui --routing-json     # JSON output
-ai-usage-tui --routing-csv routing.csv   # CSV file
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets
+cargo build --release
 ```
 
-See [`docs/routing-analytics.md`](docs/routing-analytics.md) for the full schema.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution guidelines.
 
-## Ollama Journaling
+## More documentation
 
-Ollama doesn't keep a usage history. This tool provides an opt-in journal:
-
-```sh
-# Record a completed Ollama response (non-streaming):
-curl -s http://localhost:11434/api/generate \
-  -d '{"model":"qwen3-coder:30b","prompt":"hello","stream":false}' \
-  | ai-usage-tui --record-ollama
-
-# For streaming responses, pipe the newline-delimited response stream:
-ollama run qwen3-coder:30b "hello" --json \
-  | ai-usage-tui --record-ollama
-```
-
-The journal stores only token counts and model metadata — no prompts or completions.
-Override the journal location with `--journal PATH` or `AI_USAGE_JOURNAL_PATH`.
-
-## Categories & Cost Provenance
-
-Every usage event is classified into one of five categories:
-
-| Category | Meaning | Example |
-|---------|---------|---------|
-| **LOCAL** | Local provider (Ollama, LM Studio, llama.cpp, vLLM, localhost) | `ollama/qwen3-coder:30b` |
-| **FREE** | Explicitly free model | `nemotron-3-ultra-free`, `big-pickle` |
-| **PAID** | Usage with known cost (provider-reported or calculated) | `opencode/gpt-5.6-luna` |
-| **CLOUD** | Cloud-routed without authoritative cost | `ollama-cloud/glm-5.2:cloud` |
-| **UNKNOWN** | No pricing metadata available | unrecognized model |
-
-Every cost is labeled with its provenance:
-
-| Status | Meaning |
-|--------|---------|
-| `reported` | Cost reported by the provider |
-| `calculated` | Cost calculated from token counts × pricing |
-| `estimated` | Cost estimated from bundled pricing table |
-| `free` | Model is free, cost = $0 |
-| `local` | Local model, no cloud cost |
-| `unavailable` | No pricing data — shown as "UNKNOWN COST", never as $0 |
-
-**A missing cost is never displayed as a paid zero.**
-
-## Data Storage & Privacy
-
-| What | Where | What's stored |
-|------|-------|---------------|
-| OpenCode usage | `~/.local/share/opencode/opencode.db` (read-only) | Read by the tool, never written |
-| Ollama journal | `~/.local/share/ai-usage-tui/usage.db` | Token counts + model metadata only |
-| Routing events | Same journal, `routing_event` table | Agent, model, task, tokens, cost — no prompts |
-| Zen pricing cache | `~/.local/share/ai-usage-tui/zen-pricing.toml` | Model pricing per 1M tokens |
-| Config | `~/.config/ai-usage-tui/config.toml` | Your settings |
-
-**The tool never stores:**
-- Prompts or completions
-- API keys or credentials
-- Content of any AI interaction
-
-All data stays on your machine. No telemetry, no phone-home, no analytics sent anywhere
-(unless you configure a budget webhook URL).
-
-## FAQ
-
-<details>
-<summary><b>Why is my cost showing as "UNKNOWN COST"?</b></summary>
-
-The model isn't in the pricing table. Run `ai-usage-tui --refresh-pricing` to fetch
-the latest Zen pricing, or check if the model ID matches a known name in
-`pricing/zen.toml`.
-</details>
-
-<details>
-<summary><b>How do I track Ollama usage?</b></summary>
-
-Ollama doesn't keep history. Use `--record-ollama` to journal each completed response
-(see [Ollama Journaling](#ollama-journaling)). The journal stores token counts only —
-no prompts or completions.
-</details>
-
-<details>
-<summary><b>Can I use this without OpenCode?</b></summary>
-
-Yes, but you'll only see data from the Ollama journal and routing events. The OpenCode
-collector is the primary data source. If you don't use OpenCode, disable it in config:
-`[collectors.opencode] enabled = false`.
-</details>
-
-<details>
-<summary><b>How do I set up budget alerts in cron?</b></summary>
-
-```sh
-# Check every hour, alert if any budget exceeded:
-0 * * * * ai-usage-tui --check-budgets >> /var/log/budget.log || send-alert.sh
-```
-
-Or configure a webhook in your config and the TUI will dispatch alerts automatically.
-</details>
-
-<details>
-<summary><b>Where is my data stored?</b></summary>
-
-Everything is local. See [Data Storage & Privacy](#data-storage--privacy) above.
-No data leaves your machine unless you configure a budget webhook URL.
-</details>
-
-<details>
-<summary><b>How do I contribute?</b></summary>
-
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for guidelines. Run `cargo test &&
-cargo clippy --all-targets --all-features -- -D warnings` before submitting a PR.
-</details>
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Architecture](docs/architecture.md) | System design, data flow, and privacy boundary |
-| [Background Collectors](docs/background-collectors.md) | Collector trait, threading model, shutdown |
-| [Data Model](docs/data-model.md) | Normalized usage event + routing event schema |
-| [Provider Support](docs/provider-support.md) | OpenCode, Ollama, Zen, and cloud providers |
-| [Routing Analytics](docs/routing-analytics.md) | Routing event schema and aggregation logic |
-| [Release Process](docs/release-process.md) | How releases are built and published |
-| [Phase Status](docs/phase-status.md) | Implementation progress tracker |
-| [Model Routing](MODEL_ROUTING.md) | Development agent routing policy |
-| [Contributing](CONTRIBUTING.md) | Contribution guidelines |
-| [Security](SECURITY.md) | Security policy |
-| [Changelog](CHANGELOG.md) | Version history |
+- [`docs/architecture.md`](docs/architecture.md) — architecture and data flow
+- [`docs/background-collectors.md`](docs/background-collectors.md) — collector design
+- [`docs/data-model.md`](docs/data-model.md) — data model and schema
+- [`docs/provider-support.md`](docs/provider-support.md) — provider support matrix
+- [`docs/routing-analytics.md`](docs/routing-analytics.md) — routing analytics
+- [`docs/release-process.md`](docs/release-process.md) — release process
+- [`docs/phase-status.md`](docs/phase-status.md) — implementation status
+- [`MODEL_ROUTING.md`](MODEL_ROUTING.md) — development agent-routing policy
+- [`SECURITY.md`](SECURITY.md) — security policy
+- [`CHANGELOG.md`](CHANGELOG.md) — release notes
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [`LICENSE`](LICENSE).
