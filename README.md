@@ -1,5 +1,9 @@
 # ai-usage-tui
 
+[![CI](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/ci.yml)
+[![Release](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/release.yml/badge.svg)](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/release.yml)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A btop-inspired terminal dashboard for understanding AI token usage and cost.
 
 `ai-usage-tui` reads OpenCode's local usage database, can journal completed
@@ -19,6 +23,18 @@ tokens, cost provenance, budgets, and opt-in model-routing events.
 
 Unknown cost is kept unknown rather than displayed as paid usage with a zero
 cost. Local and explicitly free usage is excluded from budget spend.
+
+| Category | Meaning |
+| --- | --- |
+| `LOCAL` | Usage identified as running on a local endpoint |
+| `CLOUD` | Hosted or cloud-routed usage without authoritative cost |
+| `FREE` | Usage from a model explicitly identified as free |
+| `PAID` | Usage with a known billable cost |
+| `UNKNOWN` | Usage without enough metadata to classify or price |
+
+Cost status is reported separately from category: `reported` comes from the
+provider, `calculated` or `estimated` comes from pricing data, `free` and
+`local` are non-billable, and `unavailable` remains unknown.
 
 ## Quick start
 
@@ -353,9 +369,21 @@ Environment variables:
 - OpenCode data is read locally from SQLite in read-only mode.
 - Ollama journaling stores usage metadata, not prompt or response content.
 - Routing events contain only the JSON fields supplied by the caller.
+- Prompts, completions, API keys, credentials, and interaction content are not
+  collected.
 - Normal dashboard and export operation does not require a network request.
 - `--refresh-pricing`, `--refresh-zen`, and an enabled `zen_pricing`
   background collector make outbound requests to OpenCode/Zen endpoints.
+
+Default local storage paths (when the corresponding XDG variable is unset):
+
+| Data | Path |
+| --- | --- |
+| OpenCode usage, read-only | `~/.local/share/opencode/opencode.db` |
+| Ollama and routing journal | `~/.local/share/ai-usage-tui/usage.db` |
+| Zen pricing cache | `~/.local/share/ai-usage-tui/zen-pricing.toml` |
+| Zen model catalog | `~/.local/share/ai-usage-tui/zen-models.json` |
+| Configuration | `~/.config/ai-usage-tui/config.toml` |
 
 ## Troubleshooting
 
@@ -391,4 +419,10 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution guidelines.
 - [`docs/routing-analytics.md`](docs/routing-analytics.md) — routing analytics
 - [`docs/release-process.md`](docs/release-process.md) — release process
 - [`docs/phase-status.md`](docs/phase-status.md) — implementation status
+- [`MODEL_ROUTING.md`](MODEL_ROUTING.md) — development agent-routing policy
+- [`SECURITY.md`](SECURITY.md) — security policy
 - [`CHANGELOG.md`](CHANGELOG.md) — release notes
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
