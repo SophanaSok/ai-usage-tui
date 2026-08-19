@@ -47,6 +47,15 @@ impl CostStatus {
         )
     }
 
+    /// Whether this usage ought to carry a price.
+    ///
+    /// Distinct from `is_billable`, which means "has a known cost worth summing" and so
+    /// excludes `Unavailable` — the very case a coverage figure exists to count. `Free` and
+    /// `Local` are genuinely costless and are not missing anything.
+    pub fn needs_price(self) -> bool {
+        !matches!(self, Self::Free | Self::Local)
+    }
+
     pub fn is_known(self) -> bool {
         self != Self::Unavailable
     }
@@ -75,6 +84,9 @@ impl Category {
 
 #[derive(Clone, Debug, Default)]
 pub struct Usage {
+    /// Stable per-event identity from the source (OpenCode message id, journal `event_id`).
+    /// Used for deduplication; `None` falls back to shape-plus-timestamp matching.
+    pub event_id: Option<String>,
     pub provider: String,
     pub model: String,
     pub category: Category,
@@ -87,12 +99,31 @@ pub struct Usage {
     pub cost: Option<f64>,
     pub cost_status: CostStatus,
     pub created: i64,
+    /// Conversation/session this usage belongs to, when the source records one.
+    pub session_id: Option<String>,
+    /// Project the work happened in — for Claude Code, the repository working directory.
+    /// Enables per-project cost, which no view could express before.
+    pub project: Option<String>,
 }
 
 impl Usage {
     pub fn total_tokens(&self) -> u64 {
         self.input + self.output + self.reasoning + self.cache_read + self.cache_write
     }
+}
+
+/// Usage rolled up by project, for the per-project cost view.
+#[derive(Debug, Default, Clone)]
+pub struct ProjectTotals {
+    pub project: String,
+    pub requests: u64,
+    pub tokens: u64,
+    pub cost: f64,
+    /// Requests whose cost is billable but unknown. Rendering `$12.00` next to work that is
+    /// only two-thirds priced would misstate the number without saying so.
+    pub unpriced_requests: u64,
+    pub sessions: usize,
+    pub models: usize,
 }
 
 #[derive(Default)]
@@ -149,15 +180,14 @@ impl Range {
         }
     }
     pub fn cutoff(self) -> i64 {
-        if self == Self::All {
-            return 0;
-        }
         let seconds: i64 = match self {
-            Self::Today => 86_400,
+            Self::All => return 0,
+            // "TODAY" means the local calendar day, matching how budgets bill and how users
+            // read the label. A rolling 24h window silently disagrees with both.
+            Self::Today => return crate::utils::local_day_start(),
             Self::Week => 604_800,
             Self::Month => 2_592_000,
             Self::Days(days) => days.saturating_mul(86_400).min(i64::MAX as u64) as i64,
-            Self::All => 0,
         };
         now().saturating_sub(seconds)
     }

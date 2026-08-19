@@ -27,13 +27,23 @@ pub fn load_journal(path: &Path) -> Result<Vec<Usage>> {
     if !has_events {
         return Ok(Vec::new());
     }
-    let mut stmt = conn.prepare(
-        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created FROM usage_event",
+    // A journal written by an older build has no `event_id` column, and this is a read-only
+    // path that cannot migrate it. Select the column only when it actually exists.
+    let has_event_id: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('usage_event') WHERE name = 'event_id')",
+        [],
+        |row| row.get(0),
     )?;
+    let mut stmt = conn.prepare(if has_event_id {
+        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, event_id FROM usage_event"
+    } else {
+        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, NULL AS event_id FROM usage_event"
+    })?;
     let rows = stmt.query_map([], |row| {
         let category: String = row.get(2)?;
         let cost_status: String = row.get(3)?;
         Ok(Usage {
+            event_id: row.get(12).ok().flatten(),
             provider: row.get(0)?,
             model: row.get(1)?,
             category: category_from_label(&category),
@@ -46,6 +56,8 @@ pub fn load_journal(path: &Path) -> Result<Vec<Usage>> {
             cache_write: row.get(9)?,
             cost: row.get(10)?,
             created: row.get(11)?,
+            session_id: None,
+            project: None,
         })
     })?;
     Ok(rows.filter_map(Result::ok).collect())

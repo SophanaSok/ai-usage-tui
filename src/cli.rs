@@ -11,6 +11,8 @@ pub struct Cli {
     pub config_path: Option<PathBuf>,
     pub db_path: Option<PathBuf>,
     pub journal_path: Option<PathBuf>,
+    /// Root of Claude Code's session logs; defaults to `~/.claude/projects`.
+    pub claude_dir: Option<PathBuf>,
     pub range: Range,
     pub range_set: bool,
     pub provider_filter: Option<String>,
@@ -38,6 +40,7 @@ impl Default for Cli {
             config_path: None,
             db_path: None,
             journal_path: None,
+            claude_dir: None,
             range: Range::Week,
             range_set: false,
             provider_filter: None,
@@ -138,6 +141,12 @@ where
                     .ok_or_else(|| anyhow::anyhow!("--journal requires a path"))?;
                 cli.journal_path = Some(PathBuf::from(value));
             }
+            "--claude-dir" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--claude-dir requires a path"))?;
+                cli.claude_dir = Some(PathBuf::from(value));
+            }
             "--days" => {
                 let value = args
                     .next()
@@ -228,6 +237,9 @@ OPTIONS:
     --db PATH     Override the OpenCode SQLite database path
     --journal PATH
                   Override the local usage journal path
+    --claude-dir PATH
+                  Override the Claude Code session-log directory
+                  (default: ~/.claude/projects)
     --days N       Show the last N days
     --today        Show today
     --week         Show the last 7 days
@@ -255,8 +267,13 @@ OPTIONS:
 
 ENVIRONMENT:
     OPENCODE_DB_PATH    Override the OpenCode SQLite database path
+    CLAUDE_PROJECTS_DIR Override the Claude Code session-log directory
     AI_USAGE_JOURNAL_PATH
                         Override the local usage journal path
+    AI_USAGE_LOG        Write diagnostics to a file. Set to 1 for the default
+                        location under the data directory, or to a path.
+                        Collector errors are invisible on stderr while the
+                        dashboard holds the alternate screen.
 
 KEYS:
     1              Today
@@ -266,6 +283,7 @@ KEYS:
     r              Refresh data
     b              Toggle budgets panel
     t              Toggle routing panel
+    p              Toggle per-project cost panel
     j / Down       Select next model
     k / Up         Select previous model
     q / Esc        Quit

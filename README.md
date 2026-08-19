@@ -38,9 +38,9 @@ tokens, cost provenance, budgets, and opt-in model-routing events.
 
 ## What it shows
 
-- Usage grouped by provider and model
+- Usage grouped by provider and model, across OpenCode, Claude Code, and Ollama
 - Input, output, reasoning, cache-read, and cache-write tokens
-- Last 24 hours, trailing 7-day, trailing 30-day, all-time, or custom-day ranges
+- Today (local calendar day), trailing 7-day, trailing 30-day, all-time, or custom-day ranges
 - `LOCAL`, `CLOUD`, `FREE`, `PAID`, and `UNKNOWN` classifications
 - Provider-reported, calculated, estimated, free, local, or unavailable cost
 - Daily and monthly budget status
@@ -148,7 +148,8 @@ cargo build --release
 ## Data sources
 
 ```text
-OpenCode DB / Ollama journal -> background collectors -> TUI or JSON/CSV export
+OpenCode DB / Claude Code logs / Ollama journal
+        -> background collectors -> TUI or JSON/CSV export
 ```
 
 ### OpenCode
@@ -163,6 +164,24 @@ assistant-message usage metadata is read. The default path follows
 
 Select another database with `--db PATH`, the `db` config setting, or
 `OPENCODE_DB_PATH`.
+
+### Claude Code
+
+Claude Code collection is automatic. Session logs are read from:
+
+```text
+~/.claude/projects/<project>/<session-id>.jsonl
+```
+
+Select another directory with `--claude-dir PATH`, the `claude_dir` config
+setting, or `CLAUDE_PROJECTS_DIR`. Each log is tailed by byte offset, so a
+poll reads only what was appended since the last one.
+
+Only the `usage` block of each assistant message is parsed. Claude Code
+transcripts contain prompts, completions, file contents, and anything a tool
+printed — including secrets read from a `.env` — and none of that is read or
+retained. Usage is attributed to a session and a project (the working
+directory's last path segment).
 
 ### Ollama
 
@@ -234,7 +253,7 @@ activity. Press `b` for budget status or `t` for routing analytics:
 
 | Key | Action |
 | --- | --- |
-| `1` | Show the last 24 hours |
+| `1` | Show today (local calendar day) |
 | `2` | Show the trailing 7 days |
 | `3` | Show the trailing 30 days |
 | `4` | Show all history |
@@ -318,8 +337,9 @@ warning, critical, or exceeded threshold. It exits with status `0` when all
 budgets are below their warning thresholds or no budgets are configured.
 
 Only usage with a reported, calculated, or estimated cost contributes to
-spend. Budget periods begin at midnight UTC for daily budgets and the first
-day of the current UTC month for monthly budgets.
+spend. Budget periods begin at local midnight for daily budgets and the first
+day of the current local month for monthly budgets — the same boundaries the
+dashboard's `TODAY` range uses, so the two always agree.
 
 The CLI accepts `--webhook URL` and config accepts `budgets.webhook`, but the
 current command and TUI do not dispatch webhook requests.
@@ -383,7 +403,8 @@ does not load it automatically.
 | `--config PATH` | Load a specific TOML config file |
 | `--db PATH` | Override the OpenCode database path |
 | `--journal PATH` | Override the local journal path |
-| `--today` | Use the last 24 hours |
+| `--claude-dir PATH` | Override the Claude Code session-log directory |
+| `--today` | Use today (local calendar day) |
 | `--week` | Use the trailing 7 days (default) |
 | `--month` | Use the trailing 30 days |
 | `--days N` | Use the trailing `N` days; `N` must be greater than zero |
@@ -395,7 +416,7 @@ does not load it automatically.
 | `--refresh-zen` | Refresh the cached Zen model catalog and exit |
 | `--refresh-pricing` | Refresh the Zen pricing cache and exit |
 | `--check-budgets` | Print actionable budget alerts as JSON |
-| `--webhook URL` | Set the parsed webhook override; dispatch is not currently wired |
+| `--webhook URL` | POST budget alerts to this URL (overrides `budgets.webhook`) |
 | `--record-routing` | Read one routing event from stdin and journal it |
 | `--routing-json` | Print aggregated routing analytics as JSON |
 | `--routing-csv PATH` | Write aggregated routing analytics as CSV |
@@ -409,6 +430,8 @@ Environment variables:
 | --- | --- |
 | `OPENCODE_DB_PATH` | OpenCode SQLite database path |
 | `AI_USAGE_JOURNAL_PATH` | Usage and routing journal path |
+| `CLAUDE_PROJECTS_DIR` | Claude Code session-log directory |
+| `AI_USAGE_LOG` | Write diagnostics to a file — `1` for the default location, or a path. Off when unset. |
 | `XDG_CONFIG_HOME` | Base directory for the default config path |
 | `XDG_DATA_HOME` | Base directory for default database, journal, and cache paths |
 
@@ -419,6 +442,14 @@ Environment variables:
 - Routing events contain only the JSON fields supplied by the caller.
 - Prompts, completions, API keys, credentials, and interaction content are not
   collected.
+- Claude Code session transcripts contain source code and secrets; only the
+  `usage` block of each line is parsed. A test plants a fake credential in a
+  transcript and fails if it reaches a usage record.
+- Per-project attribution records the **working directory path** of each
+  session, so `~/a/build` and `~/b/build` stay separate projects. The dashboard
+  shows only the shortest name that distinguishes them, but `--json` and
+  `--csv` export the full path — worth knowing before pasting an export into a
+  ticket.
 - Normal dashboard and export operation does not require a network request.
 - `--refresh-pricing`, `--refresh-zen`, and an enabled `zen_pricing`
   background collector make outbound requests to OpenCode/Zen endpoints.
@@ -444,8 +475,10 @@ Default local storage paths (when the corresponding XDG variable is unset):
   remains unavailable by design.
 - **Config not applied:** verify TOML syntax and the path shown above. A custom
   `--config PATH` fails immediately when the file does not exist.
-- **`HOME is not set`:** set `HOME`, or provide explicit database and journal
-  paths as needed.
+- **`could not determine a home directory`:** set `HOME` (or `USERPROFILE` on
+  Windows), or pass explicit paths with `--db`, `--journal`, and `--claude-dir`.
+- **No Claude Code rows:** confirm `~/.claude/projects` exists and contains
+  `.jsonl` files, or point at the right directory with `--claude-dir PATH`.
 
 ## Development
 
@@ -478,6 +511,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution guidelines.
 - [`docs/data-model.md`](docs/data-model.md) — data model and schema
 - [`docs/release-process.md`](docs/release-process.md) — release process
 - [`docs/phase-status.md`](docs/phase-status.md) — implementation status
+- [`docs/roadmap.md`](docs/roadmap.md) — outstanding findings, conventions, and next steps
 - [`docs/execution-log.md`](docs/execution-log.md) — development history
 - [`MODEL_ROUTING.md`](MODEL_ROUTING.md) — development agent-routing policy
 - [`SECURITY.md`](SECURITY.md) — security policy

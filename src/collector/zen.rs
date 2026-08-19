@@ -10,7 +10,9 @@ pub fn zen_cache_path() -> Option<PathBuf> {
 }
 
 pub fn refresh_zen_catalog() -> Result<PathBuf> {
-    let path = zen_cache_path().ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+    let path = zen_cache_path().ok_or_else(|| {
+        anyhow::anyhow!("could not determine a home directory; pass an explicit path (see --help)")
+    })?;
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Zen cache path has no parent directory"))?;

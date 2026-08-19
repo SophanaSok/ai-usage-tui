@@ -54,10 +54,10 @@ record_routing() {
 }
 
 if [[ ! -s "${JOURNAL}" ]]; then
-  record_routing '{"agent":"@heavy","model":"glm-5.2:cloud","provider":"opencode","task":"refactor","phase":"implementation","tokens":15000,"cost":0.02,"retries":1,"escalations":0,"test_result":true,"review_defects":0}'
-  record_routing '{"agent":"@heavy","model":"gpt-5.6-sol","provider":"opencode","task":"tests","phase":"verification","tokens":22000,"cost":0.03,"retries":0,"escalations":1,"test_result":false,"review_defects":2}'
-  record_routing '{"agent":"@fast","model":"nemotron-3-ultra-free","provider":"opencode","task":"docs","phase":"polish","tokens":8000,"cost":0.0,"retries":0,"escalations":0,"test_result":true,"review_defects":0}'
-  record_routing '{"agent":"@local","model":"qwen3-coder-agent","provider":"ollama","task":"lint","phase":"cleanup","tokens":12000,"cost":0.0,"retries":0,"escalations":0,"test_result":true,"review_defects":0}'
+  record_routing '{"agent":"heavy","model":"gpt-5.1-codex","provider":"opencode","task":"refactor","phase":"implementation","tokens":15000,"cost":0.02,"retries":1,"escalations":0,"test_result":true,"review_defects":0}'
+  record_routing '{"agent":"heavy2","model":"gpt-5.6-sol","provider":"opencode","task":"tests","phase":"verification","tokens":22000,"cost":0.03,"retries":0,"escalations":1,"test_result":false,"review_defects":2}'
+  record_routing '{"agent":"junior","model":"nemotron-3-ultra-free","provider":"opencode","task":"docs","phase":"polish","tokens":8000,"cost":0.0,"retries":0,"escalations":0,"test_result":true,"review_defects":0}'
+  record_routing '{"agent":"local","model":"qwen3.6-35b-a3b","provider":"llamacpp","task":"lint","phase":"cleanup","tokens":12000,"cost":0.0,"retries":0,"escalations":0,"test_result":true,"review_defects":0}'
 fi
 
 cleanup() {

@@ -1,8 +1,8 @@
 $ErrorActionPreference = 'Stop'
 
 $packageName = 'ai-usage-tui'
-$url = 'https://github.com/SophanaSok/ai-usage-tui/releases/download/v0.2.0/ai-usage-tui-0.2.0-x86_64-windows.zip'
-$checksum = 'PLACEHOLDER_SHA256'
+$url = 'https://github.com/SophanaSok/ai-usage-tui/releases/download/__TAG__/ai-usage-tui-__TAG__-x86_64-windows.zip'
+$checksum = '__WINDOWS_SHA256__'
 $checksumType = 'sha256'
 
 Install-ChocolateyZipPackage -PackageName $packageName -Url $url -Checksum $checksum -ChecksumType $checksumType -UnzipLocation "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)"

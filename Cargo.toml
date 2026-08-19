@@ -2,6 +2,7 @@
 name = "ai-usage-tui"
 version = "0.2.0"
 edition = "2021"
+rust-version = "1.88"
 description = "A btop-inspired dashboard for local and hosted AI usage"
 license = "MIT"
 authors = ["Sophana Sok <sokdevelopment@gmail.com>"]
@@ -23,7 +24,6 @@ toml = "0.8"
 
 [dev-dependencies]
 tempfile = "3"
-proptest = "1"
 
 [package.metadata.deb]
 maintainer = "Sophana Sok <sokdevelopment@gmail.com>"

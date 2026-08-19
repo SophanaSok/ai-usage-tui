@@ -5,6 +5,7 @@ pub mod collector;
 pub mod config;
 pub mod export;
 pub mod helpers;
+pub mod logging;
 pub mod model;
 pub mod pricing;
 pub mod routing;
@@ -12,7 +13,8 @@ pub mod ui;
 pub mod utils;
 
 pub use collector::background::{
-    Collector, CollectorHandle, JournalCollector, OpenCodeCollector, ZenPricingCollector,
+    ClaudeCodeCollector, Collector, CollectorHandle, JournalCollector, OpenCodeCollector,
+    ZenPricingCollector,
 };
 
 #[cfg(test)]
@@ -22,7 +24,7 @@ mod integration_tests {
 
     use crate::{
         cli::Cli,
-        collector::{load_usage, setup_test_db, setup_test_journal},
+        collector::{build_test_journal, load_usage, setup_test_db},
         export::print_once,
         model::{Category, CostStatus, Range, Usage},
         pricing::{apply_estimated_pricing, PricingEngine},
@@ -30,10 +32,25 @@ mod integration_tests {
 
     #[test]
     fn test_full_pipeline_opencode_to_totals() {
+        let temp_dir = TempDir::new().unwrap();
         let db_path = setup_test_db();
-        let journal_path = setup_test_journal();
+        let journal_path = build_test_journal(temp_dir.path());
 
-        let (usages, _source) = load_usage(Some(&db_path), &journal_path).unwrap();
+        let claude_root = temp_dir.path().join("no-claude-logs");
+        let (usages, _source) =
+            load_usage(Some(&db_path), &journal_path, Some(&claude_root)).unwrap();
+
+        // Both sources must actually contribute; a silently-empty journal used to let this
+        // test pass while covering only OpenCode.
+        assert!(
+            usages.iter().any(|u| u.provider == "opencode"),
+            "no OpenCode usage ingested"
+        );
+        assert_eq!(
+            usages.iter().filter(|u| u.model == "gemma3:4b").count(),
+            2,
+            "two distinct journal events with identical token counts were collapsed"
+        );
 
         let engine = PricingEngine::load();
         let mut usages = usages;
@@ -68,7 +85,7 @@ mod integration_tests {
             ..Default::default()
         };
 
-        let cli = crate::config::apply_config(cli).unwrap();
+        let (cli, _config) = crate::config::apply_config(cli).unwrap();
 
         assert_eq!(cli.refresh_interval.as_secs(), 60);
         assert_eq!(cli.range, Range::Days(14));
@@ -133,10 +150,13 @@ mod integration_tests {
 
     #[test]
     fn test_export_json_format() {
+        let temp_dir = TempDir::new().unwrap();
         let db_path = setup_test_db();
-        let journal_path = setup_test_journal();
+        let journal_path = build_test_journal(temp_dir.path());
 
-        let (usages, _source) = load_usage(Some(&db_path), &journal_path).unwrap();
+        let claude_root = temp_dir.path().join("no-claude-logs");
+        let (usages, _source) =
+            load_usage(Some(&db_path), &journal_path, Some(&claude_root)).unwrap();
         let engine = PricingEngine::load();
         let mut usages = usages;
         apply_estimated_pricing(&mut usages, &engine);
@@ -145,6 +165,7 @@ mod integration_tests {
             json: true,
             once: true,
             db_path: Some(db_path),
+            claude_dir: Some(temp_dir.path().join("no-claude-logs")),
             ..Default::default()
         };
 
@@ -157,12 +178,12 @@ mod integration_tests {
         let csv_path = temp_dir.path().join("export.csv");
 
         let db_path = setup_test_db();
-        let _journal_path = setup_test_journal();
 
         let cli = Cli {
             csv_path: Some(csv_path.clone()),
             once: true,
             db_path: Some(db_path),
+            claude_dir: Some(temp_dir.path().join("no-claude-logs")),
             ..Default::default()
         };
 

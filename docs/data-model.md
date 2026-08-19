@@ -17,12 +17,12 @@ cache_write_tokens
 cost
 latency (planned)
 error_status (planned)
-project (planned)
-session (planned)
+project (populated by the Claude Code collector from `cwd`)
+session (populated by the Claude Code and OpenCode collectors)
 source (planned)
 ```
 
-Historical records should retain the pricing snapshot or source used to calculate their cost. Provider adapters should tolerate missing optional fields and preserve the event with an explicit unknown status.
+Historical records should retain the pricing snapshot or source used to calculate their cost. This is not yet implemented — costs are currently re-derived from the active pricing table, so a `--refresh-pricing` rewrites historical figures. See [`roadmap.md`](roadmap.md) (finding 1.6). Provider adapters should tolerate missing optional fields and preserve the event with an explicit unknown status.
 
 The local journal currently stores usage metadata in `usage_event`. It intentionally excludes prompt and completion content.
 
