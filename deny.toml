@@ -1,28 +1,28 @@
 # cargo-deny configuration.
 #
-# The lockfile is committed and nothing was watching it: 240 packages, no advisory scanning,
+# The lockfile is committed and nothing was watching it: ~300 packages, no advisory scanning,
 # and a vendored SQLite whose CVEs only reach us through a rusqlite bump.
 
 [advisories]
 version = 2
-ignore = [
-    # RUSTSEC-2024-0436 — `paste` is archived and unmaintained. It reaches us only through
-    # ratatui 0.29, it is a compile-time macro helper with no runtime surface, and the advisory
-    # itself reports no safe upgrade. This is an unmaintained notice, not a vulnerability.
-    # Remove this entry when ratatui drops the dependency; do not broaden it to silence the
-    # whole `unmaintained` class.
-    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; pulled in by ratatui 0.29, compile-time only, no upgrade available" },
-]
+# No ignores. RUSTSEC-2024-0436 (`paste`, unmaintained) was ignored here while ratatui 0.29
+# pulled it in; ratatui 0.30 dropped the dependency and `paste` is no longer in the tree, so
+# the exception is gone rather than left standing as stale text that reads like a live risk.
+ignore = []
 
 [licenses]
 version = 2
-# Every entry here is a license actually present in the dependency tree. Keeping it exact means
-# a new license type fails the build and gets reviewed, rather than passing unnoticed.
+# Every entry here is a license actually present in the dependency tree, and cargo-deny warns
+# when one stops being. Keeping it exact means a new license type fails the build and gets
+# reviewed, rather than passing unnoticed.
+#
+# `cargo deny list` also reports BSL-1.0 (ryu) and Unlicense (memchr, aho-corasick). Neither
+# needs allowing: both are the second half of an `OR` expression already satisfied by
+# Apache-2.0 or MIT.
 allow = [
     "MIT",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
-    "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
     "Unicode-3.0",

@@ -55,6 +55,19 @@
   published", together with the specific guarantees a report should be measured against.
 - CI matrix across Linux, macOS and Windows, plus an MSRV job (`rust-version = "1.88"`),
   doctests, a CLI smoke test against the fixture database, `cargo-deny`, and Dependabot.
+
+### Changed
+
+- **ratatui 0.30, rusqlite 0.40, toml 1.1.** toml 1.1 rejects the pricing table when parsed as
+  `toml::Value`, which would have left every model in the catalog unpriced — silently, with the
+  dashboard still rendering totals; it parses as `toml::Table`. rusqlite 0.40 removed the `u64`
+  impls of `FromSql`/`ToSql` (SQLite integers are signed), so counters round-trip explicitly and
+  clamp rather than cast: a corrupt negative row reads as 0 instead of ~1.8e19 tokens in a cost
+  total. MSRV stays 1.88. This also resolved the crossterm 0.28/0.29 double-compile.
+- `deny.toml` no longer ignores RUSTSEC-2024-0436 — ratatui 0.30 dropped `paste`, so the crate is
+  gone and the exception with it. `BSD-2-Clause` left the allowlist for the same reason: it is no
+  longer in the tree, and an allowlist entry that matches nothing is a claim that has stopped
+  being true.
 - Journal fixtures are constructed in-test rather than read from a gitignored binary that did not
   exist on a fresh clone — which had let the pipeline test pass while covering nothing.
 
