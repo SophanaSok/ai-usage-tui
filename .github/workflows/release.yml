@@ -191,7 +191,7 @@ jobs:
       - name: Render packaging manifests
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
           VERSION="${TAG#v}"
 
           if [ ! -f artifacts/checksums.txt ]; then
@@ -253,12 +253,15 @@ jobs:
           fi
           echo "all manifests rendered with no placeholders remaining"
         env:
-          GITHUB_REF_NAME: ${{ inputs.tag || github.ref_name }}
+          # Deliberately not GITHUB_REF_NAME: variables starting with GITHUB_ are
+          # reserved, so a step-level override of one is displayed in the log but
+          # silently ignored — the runner's own value wins.
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
       - name: Extract changelog
         id: changelog
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           awk -v ver="$VERSION" '
             /^## / {
               if (found) exit
@@ -271,7 +274,10 @@ jobs:
           cat body.txt >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
         env:
-          GITHUB_REF_NAME: ${{ inputs.tag || github.ref_name }}
+          # Deliberately not GITHUB_REF_NAME: variables starting with GITHUB_ are
+          # reserved, so a step-level override of one is displayed in the log but
+          # silently ignored — the runner's own value wins.
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
       - name: Dry run — skipping publish
         if: github.event_name != 'push'
