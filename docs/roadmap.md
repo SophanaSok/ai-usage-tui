@@ -1,13 +1,14 @@
 # Roadmap and Outstanding Findings
 
-Working state for continuing the audit-driven work started 2026-08-18. Shipped items are in
-`CHANGELOG.md` under `[Unreleased]`; this file is the *remaining* work, with enough evidence
-attached that each item can be picked up cold.
+Working state for continuing the audit-driven work started 2026-08-18, last updated 2026-08-19.
+Shipped items are in `CHANGELOG.md` under `[Unreleased]`; this file is the *remaining* work, with
+enough evidence attached that each item can be picked up cold.
 
 ## Where things stand
 
-92 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
-macOS / Windows with an MSRV job and `cargo-deny`.
+105 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
+macOS / Windows with an MSRV job (1.88) and `cargo-deny`. All six checks green on PR #5, including
+macOS, Windows and `cargo-deny`, which had never run before that branch.
 
 Sources read today: OpenCode SQLite, Claude Code JSONL, the local Ollama/routing journal, and the
 Zen pricing table. Verified end to end against ~103MB of real Claude Code logs — 5,879 requests
@@ -25,22 +26,6 @@ Numbering follows the original audit. Everything not listed here has shipped.
 
 ### P1 — Robustness
 
-**1.18 Silent-failure modes leave the UI confidently stale.**
-- `collector/background.rs` — `if let Ok(mut s) = state.write()`: an `RwLock` poisoned by a panic
-  makes every subsequent write a silent no-op. The UI shows stale data forever with no indication.
-- Same file — on collector panic the thread records an error and `break`s permanently. No restart.
-  `shutdown()` only flips an `AtomicBool`; `Drop` never joins, so threads can outlive the handle
-  by up to `POLL_CHECK_INTERVAL`.
-- No logging anywhere. No `log`/`tracing`, and stderr is invisible under the alternate screen, so
-  collector errors surface only as a concatenated header string.
-
-*Fix:* surface poisoned locks and dead collector threads in the UI, restart panicked collectors
-with backoff, add `tracing` to a log file.
-
-**1.20 The config file is parsed three times with inconsistent error handling** — `apply_config`
-hard-errors while `load_collector_config` and `load_full_config` both `unwrap_or_default()`,
-silently discarding failures. `main.rs` also calls `std::process::exit(1)`, bypassing destructors.
-
 **1.21 The pricing scraper can only re-price models it already hardcodes.** `pricing_refresh.rs`
 skips any scraped row whose display name is absent from `known_model_names()`. A refresh can never
 discover a new model. Combined with a hand-written `find("<table>")` / `split("<tr>")` parser over
@@ -48,15 +33,6 @@ one vendor's docs page, this is the most brittle code in the repo.
 
 *Note:* the overlay-merge fix means a lossy refresh can no longer **delete** pricing, so this is
 now a staleness problem rather than a data-loss one.
-
-### P1 — Distribution
-
-**1.13 `.deb`/`.rpm` are advertised but never built.** `[package.metadata.deb]` and
-`[package.metadata.generate-rpm]` exist and the CHANGELOG claims the packaging, but no CI job
-invokes `cargo-deb` or `cargo-generate-rpm`. Either add the jobs or drop the claim.
-
-**1.14 `SECURITY.md` has no working reporting channel** — it defers to "once the project
-repository is published," which is stale. Needs a real contact or a GitHub private advisory link.
 
 ### P2 — Pricing depth
 
@@ -121,6 +97,22 @@ The `btop-inspired` claim is not yet earned — btop's identity *is* the graph, 
   `reviewer` and `reasoning` then share a model — which weakens rule 3 (prefer a reviewer on a
   different provider from the agent that wrote the code) when `reasoning` did the writing.
 
+## Decisions worth knowing about
+
+**Logging is a ~130-line module, not `tracing`.** The audit called for `tracing`; what the problem
+actually needed was "collector errors survive to a file the user can read." `tracing` +
+`tracing-subscriber` is a large transitive tree for spans and subscribers this app has no use for,
+and `deny.toml` uses an exact license allowlist precisely so that its output stays reviewable by
+hand. Revisit if structured fields or per-module filtering ever earn their keep.
+
+**Logging is off by default.** `AI_USAGE_LOG` must be set. A tool whose entire pitch is "reads
+usage metadata, writes nothing, transmits nothing" should not quietly accumulate a file on disk.
+
+**Poison recovery can lose one row.** Recovering a poisoned `RwLock` may expose a partially
+applied merge — a usage key in the dedup index whose row never made it into the list. That is a
+bounded one-row loss against an unbounded silent freeze, which is what the previous
+`if let Ok(mut s) = state.write()` produced.
+
 ## Conventions worth preserving
 
 Established while fixing the accounting; breaking these is how the bugs came back.
@@ -141,6 +133,10 @@ Established while fixing the accounting; breaking these is how the bugs came bac
    this is how the dedup and integer-rate bugs were both confirmed.
 7. **Pricing comes from the `claude-api` skill, never from memory.** Load it before touching any
    model rate.
+8. **A silent failure is a bug, even when the code "handles" it.** `unwrap_or_default()` on a
+   config parse, `unwrap_or_default()` on a DB read, `if let Ok(..)` on a poisoned lock, and
+   `break` on a panic all read as robustness and all render "broken" as "nothing to report".
+   Failure must reach the screen or the log.
 
 ## How to verify a change end to end
 

@@ -22,7 +22,8 @@ use ai_usage_tui::{
         pricing_refresh::refresh_pricing,
         zen::refresh_zen_catalog,
     },
-    config::{apply_config, CollectorsConfig},
+    config::CollectorConfig,
+    config::{apply_config, ConfigFile},
     export::{csv_field, print_once},
     ui::run,
 };
@@ -47,7 +48,14 @@ fn main() -> Result<()> {
         println!("Refreshed Zen pricing table at {}", path.display());
         return Ok(());
     }
-    let cli = apply_config(parsed_cli)?;
+    let (cli, config) = apply_config(parsed_cli)?;
+    if let Some(path) = ai_usage_tui::logging::log_path() {
+        ai_usage_tui::logging::info(
+            "main",
+            &format!("ai-usage-tui {} starting", env!("CARGO_PKG_VERSION")),
+        );
+        eprintln!("logging to {}", path.display());
+    }
     if cli.record_ollama {
         let path = cli
             .journal_path
@@ -73,7 +81,7 @@ fn main() -> Result<()> {
         return record_routing(&path);
     }
     if cli.check_budgets {
-        return check_budgets(&cli);
+        return check_budgets(&cli, &config);
     }
     if cli.routing_json || cli.routing_csv_path.is_some() {
         return export_routing(&cli);
@@ -82,22 +90,22 @@ fn main() -> Result<()> {
         return print_once(&cli);
     }
 
-    let budget_engine = load_budget_engine(&cli);
-    let dispatcher = AlertDispatcher::new(webhook_url(&cli));
-    let collector_handle = build_collectors(&cli);
+    let budget_engine = budget_engine(&config);
+    let dispatcher = AlertDispatcher::new(webhook_url(&cli, &config));
+    let collector_handle = build_collectors(&cli, &config);
     run_tui(&cli, collector_handle, budget_engine, dispatcher)
 }
 
-fn build_collectors(cli: &ai_usage_tui::cli::Cli) -> Option<CollectorHandle> {
+fn build_collectors(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Option<CollectorHandle> {
     let journal = cli
         .journal_path
         .clone()
         .or_else(ai_usage_tui::utils::journal_path)?;
 
-    let config = load_collector_config(cli);
+    let collectors_cfg = config.collectors.as_ref();
     let mut collectors: Vec<Box<dyn Collector>> = Vec::new();
 
-    let opencode_cfg = config.opencode.unwrap_or_default();
+    let opencode_cfg = collector_cfg(collectors_cfg, |c| c.opencode.as_ref());
     if opencode_cfg.enabled.unwrap_or(true) {
         collectors.push(Box::new(OpenCodeCollector {
             db_path: cli.db_path.clone(),
@@ -108,7 +116,7 @@ fn build_collectors(cli: &ai_usage_tui::cli::Cli) -> Option<CollectorHandle> {
 
     // Claude Code's own session logs: the largest source of Anthropic usage on most machines,
     // and invisible to the OpenCode collector.
-    let claude_cfg = config.claude_code.unwrap_or_default();
+    let claude_cfg = collector_cfg(collectors_cfg, |c| c.claude_code.as_ref());
     if claude_cfg.enabled.unwrap_or(true) {
         collectors.push(Box::new(ClaudeCodeCollector {
             root: cli.claude_dir.clone(),
@@ -117,7 +125,7 @@ fn build_collectors(cli: &ai_usage_tui::cli::Cli) -> Option<CollectorHandle> {
         }));
     }
 
-    let journal_cfg = config.journal.unwrap_or_default();
+    let journal_cfg = collector_cfg(collectors_cfg, |c| c.journal.as_ref());
     if journal_cfg.enabled.unwrap_or(true) {
         collectors.push(Box::new(JournalCollector {
             journal_path: journal,
@@ -125,7 +133,7 @@ fn build_collectors(cli: &ai_usage_tui::cli::Cli) -> Option<CollectorHandle> {
         }));
     }
 
-    let zen_cfg = config.zen_pricing.unwrap_or_default();
+    let zen_cfg = collector_cfg(collectors_cfg, |c| c.zen_pricing.as_ref());
     if zen_cfg.enabled.unwrap_or(false) {
         collectors.push(Box::new(ZenPricingCollector {
             interval_secs: zen_cfg.interval.unwrap_or(3600),
@@ -139,21 +147,18 @@ fn build_collectors(cli: &ai_usage_tui::cli::Cli) -> Option<CollectorHandle> {
     }
 }
 
-fn load_collector_config(cli: &ai_usage_tui::cli::Cli) -> CollectorsConfig {
-    let path = cli
-        .config_path
-        .clone()
-        .or_else(ai_usage_tui::config::config_path);
-
-    let Some(path) = path else {
-        return CollectorsConfig::default();
-    };
-    if !path.exists() {
-        return CollectorsConfig::default();
-    }
-    let contents = std::fs::read_to_string(&path).unwrap_or_default();
-    let config: ai_usage_tui::config::ConfigFile = toml::from_str(&contents).unwrap_or_default();
-    config.collectors.unwrap_or_default()
+/// Per-collector settings, defaulted when the section is absent.
+fn collector_cfg(
+    collectors: Option<&ai_usage_tui::config::CollectorsConfig>,
+    pick: impl Fn(&ai_usage_tui::config::CollectorsConfig) -> Option<&CollectorConfig>,
+) -> CollectorConfig {
+    collectors
+        .and_then(pick)
+        .map(|cfg| CollectorConfig {
+            enabled: cfg.enabled,
+            interval: cfg.interval,
+        })
+        .unwrap_or_default()
 }
 
 fn run_tui(
@@ -179,8 +184,7 @@ fn run_tui(
     }
 }
 
-fn load_budget_engine(cli: &ai_usage_tui::cli::Cli) -> BudgetEngine {
-    let config = load_full_config(cli);
+fn budget_engine(config: &ConfigFile) -> BudgetEngine {
     match &config.budgets {
         Some(budgets) => BudgetEngine::from_config(budgets),
         None => BudgetEngine::empty(),
@@ -188,32 +192,17 @@ fn load_budget_engine(cli: &ai_usage_tui::cli::Cli) -> BudgetEngine {
 }
 
 /// The alert webhook, with the `--webhook` flag overriding `[budgets] webhook` in config.
-fn webhook_url(cli: &ai_usage_tui::cli::Cli) -> Option<String> {
+fn webhook_url(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Option<String> {
     cli.webhook_url.clone().or_else(|| {
-        load_full_config(cli)
+        config
             .budgets
-            .and_then(|budgets| budgets.webhook)
+            .as_ref()
+            .and_then(|budgets| budgets.webhook.clone())
     })
 }
 
-fn load_full_config(cli: &ai_usage_tui::cli::Cli) -> ai_usage_tui::config::ConfigFile {
-    let path = cli
-        .config_path
-        .clone()
-        .or_else(ai_usage_tui::config::config_path);
-
-    let Some(path) = path else {
-        return ai_usage_tui::config::ConfigFile::default();
-    };
-    if !path.exists() {
-        return ai_usage_tui::config::ConfigFile::default();
-    }
-    let contents = std::fs::read_to_string(&path).unwrap_or_default();
-    toml::from_str(&contents).unwrap_or_default()
-}
-
-fn check_budgets(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
-    let budget_engine = load_budget_engine(cli);
+fn check_budgets(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
+    let budget_engine = budget_engine(config);
     if budget_engine.is_empty() {
         println!("{{\"budgets\": 0, \"alerts\": []}}");
         return Ok(());
@@ -254,14 +243,28 @@ fn check_budgets(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
     if has_alerts {
         // Report a failed dispatch rather than swallowing it: a webhook that silently never
         // fires is indistinguishable from a budget that never trips.
-        let mut dispatcher = AlertDispatcher::new(webhook_url(cli));
+        let mut dispatcher = AlertDispatcher::new(webhook_url(cli, config));
         if let Err(error) = dispatcher.dispatch(&alerts) {
             eprintln!("warning: budget webhook dispatch failed: {}", error);
         }
-        std::process::exit(1);
+        // `std::process::exit` here skipped every destructor on the way out, including the
+        // collector handle's thread join. Signal the exit code by unwinding instead.
+        return Err(BudgetsExceeded(alerts.iter().filter(|a| a.is_actionable()).count()).into());
     }
     Ok(())
 }
+
+/// Budget breach as an error, so the non-zero exit runs destructors like any other failure.
+#[derive(Debug)]
+struct BudgetsExceeded(usize);
+
+impl std::fmt::Display for BudgetsExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} budget threshold(s) exceeded", self.0)
+    }
+}
+
+impl std::error::Error for BudgetsExceeded {}
 
 fn export_routing(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
     let journal = cli

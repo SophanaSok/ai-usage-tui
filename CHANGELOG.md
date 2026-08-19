@@ -23,13 +23,45 @@
   Claude Code logs that was 2,810 requests and ~1.01B cache-read tokens reporting no cost at all.
   Added alongside `claude-mythos-5`, with tests asserting current Anthropic models resolve and
   that cache rates follow the published 0.1x (read) and 1.25x (5-minute write) multipliers.
-- CI matrix across Linux, macOS and Windows, plus an MSRV job (`rust-version = "1.85"`),
+- **Collector health, rendered rather than logged.** Each collector now reports a liveness state
+  (starting / ok / failing / restarting / dead) and is flagged stale after three missed intervals.
+  A degraded source names itself in the header, in red. A monitoring tool that goes quiet used to
+  look exactly like one with nothing to report.
+- **A diagnostic log.** `AI_USAGE_LOG=1` (or a path) writes collector errors, panics and restarts
+  to a file. The dashboard holds the alternate screen, so stderr was invisible; a panicking
+  collector left no trace anywhere. Off by default — a usage monitor should not silently
+  accumulate a log file.
+- **`.deb` and `.rpm` are now actually built.** `Cargo.toml` carried the packaging metadata and
+  the changelog claimed the packages, but no job ever ran `cargo-deb` or `cargo-generate-rpm`.
+  Both are built for amd64 and arm64, and each is asserted to contain the binary before publish.
+- A real security reporting channel in `SECURITY.md`, replacing "once the project repository is
+  published", together with the specific guarantees a report should be measured against.
+- CI matrix across Linux, macOS and Windows, plus an MSRV job (`rust-version = "1.88"`),
   doctests, a CLI smoke test against the fixture database, `cargo-deny`, and Dependabot.
 - Journal fixtures are constructed in-test rather than read from a gitignored binary that did not
   exist on a fresh clone — which had let the pipeline test pass while covering nothing.
 
 ### Fixed
 
+- **A panicking collector was retired for the life of the process.** The supervisor recorded the
+  panic and `break`, so that source never updated again while the UI kept showing its last
+  numbers as current. Collectors now restart with capped exponential backoff and are marked
+  `dead` only after five panics.
+- **One panic under the state lock froze the dashboard permanently.** `if let Ok(mut s) =
+  state.write()` turned every subsequent write into a silent no-op once the `RwLock` was
+  poisoned. Poisoned guards are now recovered.
+- **Collector threads could outlive their handle.** `shutdown()` only set an `AtomicBool` polled
+  once a second and `Drop` never joined, so threads could still be mid-poll — holding a SQLite
+  handle — after the handle was dropped. Shutdown is now a condvar and `Drop` joins.
+- **The routing panel rendered a failed journal read as "no routing events."** The two are now
+  distinguishable: read failures mark the dashboard degraded and name themselves.
+- **The config file was parsed three times with three error policies.** `apply_config`
+  hard-errored while the collector and budget loaders both `unwrap_or_default()`, so a typo in
+  `[budgets]` silently disabled every budget while the same typo in `[collectors]` was reported.
+  One read, one policy; parse and read failures are always reported. `[budgets]` with only a
+  `webhook` and no entries is now valid rather than a parse error.
+- **`--check-budgets` exited via `std::process::exit(1)`**, skipping every destructor including
+  the collector join. It now unwinds, preserving the exit code.
 - **Under-counted usage.** Deduplication keyed only on token counts, so two distinct requests
   with identical counts — routine in agent loops — silently collapsed into one. Events now carry
   a stable `event_id` (OpenCode message id, journal `event_id`) and fall back to shape *plus*

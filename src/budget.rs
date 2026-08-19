@@ -103,6 +103,10 @@ pub struct BudgetEntry {
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct BudgetsConfig {
     pub webhook: Option<String>,
+    /// Absent means no budgets, not a malformed config. Configuring only a webhook — to be
+    /// notified once budgets are added — is a legitimate state, and now that config parse
+    /// errors are fatal rather than silently defaulted, requiring this field would reject it.
+    #[serde(default)]
     pub entry: Vec<BudgetEntry>,
 }
 

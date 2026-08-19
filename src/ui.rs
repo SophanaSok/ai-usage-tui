@@ -32,6 +32,9 @@ pub struct App {
     pub usages: Vec<Usage>,
     pub selected: usize,
     pub status: String,
+    /// Whether a collector is failing, restarting, dead, or stale. A monitor that goes quiet
+    /// looks exactly like a monitor with nothing to report, so this is rendered, not logged.
+    pub degraded: bool,
     pub last_refresh: String,
     pub pulse: u64,
     pub refresh_interval: Duration,
@@ -84,6 +87,7 @@ impl App {
             usages: Vec::new(),
             selected: 0,
             status: String::new(),
+            degraded: false,
             last_refresh: String::from("never"),
             pulse: 0,
             refresh_interval,
@@ -194,6 +198,7 @@ impl App {
         if let Some(ref collector) = self.collector {
             self.usages = collector.snapshot();
             self.status = collector.status();
+            self.degraded = collector.is_degraded();
         } else {
             match crate::collector::load_usage(
                 self.db_path.as_deref(),
@@ -203,10 +208,12 @@ impl App {
                 Ok((usages, source)) => {
                     self.usages = usages;
                     self.status = source;
+                    self.degraded = false;
                 }
                 Err(error) => {
                     self.usages.clear();
                     self.status = format!("OpenCode unavailable: {}", error);
+                    self.degraded = true;
                 }
             }
         }
@@ -216,7 +223,14 @@ impl App {
         // Routing lives in SQLite; read it here, not inside `draw`.
         self.view.routing = match crate::collector::journal::load_routing(&self.journal_path) {
             Ok(events) => crate::routing::aggregate(&events),
-            Err(_) => Vec::new(),
+            Err(error) => {
+                // An empty routing panel used to be the rendering for both "no events yet"
+                // and "the journal could not be read". Only one of those is fine.
+                crate::logging::error("routing", &format!("journal read failed: {}", error));
+                self.status = format!("{} | routing unavailable: {}", self.status, error);
+                self.degraded = true;
+                Vec::new()
+            }
         };
         if !self.budget_engine.is_empty() {
             self.alerts = self.budget_engine.check(&self.usages);
@@ -436,7 +450,11 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
                 app.last_refresh,
                 app.status
             ),
-            Style::default().fg(MUTED),
+            if app.degraded {
+                Style::default().fg(RED).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(MUTED)
+            },
         ),
     ]))
     .style(Style::default().bg(Color::Rgb(10, 18, 24)));
@@ -768,6 +786,7 @@ mod tests {
             ],
             selected: 0,
             status: String::new(),
+            degraded: false,
             last_refresh: String::new(),
             pulse: 0,
             refresh_interval: Duration::from_secs(30),

@@ -91,9 +91,72 @@ jobs:
             ${{ env.ARTIFACT }}.zip
           if-no-files-found: error
 
+  # `[package.metadata.deb]` and `[package.metadata.generate-rpm]` shipped in Cargo.toml and
+  # the CHANGELOG advertised .deb/.rpm packages, but no job ever built them. Either the jobs
+  # exist or the claim goes; these are the jobs.
+  linux-packages:
+    name: Linux packages (${{ matrix.slug }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            slug: amd64
+          - target: aarch64-unknown-linux-gnu
+            slug: arm64
+            linker: aarch64-linux-gnu-gcc
+            apt: gcc-aarch64-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: pkg-${{ matrix.target }}
+
+      - name: Install cross linker
+        if: matrix.apt != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.apt }}
+          echo "CARGO_TARGET_$(echo ${{ matrix.target }} | tr 'a-z-' 'A-Z_')_LINKER=${{ matrix.linker }}" >> "$GITHUB_ENV"
+
+      - name: Install packaging tools
+        run: cargo install cargo-deb cargo-generate-rpm --locked
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build .deb
+        run: cargo deb --no-build --target ${{ matrix.target }} --output "ai-usage-tui-${{ github.ref_name }}-${{ matrix.slug }}.deb"
+
+      - name: Build .rpm
+        run: cargo generate-rpm --target ${{ matrix.target }} --output "ai-usage-tui-${{ github.ref_name }}-${{ matrix.slug }}.rpm"
+
+      # A package that installs nothing useful is worse than no package. Prove the payload is
+      # present and executable before publishing it.
+      - name: Verify package contents
+        run: |
+          dpkg-deb -c "ai-usage-tui-${{ github.ref_name }}-${{ matrix.slug }}.deb" | tee /tmp/deb.txt
+          grep -q "usr/bin/ai-usage-tui" /tmp/deb.txt \
+            || { echo "::error::.deb does not contain the binary"; exit 1; }
+          rpm -qlp "ai-usage-tui-${{ github.ref_name }}-${{ matrix.slug }}.rpm" | tee /tmp/rpm.txt
+          grep -q "/usr/bin/ai-usage-tui" /tmp/rpm.txt \
+            || { echo "::error::.rpm does not contain the binary"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-usage-tui-${{ github.ref_name }}-${{ matrix.slug }}-linux-packages
+          path: |
+            ai-usage-tui-${{ github.ref_name }}-${{ matrix.slug }}.deb
+            ai-usage-tui-${{ github.ref_name }}-${{ matrix.slug }}.rpm
+          if-no-files-found: error
+
   release:
     name: Release
-    needs: build
+    needs: [build, linux-packages]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

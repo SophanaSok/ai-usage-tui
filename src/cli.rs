@@ -270,6 +270,10 @@ ENVIRONMENT:
     CLAUDE_PROJECTS_DIR Override the Claude Code session-log directory
     AI_USAGE_JOURNAL_PATH
                         Override the local usage journal path
+    AI_USAGE_LOG        Write diagnostics to a file. Set to 1 for the default
+                        location under the data directory, or to a path.
+                        Collector errors are invisible on stderr while the
+                        dashboard holds the alternate screen.
 
 KEYS:
     1              Today

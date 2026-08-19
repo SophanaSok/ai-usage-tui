@@ -42,30 +42,45 @@ pub fn config_path() -> Option<PathBuf> {
     )
 }
 
-pub fn apply_config(mut cli: Cli) -> Result<Cli> {
-    let path = cli.config_path.clone().or_else(config_path);
-    let Some(path) = path else {
-        return Ok(cli);
+/// Read the config file once, or report why it could not be read.
+///
+/// The file used to be parsed three separate times with three different error policies:
+/// `apply_config` hard-errored, while the collector and budget loaders both
+/// `unwrap_or_default()`, so a typo in `[budgets]` silently disabled every budget while the
+/// same typo in `[collectors]` was reported. One read, one policy.
+pub fn load_config(cli: &Cli) -> Result<ConfigFile> {
+    let Some(path) = cli.config_path.clone().or_else(config_path) else {
+        return Ok(ConfigFile::default());
     };
     if !path.exists() {
+        // An explicit `--config` that does not exist is a mistake worth stopping for; a
+        // missing default is just an unconfigured install.
         if cli.config_path.is_some() {
             return Err(anyhow::anyhow!(
                 "config file does not exist: {}",
                 path.display()
             ));
         }
-        return Ok(cli);
+        return Ok(ConfigFile::default());
     }
-    let contents = fs::read_to_string(&path)?;
-    let config: ConfigFile = toml::from_str(&contents)?;
+    let contents = fs::read_to_string(&path)
+        .map_err(|error| anyhow::anyhow!("could not read {}: {}", path.display(), error))?;
+    toml::from_str(&contents)
+        .map_err(|error| anyhow::anyhow!("could not parse {}: {}", path.display(), error))
+}
+
+/// Fill in CLI defaults from the config file, returning the parsed config alongside so callers
+/// do not have to read it again.
+pub fn apply_config(mut cli: Cli) -> Result<(Cli, ConfigFile)> {
+    let mut config = load_config(&cli)?;
     if cli.db_path.is_none() {
-        cli.db_path = config.db.map(PathBuf::from);
+        cli.db_path = config.db.take().map(PathBuf::from);
     }
     if cli.journal_path.is_none() {
-        cli.journal_path = config.journal.map(PathBuf::from);
+        cli.journal_path = config.journal.take().map(PathBuf::from);
     }
     if cli.claude_dir.is_none() {
-        cli.claude_dir = config.claude_dir.map(PathBuf::from);
+        cli.claude_dir = config.claude_dir.take().map(PathBuf::from);
     }
     if !cli.refresh_interval_set {
         if let Some(seconds) = config.refresh_interval {
@@ -86,17 +101,65 @@ pub fn apply_config(mut cli: Cli) -> Result<Cli> {
         }
     }
     if cli.provider_filter.is_none() {
-        cli.provider_filter = config.provider;
+        cli.provider_filter = config.provider.take();
     }
     if cli.model_filter.is_none() {
-        cli.model_filter = config.model;
+        cli.model_filter = config.model.take();
     }
-    Ok(cli)
+    Ok((cli, config))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cli_with_config(path: &std::path::Path) -> Cli {
+        Cli {
+            config_path: Some(path.to_path_buf()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_malformed_config_is_reported_rather_than_discarded() {
+        // Silently defaulting here is how a typo in `[budgets]` turned every configured
+        // budget off while the dashboard carried on looking healthy.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "days = \"not a number\"\n").unwrap();
+        let error = load_config(&cli_with_config(&path))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("could not parse"), "{error}");
+    }
+
+    #[test]
+    fn an_explicit_missing_config_is_an_error_but_a_missing_default_is_not() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let missing = dir.path().join("absent.toml");
+        assert!(load_config(&cli_with_config(&missing)).is_err());
+    }
+
+    #[test]
+    fn one_read_populates_both_the_cli_and_the_config() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            "days = 14\n[collectors.opencode]\nenabled = false\n[budgets]\nwebhook = \"https://example.invalid/hook\"\n",
+        )
+        .unwrap();
+        let (cli, config) = apply_config(cli_with_config(&path)).unwrap();
+        assert_eq!(cli.range.label(), "14 DAYS");
+        assert_eq!(
+            config.collectors.unwrap().opencode.unwrap().enabled,
+            Some(false)
+        );
+        assert_eq!(
+            config.budgets.unwrap().webhook.as_deref(),
+            Some("https://example.invalid/hook")
+        );
+    }
 
     #[test]
     fn config_file_values_parse() {

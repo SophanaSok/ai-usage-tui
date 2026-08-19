@@ -5,6 +5,7 @@ pub mod collector;
 pub mod config;
 pub mod export;
 pub mod helpers;
+pub mod logging;
 pub mod model;
 pub mod pricing;
 pub mod routing;
@@ -84,7 +85,7 @@ mod integration_tests {
             ..Default::default()
         };
 
-        let cli = crate::config::apply_config(cli).unwrap();
+        let (cli, _config) = crate::config::apply_config(cli).unwrap();
 
         assert_eq!(cli.refresh_interval.as_secs(), 60);
         assert_eq!(cli.range, Range::Days(14));

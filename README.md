@@ -431,6 +431,7 @@ Environment variables:
 | `OPENCODE_DB_PATH` | OpenCode SQLite database path |
 | `AI_USAGE_JOURNAL_PATH` | Usage and routing journal path |
 | `CLAUDE_PROJECTS_DIR` | Claude Code session-log directory |
+| `AI_USAGE_LOG` | Write diagnostics to a file — `1` for the default location, or a path. Off when unset. |
 | `XDG_CONFIG_HOME` | Base directory for the default config path |
 | `XDG_DATA_HOME` | Base directory for default database, journal, and cache paths |
 
