@@ -109,10 +109,17 @@ The `btop-inspired` claim is not yet earned — btop's identity *is* the graph, 
   mutual-exclusion checks.
 - Publish to crates.io with `include`/`exclude` — a publish today would ship an 86KB HTML fixture
   and 180KB of PNGs — and support `cargo binstall`.
-- `MODEL_ROUTING.md` has an uncommitted working-tree diff that introduces a `@reasoning` agent
-  never defined in the inventory table or fallback chain. Committing it as-is will contradict
-  `docs/phase-status.md` and the hardcoded model names in
-  `scripts/capture-readme-screenshots.sh`. `scripts/release.sh` fails on the dirty tree.
+- **Resolved.** `MODEL_ROUTING.md` no longer duplicates the agent-to-model table; that mapping
+  lives in `~/.config/opencode/opencode.json` and `~/.config/opencode/ROUTING.md`, and the repo doc
+  now carries only policy (tiers by role, privacy boundary, escalation, evaluation schema).
+  `docs/phase-status.md` and `scripts/capture-readme-screenshots.sh` were reconciled at the same
+  time.
+
+  *One discrepancy is left for you, in your own config rather than this repo:* `ROUTING.md` lists
+  `reviewer` as `north-mini-code-free` while `opencode.json` defines it as
+  `opencode/deepseek-v4-flash-free`. Both are free-cloud, so cost is unaffected, but note that
+  `reviewer` and `reasoning` then share a model — which weakens rule 3 (prefer a reviewer on a
+  different provider from the agent that wrote the code) when `reasoning` did the writing.
 
 ## Conventions worth preserving
 

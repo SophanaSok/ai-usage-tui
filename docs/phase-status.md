@@ -68,20 +68,13 @@ Audit-driven correctness, distribution, and coverage work started 2026-08-18. Fu
 
 ## Agent Routing
 
-The following agents are configured in `~/.config/opencode/agent/` and mapped in [`MODEL_ROUTING.md`](../MODEL_ROUTING.md).
+Agent-to-model assignments live in the OpenCode workspace config
+(`~/.config/opencode/opencode.json` and `~/.config/opencode/ROUTING.md`), not in this repository.
+[`MODEL_ROUTING.md`](../MODEL_ROUTING.md) carries the policy — tier discipline, the privacy
+boundary, escalation signals, and the evaluation schema — without duplicating the mapping.
 
-> **Stale:** `MODEL_ROUTING.md` has an uncommitted working-tree revision that moves most defaults
-> to local and free models and adds a `@reasoning` agent. This table still reflects the committed
-> version. Update both together — see [`docs/roadmap.md`](roadmap.md) (P3 — Polish).
-
-| Agent | Model | Use |
-| --- | --- | --- |
-| `@explorer` | Ollama qwen3-coder (local) | Read-only codebase exploration |
-| `@local` | Ollama qwen3-coder (local) | Sensitive/private code |
-| `@junior` | nemotron-3-ultra-free (Zen free) | Routine implementation, docs |
-| `@heavy` | GLM 5.2 (Ollama Cloud) | Complex implementation |
-| `@heavy2` | GPT 5.6 Sol (Zen paid) | Architecture, second opinion |
-| `@reviewer` | GPT 5.6 Sol (Zen paid, read-only) | Independent review |
+A copy of the agent table used to live here and in `MODEL_ROUTING.md`; both drifted from the live
+config. Do not reintroduce one.
 
 ## Privacy Policy
 
