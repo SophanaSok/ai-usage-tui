@@ -42,7 +42,13 @@ jobs:
             target: aarch64-apple-darwin
             slug: aarch64-macos
             arch: arm64
-          - os: macos-13
+          # Cross-compiled from the Apple Silicon runner rather than built on `macos-13`.
+          # That Intel image is being retired: a dry run sat queued on it for 76 minutes
+          # without ever starting, which on a real tag push would hang the release.
+          # Xcode ships both SDKs, so an explicit `--target` produces a genuine x86_64
+          # binary — and the `file` assertion below is what makes that claim checkable.
+          # The original bug was the *absence* of `--target`, not cross-compilation.
+          - os: macos-latest
             target: x86_64-apple-darwin
             slug: x86_64-macos
             arch: x86_64

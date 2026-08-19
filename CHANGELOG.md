@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Intel macOS build depended on a runner that no longer starts.** `macos-13` is being
+  retired; a release dry run sat queued on it for 76 minutes without ever being scheduled, which
+  on a real tag push would hang the release indefinitely. That target is now cross-compiled from
+  the Apple Silicon runner with an explicit `--target`, which Xcode supports directly. The
+  `file`-based architecture assertion is unchanged and is what keeps the claim checkable — the
+  original mislabeled-artifact bug was the *absence* of `--target`, not cross-compilation.
+
 ### Added
 
 - **Claude Code collector.** Reads `~/.claude/projects/**/*.jsonl` — the largest source of
