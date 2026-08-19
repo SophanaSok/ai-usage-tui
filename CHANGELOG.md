@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 0.3.0 - 2026-08-19
+
 ### Added
 
 - **Claude Code collector.** Reads `~/.claude/projects/**/*.jsonl` — the largest source of
