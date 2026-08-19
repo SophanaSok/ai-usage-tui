@@ -55,7 +55,7 @@ pub use theme::cost_display;
 use panels::{
     alerts::draw_alert_banner, breakdown::draw_breakdown, budgets::draw_budgets, burn::draw_burn,
     header::draw_header, metrics::draw_metrics, models::draw_models, projects::draw_projects,
-    routing::draw_routing, timeseries::draw_timeseries,
+    routing::draw_routing, sessions::draw_sessions, timeseries::draw_timeseries,
 };
 use theme::MUTED;
 
@@ -116,12 +116,13 @@ pub fn run(
                     KeyCode::Char('p') => app.toggle_panel(Panel::Projects),
                     KeyCode::Char('g') => app.toggle_panel(Panel::TimeSeries),
                     KeyCode::Char('w') => app.toggle_panel(Panel::Burn),
+                    KeyCode::Char('s') => app.toggle_panel(Panel::Sessions),
                     KeyCode::Char('1') => app.set_range(Range::Today),
                     KeyCode::Char('2') => app.set_range(Range::Week),
                     KeyCode::Char('3') => app.set_range(Range::Month),
                     KeyCode::Char('4') => app.set_range(Range::All),
                     KeyCode::Down | KeyCode::Char('j') => {
-                        app.selected = (app.selected + 1).min(app.rows().len().saturating_sub(1))
+                        app.selected = (app.selected + 1).min(app.visible_rows().saturating_sub(1))
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
                         app.selected = app.selected.saturating_sub(1)
@@ -169,6 +170,7 @@ fn draw(frame: &mut Frame, app: &App) {
         Panel::Projects => draw_projects(frame, body[1], app),
         Panel::TimeSeries => draw_timeseries(frame, body[1], app),
         Panel::Burn => draw_burn(frame, body[1], app),
+        Panel::Sessions => draw_sessions(frame, body[1], app),
         Panel::Models => draw_models(frame, body[1], app),
     }
     let footer = Paragraph::new(Line::from(vec![
@@ -189,6 +191,8 @@ fn draw(frame: &mut Frame, app: &App) {
         Span::raw(" graph  "),
         Span::styled("w", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
         Span::raw(" burn  "),
+        Span::styled("s", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
+        Span::raw(" sessions  "),
         Span::styled(
             "j/k",
             Style::default().fg(CYAN).add_modifier(Modifier::BOLD),

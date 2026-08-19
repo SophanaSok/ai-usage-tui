@@ -286,6 +286,7 @@ KEYS:
     p              Toggle per-project cost panel
     g              Toggle the spend-over-time graph
     w              Toggle the burn-rate panel
+    s              Toggle the sessions panel
     j / Down       Select next model
     k / Up         Select previous model
     q / Esc        Quit

@@ -9,12 +9,12 @@ use std::time::{Duration, Instant};
 use crate::budget::{Alert, BudgetEngine};
 use crate::collector::background::CollectorHandle;
 use crate::model::{
-    BurnRate, Category, CostStatus, DayTotals, ProjectTotals, Range, RoutingAggregates, Totals,
-    Usage,
+    BurnRate, Category, CostStatus, DayTotals, ProjectTotals, Range, RoutingAggregates,
+    SessionTotals, Totals, Usage,
 };
 use crate::utils::format_clock;
 
-use super::aggregate::{burn_rate, coverage, daily_totals, project_totals};
+use super::aggregate::{burn_rate, coverage, daily_totals, project_totals, session_totals};
 
 /// Trailing window for the burn-rate panel. One hour is long enough to smooth out a single
 /// large request and short enough to reflect what you are doing now.
@@ -66,6 +66,7 @@ pub enum Panel {
     Projects,
     TimeSeries,
     Burn,
+    Sessions,
 }
 
 #[derive(Default)]
@@ -78,6 +79,7 @@ pub struct DerivedView {
     projects: Vec<ProjectTotals>,
     daily: Vec<DayTotals>,
     burn: BurnRate,
+    sessions: Vec<SessionTotals>,
     coverage: Coverage,
 }
 
@@ -190,6 +192,7 @@ impl App {
 
         self.view.projects = project_totals(&self.view.filtered);
         self.view.daily = daily_totals(&self.view.filtered);
+        self.view.sessions = session_totals(&self.view.filtered);
         // Computed here, once per refresh, because `burn_rate` needs the clock and the render
         // path must not read it.
         self.view.burn = burn_rate(&self.usages, BURN_WINDOW_SECS, crate::utils::now());
@@ -234,6 +237,21 @@ impl App {
 
     pub fn daily(&self) -> &[DayTotals] {
         &self.view.daily
+    }
+
+    pub fn sessions(&self) -> &[SessionTotals] {
+        &self.view.sessions
+    }
+
+    /// How many rows the visible panel has, for clamping the selection.
+    ///
+    /// The selection used to clamp to the model table's length unconditionally, so on any other
+    /// table panel it either stopped short or ran past the end.
+    pub fn visible_rows(&self) -> usize {
+        match self.panel {
+            Panel::Sessions => self.view.sessions.len(),
+            _ => self.view.rows.len(),
+        }
     }
 
     pub fn burn(&self) -> &BurnRate {

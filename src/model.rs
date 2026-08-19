@@ -128,6 +128,33 @@ pub struct DayTotals {
     /// not render its cost as if it were complete.
     pub unpriced_requests: u64,
 }
+/// Usage rolled up by session.
+///
+/// A session id is a bare UUID and tells a reader nothing, so everything here exists to make a
+/// row identifiable without it: when it ran, where, and on what.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct SessionTotals {
+    pub session_id: String,
+    /// Working directory the session ran in, when the source records one.
+    pub project: Option<String>,
+    /// Unix timestamps of the first and last request seen in this session.
+    pub first_seen: i64,
+    pub last_seen: i64,
+    pub requests: u64,
+    pub tokens: u64,
+    pub cost: f64,
+    pub unpriced_requests: u64,
+    /// Distinct `provider/model` pairs used.
+    pub models: Vec<String>,
+}
+
+impl SessionTotals {
+    /// How long the session ran, in seconds. Zero for a single-request session.
+    pub fn duration_secs(&self) -> i64 {
+        (self.last_seen - self.first_seen).max(0)
+    }
+}
+
 /// How fast usage is being consumed over a trailing window.
 ///
 /// Deliberately carries the evidence alongside the rate. A burn rate computed from three

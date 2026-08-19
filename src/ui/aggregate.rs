@@ -3,7 +3,7 @@
 //! Deliberately free of any ratatui types: these are the numbers the dashboard shows, and they
 //! are unit-testable without constructing a terminal or an `App`.
 
-use crate::model::{BurnRate, DayTotals, ProjectTotals, Usage};
+use crate::model::{BurnRate, DayTotals, ProjectTotals, SessionTotals, Usage};
 
 use super::app::Coverage;
 
@@ -235,4 +235,53 @@ pub fn format_duration(seconds: i64) -> String {
     } else {
         format!("{}d {}h", hours / 24, hours % 24)
     }
+}
+
+/// Roll usage up by session, most recently active first.
+///
+/// Recency order because the question is almost always "what did I just do", and because the
+/// list grows without bound — sessions accumulate forever where projects top out in dozens.
+pub fn session_totals(usages: &[Usage]) -> Vec<SessionTotals> {
+    use std::collections::BTreeMap;
+
+    let mut grouped: BTreeMap<String, SessionTotals> = BTreeMap::new();
+    for usage in usages {
+        let Some(id) = usage.session_id.as_ref() else {
+            continue;
+        };
+        let entry = grouped.entry(id.clone()).or_insert_with(|| SessionTotals {
+            session_id: id.clone(),
+            project: usage.project.clone(),
+            first_seen: usage.created,
+            last_seen: usage.created,
+            ..Default::default()
+        });
+        if usage.created > 0 {
+            if entry.first_seen <= 0 || usage.created < entry.first_seen {
+                entry.first_seen = usage.created;
+            }
+            entry.last_seen = entry.last_seen.max(usage.created);
+        }
+        entry.requests += usage.requests;
+        entry.tokens += usage.total_tokens();
+        if usage.cost_status.needs_price() {
+            match usage.cost.filter(|_| usage.cost_status.is_billable()) {
+                Some(cost) => entry.cost += cost,
+                None => entry.unpriced_requests += usage.requests,
+            }
+        }
+        let model = format!("{}/{}", usage.provider, usage.model);
+        if !entry.models.contains(&model) {
+            entry.models.push(model);
+        }
+        // A session can move between projects only if the source is inconsistent; take the
+        // first non-empty one rather than letting a later null blank it out.
+        if entry.project.is_none() {
+            entry.project.clone_from(&usage.project);
+        }
+    }
+
+    let mut sessions: Vec<SessionTotals> = grouped.into_values().collect();
+    sessions.sort_by_key(|s| std::cmp::Reverse(s.last_seen));
+    sessions
 }
