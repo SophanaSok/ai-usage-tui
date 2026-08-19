@@ -65,7 +65,11 @@
 - **Dependabot groups GitHub Actions updates.** Ungrouped, it opened one PR per action; four sat
   open for weeks, went stale against main, and each needed an individual rebase before it could
   merge. Cargo updates were already grouped.
-
+- **A stale pricing cache is ignored rather than trusted forever.** The refreshed cache overrode
+  the bundled table with nothing to expire it, so a cache written before a rate change kept
+  applying the superseded rate to new events indefinitely — found on a real machine, three weeks
+  stale and still winning. Past 30 days the bundled table wins and the status line says why.
+  Some models may become `UNKNOWN COST` as a result; that is the intended trade.
 - **CI builds with `--locked`.** `AGENTS.md` told agents to always pass it while no CI job did —
   an instruction diverging from actual practice. CI now passes it on clippy, test, doc-test,
   check, and both release builds, so a dependency change that edits `Cargo.toml` without

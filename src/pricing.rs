@@ -7,6 +7,14 @@ use crate::model::{Category, CostStatus, Usage};
 
 pub(crate) const BUNDLED_PRICING: &str = include_str!("../pricing/zen.toml");
 
+/// How long a refreshed pricing cache is trusted before the bundled table wins again.
+///
+/// The `zen_pricing` collector refreshes hourly when enabled, so anything approaching a month
+/// old means refreshing stopped working — offline, endpoint moved, collector disabled — and the
+/// rates in it have had time to be superseded.
+const PRICING_CACHE_MAX_AGE: std::time::Duration =
+    std::time::Duration::from_secs(30 * 24 * 60 * 60);
+
 /// A rate is `None` when the source table does not publish one. That is distinct from a
 /// published rate of `0.0`, and the two must never be conflated: an absent rate means we do
 /// not know the price, and unknown cost is never rendered as zero cost.
@@ -87,15 +95,12 @@ impl PricingEngine {
         if !path.exists() {
             return engine;
         }
+        let age = std::fs::metadata(&path)
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok());
         match std::fs::read_to_string(&path) {
-            Ok(contents) => match Self::parse(&contents) {
-                Ok(overlay) => engine.overlay(overlay),
-                Err(error) => engine.warnings.push(format!(
-                    "cached pricing table at {} is invalid ({}); using bundled rates",
-                    path.display(),
-                    error
-                )),
-            },
+            Ok(contents) => engine.apply_cache(&contents, age, &path.display().to_string()),
             Err(error) => engine.warnings.push(format!(
                 "cached pricing table at {} is unreadable ({}); using bundled rates",
                 path.display(),
@@ -103,6 +108,35 @@ impl PricingEngine {
             )),
         }
         engine
+    }
+
+    /// Apply a refreshed pricing cache, unless it is too old to trust.
+    ///
+    /// The overlay's *current* rates win over the bundled table, which is right when the cache
+    /// is fresher than the binary and wrong once it is not: nothing expires it, so a cache
+    /// written before a rate change keeps applying the superseded rate to new events forever.
+    /// The bundled table ships with the binary and is at least as current as the release, so
+    /// falling back to it is the safe direction. Some models may become `UNKNOWN COST` as a
+    /// result — that is the intended trade, and the whole point of the provenance model.
+    fn apply_cache(&mut self, contents: &str, age: Option<std::time::Duration>, label: &str) {
+        if let Some(age) = age {
+            if age > PRICING_CACHE_MAX_AGE {
+                self.warnings.push(format!(
+                    "cached pricing table at {} is {} days old; ignoring it and using bundled \
+                     rates. Run --refresh-pricing to update it, or delete the file.",
+                    label,
+                    age.as_secs() / 86_400
+                ));
+                return;
+            }
+        }
+        match Self::parse(contents) {
+            Ok(overlay) => self.overlay(overlay),
+            Err(error) => self.warnings.push(format!(
+                "cached pricing table at {} is invalid ({}); using bundled rates",
+                label, error
+            )),
+        }
     }
 
     pub fn from_toml(toml_str: &str) -> Self {
@@ -895,6 +929,77 @@ mod tests {
                 .timestamp(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_fresh_pricing_cache_is_applied() {
+        let mut engine = PricingEngine::bundled();
+        engine.apply_cache(
+            "[model.\"claude-opus-5\"]\ninput = 99.00\n",
+            Some(std::time::Duration::from_secs(3600)),
+            "test-cache",
+        );
+        let (cost, _) = engine
+            .estimate_cost(&Usage {
+                model: "claude-opus-5".into(),
+                input: 1_000_000,
+                ..Default::default()
+            })
+            .expect("priced");
+        assert!(
+            (cost - 99.00).abs() < 1e-9,
+            "a fresh cache should win, got ${cost}"
+        );
+        assert!(engine.warnings().is_empty(), "{:?}", engine.warnings());
+    }
+
+    #[test]
+    fn a_stale_pricing_cache_is_ignored_and_says_so() {
+        // Nothing expired the cache, so one written before a rate change kept applying the
+        // superseded rate to new events indefinitely. Found on a real machine: a cache from
+        // 2026-07-24 still overriding the bundled table weeks later.
+        let mut engine = PricingEngine::bundled();
+        engine.apply_cache(
+            "[model.\"claude-opus-5\"]\ninput = 99.00\n",
+            Some(PRICING_CACHE_MAX_AGE + std::time::Duration::from_secs(86_400)),
+            "test-cache",
+        );
+        let (cost, _) = engine
+            .estimate_cost(&Usage {
+                model: "claude-opus-5".into(),
+                input: 1_000_000,
+                ..Default::default()
+            })
+            .expect("priced");
+        assert!(
+            (cost - 5.00).abs() < 1e-9,
+            "a stale cache should fall back to bundled rates, got ${cost}"
+        );
+        let warning = engine.warnings().join(" ");
+        assert!(warning.contains("31 days old"), "{warning}");
+        assert!(
+            warning.contains("--refresh-pricing"),
+            "expected a next step: {warning}"
+        );
+    }
+
+    #[test]
+    fn a_cache_of_unknown_age_is_still_applied() {
+        // A filesystem that cannot report mtime should not silently disable pricing refreshes.
+        let mut engine = PricingEngine::bundled();
+        engine.apply_cache(
+            "[model.\"claude-opus-5\"]\ninput = 99.00\n",
+            None,
+            "test-cache",
+        );
+        let (cost, _) = engine
+            .estimate_cost(&Usage {
+                model: "claude-opus-5".into(),
+                input: 1_000_000,
+                ..Default::default()
+            })
+            .expect("priced");
+        assert!((cost - 99.00).abs() < 1e-9, "got ${cost}");
     }
 
     #[test]
