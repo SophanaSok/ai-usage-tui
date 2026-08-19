@@ -4,13 +4,14 @@
 //! binding in `mod.rs`, and a match arm in `draw`.
 
 use ratatui::{
-    layout::{Constraint, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Cell, Paragraph, Row, Table},
     Frame,
 };
 
+use crate::escalation::{Escalations, Transition};
 use crate::model::{RoutingAggregates, CYAN, GREEN, YELLOW};
 use crate::routing::{cost_per_success, defect_rate, escalation_rate, retry_rate, success_rate};
 use crate::ui::app::App;
@@ -18,6 +19,25 @@ use crate::ui::theme::{panel, MUTED};
 use crate::utils::format_count;
 
 pub fn draw_routing(frame: &mut Frame, area: Rect, app: &App) {
+    // Two blocks, kept visibly apart. The top is derived from usage this tool already
+    // collected; the bottom is what a harness recorded. Merging them would produce one table
+    // where a measured pass rate and an inferred transition look identical, which is the
+    // failure `CostStatus` exists to prevent, one level up.
+    let escalations = app.escalations();
+    let area = if escalations.is_empty() {
+        area
+    } else {
+        let split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(escalation_height(escalations, area.height)),
+                Constraint::Min(3),
+            ])
+            .split(area);
+        frame.render_widget(escalation_block(escalations), split[0]);
+        split[1]
+    };
+
     let aggregates = app.routing();
     if aggregates.is_empty() {
         frame.render_widget(empty_state(), area);
@@ -181,4 +201,77 @@ fn empty_state<'a>() -> Paragraph<'a> {
         Line::from(Span::styled("  docs/routing-analytics.md", dim)),
     ])
     .block(panel("ROUTING — cost per delivered result", CYAN))
+}
+
+/// The derived block's height: one line per shown transition, plus the summary, plus borders.
+///
+/// Capped at a third of the pane. The recorded table is the panel's headline and must not be
+/// squeezed off-screen by a long tail of one-off transitions.
+fn escalation_height(escalations: &Escalations, available: u16) -> u16 {
+    let shown = shown_transitions(escalations).len() as u16;
+    let note = u16::from(escalations.unclassified_changes > 0);
+    let wanted = shown + note + 3;
+    wanted.min((available / 3).max(4))
+}
+
+/// The transitions worth a line, most frequent first.
+fn shown_transitions(escalations: &Escalations) -> &[Transition] {
+    let end = escalations.transitions.len().min(3);
+    &escalations.transitions[..end]
+}
+
+fn escalation_block<'a>(escalations: &Escalations) -> Paragraph<'a> {
+    let dim = Style::default().fg(MUTED);
+    let mut lines = vec![Line::from(vec![
+        Span::styled(
+            match escalations.rate() {
+                Some(rate) => format!("{:.0}%", rate),
+                None => "—".to_string(),
+            },
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(
+                " of {} sessions used a pricier model than they opened with",
+                escalations.sessions_examined
+            ),
+            dim,
+        ),
+    ])];
+
+    for transition in shown_transitions(escalations) {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!(
+                    "  {} → {}",
+                    short_model(&transition.from),
+                    short_model(&transition.to)
+                ),
+                Style::default().fg(YELLOW),
+            ),
+            Span::styled(format!("  {} sessions", transition.sessions), dim),
+            Span::styled(
+                // A floor, not a total, when part of the spend that followed has no price.
+                match transition.unpriced_after {
+                    0 => format!("  ${:.2} after", transition.cost_after),
+                    _ => format!("  ≥ ${:.2} after", transition.cost_after),
+                },
+                Style::default().fg(GREEN),
+            ),
+        ]));
+    }
+
+    if escalations.unclassified_changes > 0 {
+        // Reported rather than dropped: a low escalation count and a count taken with one eye
+        // shut look the same on screen otherwise.
+        lines.push(Line::from(Span::styled(
+            format!(
+                "  {} model changes unranked (no price on one side)",
+                escalations.unclassified_changes
+            ),
+            dim,
+        )));
+    }
+
+    Paragraph::new(lines).block(panel("ESCALATIONS — derived from sessions", CYAN))
 }

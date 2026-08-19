@@ -256,6 +256,24 @@ impl PricingEngine {
             .map(|period| &period.rates)
     }
 
+    /// The model's list input rate, per million tokens — a stable proxy for "how expensive is
+    /// this model", independent of how many tokens any one request happened to use.
+    ///
+    /// Exists to rank models against each other, not to price anything: an *observed* cost per
+    /// token would move with the cache-hit mix, so two requests to the same model could rank
+    /// differently. `None` for a free model and for one the table cannot price at all — a
+    /// caller comparing two models must be able to tell "cheaper" from "unknown".
+    pub fn input_rate(&self, model: &str) -> Option<f64> {
+        let (_, pricing) = self.resolve(model)?;
+        if pricing.free == Some(true) {
+            return None;
+        }
+        // The current base rate, deliberately not a long-context tier and not a historical
+        // period: the tier depends on the size of an individual request, and a period depends
+        // on when one happened. Neither is a property of the model.
+        pricing.input
+    }
+
     pub fn warnings(&self) -> &[String] {
         &self.warnings
     }
