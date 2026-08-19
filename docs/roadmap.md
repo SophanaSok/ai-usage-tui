@@ -6,7 +6,7 @@ enough evidence attached that each item can be picked up cold.
 
 ## Where things stand
 
-132 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
+135 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
 macOS / Windows with an MSRV job (1.88) and `cargo-deny`. All six checks green on PR #5, including
 macOS, Windows and `cargo-deny`, which had never run before that branch.
 
@@ -41,19 +41,6 @@ only source. The bundled table is ~60 hand-maintained models. LiteLLM's
 `model_prices_and_context_window.json` is community-maintained at ~2,200 models and is what every
 competitor uses. Adopt it as primary with the Zen TOML kept as an overlay for Zen-specific and
 stealth models; vendor a snapshot via `include_str!` so offline still works.
-
-**Stale pricing cache can undo a dated correction.** `PricingEngine::load()` overlays the
-refreshed cache on the bundled table, and the overlay's *base* rates win. Historical periods are
-preserved (a refresh cannot erase them), but a stale cache still supplies the wrong **current**
-rate: a cache written before a rate change keeps applying the old rate to new events indefinitely,
-because nothing expires it.
-
-Found on the developer's own machine — `~/.local/share/ai-usage-tui/zen-pricing.toml` dated
-2026-07-24, still carrying `claude-sonnet-4-6` in the pre-fix dash form. It masked an A/B
-measurement of the point-in-time work until the data dir was isolated.
-
-*Fix:* record a written-at timestamp in the cache and either warn or ignore the overlay past some
-age. Deleting the file falls back to the bundled table, which is correct.
 
 ### P2 — Coverage
 
