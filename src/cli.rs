@@ -285,6 +285,7 @@ KEYS:
     t              Toggle routing panel
     p              Toggle per-project cost panel
     g              Toggle the spend-over-time graph
+    w              Toggle the burn-rate panel
     j / Down       Select next model
     k / Up         Select previous model
     q / Esc        Quit

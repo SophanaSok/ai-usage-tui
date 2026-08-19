@@ -3,7 +3,7 @@
 //! Deliberately free of any ratatui types: these are the numbers the dashboard shows, and they
 //! are unit-testable without constructing a terminal or an `App`.
 
-use crate::model::{DayTotals, ProjectTotals, Usage};
+use crate::model::{BurnRate, DayTotals, ProjectTotals, Usage};
 
 use super::app::Coverage;
 
@@ -171,5 +171,68 @@ fn local_day(created: i64) -> Option<chrono::NaiveDate> {
     match chrono::Local.timestamp_opt(created, 0) {
         chrono::offset::LocalResult::Single(dt) => Some(dt.date_naive()),
         _ => None,
+    }
+}
+
+/// Usage within a trailing window ending at `now`.
+///
+/// `now` is passed in rather than read here: this runs on the render path, which must not read
+/// the clock, and a caller-supplied instant is also what makes the result testable.
+pub fn burn_rate(usages: &[Usage], window_secs: i64, now: i64) -> BurnRate {
+    let mut burn = BurnRate {
+        window_secs,
+        ..Default::default()
+    };
+    if window_secs <= 0 {
+        return burn;
+    }
+    let cutoff = now.saturating_sub(window_secs);
+
+    for usage in usages {
+        // Future-dated rows are excluded rather than clamped in. A clock skew between the
+        // machine that wrote the log and this one would otherwise inflate the rate.
+        if usage.created <= cutoff || usage.created > now {
+            continue;
+        }
+        burn.requests += usage.requests;
+        burn.tokens += usage.total_tokens();
+        if usage.cost_status.needs_price() {
+            match usage.cost.filter(|_| usage.cost_status.is_billable()) {
+                Some(cost) => burn.cost += cost,
+                None => burn.unpriced_requests += usage.requests,
+            }
+        }
+    }
+    burn
+}
+
+/// Seconds until `remaining` dollars are spent at this burn rate.
+///
+/// `None` when the window is too thin to extrapolate from, or nothing is left to spend.
+pub fn seconds_to_exhaust(burn: &BurnRate, remaining: f64) -> Option<i64> {
+    if !burn.is_projectable() || remaining <= 0.0 {
+        return None;
+    }
+    let per_hour = burn.cost_per_hour();
+    if per_hour <= 0.0 {
+        return None;
+    }
+    Some((remaining / per_hour * 3600.0).round() as i64)
+}
+
+/// `2h 14m`, `45m`, `<1m`. Coarse on purpose — a projection accurate to the second would imply
+/// a precision the underlying rate does not have.
+pub fn format_duration(seconds: i64) -> String {
+    if seconds < 60 {
+        return "<1m".to_string();
+    }
+    let minutes = seconds / 60;
+    let hours = minutes / 60;
+    if hours == 0 {
+        format!("{minutes}m")
+    } else if hours < 24 {
+        format!("{}h {:02}m", hours, minutes % 60)
+    } else {
+        format!("{}d {}h", hours / 24, hours % 24)
     }
 }
