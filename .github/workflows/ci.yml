@@ -20,7 +20,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
   test:
     # Path resolution, timezone handling and the SQLite readers are all platform-sensitive,
@@ -38,13 +38,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.os }}
-      - run: cargo test --all-targets
-      - run: cargo test --doc
+      - run: cargo test --all-targets --locked
+      - run: cargo test --doc --locked
 
       - name: Smoke test the CLI against the fixture database
         shell: bash
         run: |
-          cargo build --release
+          cargo build --release --locked
           BIN=target/release/ai-usage-tui
           [ -f "$BIN" ] || BIN=target/release/ai-usage-tui.exe
           "$BIN" --version
@@ -69,7 +69,7 @@ jobs:
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --all-targets
+      - run: cargo check --all-targets --locked
 
   audit:
     name: Advisories
