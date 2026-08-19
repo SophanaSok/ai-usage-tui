@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::budget::BudgetEngine;
+use crate::escalation::{Escalations, Transition};
 use crate::model::{Category, Usage};
 use crate::ui::app::DerivedView;
 use std::path::PathBuf;
@@ -111,6 +112,9 @@ fn test_app(usages: Vec<Usage>) -> App {
         collector: None,
         panel: Panel::Models,
         budget_engine: BudgetEngine::empty(),
+        // Bundled, not loaded: a refreshed cache on the developer's machine must not change
+        // how a test ranks two models.
+        pricing: crate::pricing::PricingEngine::bundled(),
         alerts: Vec::new(),
         alert_sink: None,
         view: DerivedView::default(),
@@ -232,6 +236,9 @@ fn rows_do_not_mix_cost_provenance() {
         collector: None,
         panel: Panel::Models,
         budget_engine: BudgetEngine::empty(),
+        // Bundled, not loaded: a refreshed cache on the developer's machine must not change
+        // how a test ranks two models.
+        pricing: crate::pricing::PricingEngine::bundled(),
         alerts: Vec::new(),
         alert_sink: None,
         view: DerivedView::default(),
@@ -1026,5 +1033,122 @@ fn the_header_shows_how_much_of_the_spend_is_actually_priced() {
     assert!(
         !rendered.contains('%'),
         "a fully priced range should not shout a percentage:\n{rendered}"
+    );
+}
+
+fn escalations_for_test(
+    examined: u64,
+    escalated: u64,
+    transitions: Vec<Transition>,
+) -> Escalations {
+    Escalations {
+        sessions_examined: examined,
+        sessions_escalated: escalated,
+        unclassified_changes: 0,
+        transitions,
+    }
+}
+
+fn transition(
+    from: &str,
+    to: &str,
+    sessions: u64,
+    cost_after: f64,
+    unpriced_after: u64,
+) -> Transition {
+    Transition {
+        from: from.to_string(),
+        to: to.to_string(),
+        sessions,
+        cost_after,
+        unpriced_after,
+    }
+}
+
+#[test]
+fn derived_escalations_render_above_the_recorded_routing_table() {
+    // The panel is useless to anyone who has not instrumented --record-routing by hand. This
+    // block needs no instrumentation, so it is what most users will actually see there.
+    let mut app = test_app(Vec::new());
+    app.set_escalations_for_test(escalations_for_test(
+        30,
+        12,
+        vec![transition(
+            "opencode/glm-5.2",
+            "anthropic/claude-opus-5",
+            7,
+            4.10,
+            0,
+        )],
+    ));
+    let rendered = render_routing(&app, 84, 12);
+    assert!(
+        rendered.contains("40%"),
+        "escalation rate missing:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("of 30 sessions"),
+        "the denominator must be visible — a rate without one is not a fact:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("glm-5.2 → claude-opus-5"),
+        "the transition itself is the finding:\n{rendered}"
+    );
+    assert!(rendered.contains("$4.10 after"), "{rendered}");
+}
+
+#[test]
+fn derived_and_recorded_routing_are_labelled_as_different_things() {
+    // An inferred transition and a measured pass rate must never share a table. On screen they
+    // would be indistinguishable, which is the failure CostStatus exists to prevent.
+    let mut app = test_app(Vec::new());
+    app.set_escalations_for_test(escalations_for_test(
+        10,
+        5,
+        vec![transition("haiku", "opus", 2, 1.00, 0)],
+    ));
+    app.set_routing_for_test(vec![routing_agg(
+        "reviewer",
+        "anthropic/claude-opus-5",
+        4,
+        2.0,
+        4,
+        0,
+    )]);
+    let rendered = render_routing(&app, 84, 16);
+    assert!(
+        rendered.contains("ESCALATIONS") && rendered.contains("derived from sessions"),
+        "the derived block must say it is derived:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("ROUTING") && rendered.contains("$/SUCCESS"),
+        "the recorded table must still be present:\n{rendered}"
+    );
+}
+
+#[test]
+fn spend_after_an_escalation_reads_as_a_floor_when_partly_unpriced() {
+    let mut app = test_app(Vec::new());
+    app.set_escalations_for_test(escalations_for_test(
+        4,
+        2,
+        vec![transition("haiku", "opus", 2, 1.50, 3)],
+    ));
+    let rendered = render_routing(&app, 84, 10);
+    assert!(
+        rendered.contains("≥ $1.50 after"),
+        "unpriced spend after the move makes the figure a floor, not a total:\n{rendered}"
+    );
+}
+
+#[test]
+fn nothing_derived_leaves_the_routing_panel_as_it_was() {
+    // A user with no multi-request sessions must not get an empty block taking up a third of
+    // the pane.
+    let app = test_app(Vec::new());
+    let rendered = render_routing(&app, 84, 12);
+    assert!(
+        !rendered.contains("ESCALATIONS"),
+        "an empty derived block should not be rendered at all:\n{rendered}"
     );
 }

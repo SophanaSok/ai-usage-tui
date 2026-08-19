@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Escalation analytics, derived from usage already collected.** The routing panel could only
+  say anything if you had instrumented `--record-routing` by hand, so for most users it said
+  nothing. One part of the same question is directly observable in data already on disk: how
+  often a session reached for a model pricier than the one it opened with, and what that cost.
+  It appears as its own block above the recorded table, labelled as derived. The two are never
+  merged — an inferred transition and a measured pass rate would be indistinguishable in one
+  table, which is the failure `CostStatus` exists to prevent one level up. Nothing infers a test
+  result, and nothing should.
+  Counting is per session, not per model switch. Checked against real collected usage first: a
+  session there switched models 20 times, 10 of them upward, and per-switch counting reported
+  **$233 of escalated spend for a $29 session** by summing the same tail ten times. Each session
+  is now characterised once, so the reported figure cannot exceed what the sessions cost.
+
 ### Changed
 
 - **Routing analytics now leads with the question it answers.** The panel is titled *cost per

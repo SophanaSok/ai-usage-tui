@@ -8,10 +8,12 @@ use std::time::{Duration, Instant};
 
 use crate::budget::{Alert, BudgetEngine};
 use crate::collector::background::CollectorHandle;
+use crate::escalation::{self, Escalations};
 use crate::model::{
     BurnRate, Category, CostStatus, DayTotals, ProjectTotals, Range, RoutingAggregates,
     SessionTotals, Totals, Usage,
 };
+use crate::pricing::PricingEngine;
 use crate::utils::format_clock;
 
 use super::aggregate::{burn_rate, coverage, daily_totals, project_totals, session_totals};
@@ -42,6 +44,10 @@ pub struct App {
     /// "budgets on" and "routing on" could both be true and one silently won.
     pub panel: Panel,
     pub budget_engine: BudgetEngine,
+    /// Held to rank models by list price when deriving escalations. Loaded once: it is
+    /// immutable data, and re-reading the table per refresh would put file I/O behind the
+    /// render loop.
+    pub(super) pricing: PricingEngine,
     pub alerts: Vec<Alert>,
     /// Alerts are handed to a worker thread; the webhook POST is blocking and must never
     /// happen on the render path.
@@ -81,6 +87,7 @@ pub struct DerivedView {
     burn: BurnRate,
     sessions: Vec<SessionTotals>,
     coverage: Coverage,
+    escalations: Escalations,
 }
 
 /// How much of the visible usage the pricing engine could actually price.
@@ -135,6 +142,7 @@ impl App {
             collector,
             panel: Panel::Models,
             budget_engine,
+            pricing: PricingEngine::load(),
             alerts: Vec::new(),
             alert_sink,
             view: DerivedView::default(),
@@ -197,6 +205,10 @@ impl App {
         // path must not read it.
         self.view.burn = burn_rate(&self.usages, BURN_WINDOW_SECS, crate::utils::now());
         self.view.coverage = coverage(&self.view.filtered);
+        // Derived from usage already collected, never merged into recorded routing events.
+        let escalations =
+            escalation::derive(&self.view.filtered, |model| self.pricing.input_rate(model));
+        self.view.escalations = escalations;
 
         let mut grouped = BTreeMap::<(String, String, Category, CostStatus), Usage>::new();
         for u in &self.view.filtered {
@@ -348,6 +360,15 @@ impl App {
     #[cfg(test)]
     pub(super) fn set_routing_for_test(&mut self, routing: Vec<RoutingAggregates>) {
         self.view.routing = routing;
+    }
+
+    pub fn escalations(&self) -> &Escalations {
+        &self.view.escalations
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_escalations_for_test(&mut self, escalations: Escalations) {
+        self.view.escalations = escalations;
     }
 
     pub fn routing(&self) -> &[RoutingAggregates] {

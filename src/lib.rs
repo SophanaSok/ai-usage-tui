@@ -3,6 +3,7 @@ pub mod classify;
 pub mod cli;
 pub mod collector;
 pub mod config;
+pub mod escalation;
 pub mod export;
 pub mod helpers;
 pub mod logging;

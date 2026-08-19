@@ -375,6 +375,13 @@ retry, escalation, and review-defect rates behind that figure.
 A pair that never reported a test result shows `—`, not `0%`. Never having been
 measured is not the same as failing everything.
 
+The panel also shows an **escalations** block derived from usage already
+collected, which needs no setup at all: how often a session reached for a
+pricier model than it opened with, and what that cost. Derived and recorded data
+are shown as separate blocks and never merged — nothing this tool inferred
+should look like something your harness measured. See
+[docs/routing-analytics.md](docs/routing-analytics.md).
+
 Routing events are separate, opt-in records for evaluating model-selection
 outcomes. Nothing records them for you — emit one per task from whatever drives
 your agents. Record an event as JSON on stdin:

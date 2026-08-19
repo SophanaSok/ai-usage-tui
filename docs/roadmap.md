@@ -60,10 +60,12 @@ Remaining:
   with the flat session list: it introduces panel *state* — which project am I inside? — that no
   panel currently has, and that is a larger change than any of the panels were.
 - **Interactive depth** — `/` search, sortable columns, `?` help overlay, mouse support.
-- **Routing analytics needs data before it can answer anything.** The panel now leads with
-  cost-per-delivered-result, but only `--record-routing` populates it, and nothing yet records
-  routing events automatically. Deriving retries and escalations from the sessions already
-  collected would make the panel useful without asking the user to instrument anything.
+- **Routing analytics still needs a harness for the half that matters.** Escalations are now
+  derived from collected sessions, but pass/fail and retry counts cannot be inferred from usage
+  metadata and must not be guessed. A shipped hook or wrapper that emits `--record-routing`
+  events from a real agent harness is what would close this, not more derivation.
+- **Derived escalations are not exported.** `--json` and `--csv` carry usage rows only, so the
+  block is TUI-only.
 
 ### P3 — Polish
 

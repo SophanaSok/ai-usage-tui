@@ -1,6 +1,45 @@
 # Routing Analytics
 
-Routing analytics track which agents and models were used for each development task, along with token usage, cost, and test outcomes. This enables cost and quality analysis by agent, model, and task type.
+Routing analytics answer a question a usage total cannot: **is the expensive model earning its
+cost?** A model at twice the token price that lands the change first time can be cheaper per
+delivered result than a cheap one that needs three attempts.
+
+The `t` panel has two blocks, and the split between them is deliberate.
+
+| Block | Where it comes from | What it can say |
+| --- | --- | --- |
+| **ESCALATIONS** | Derived from usage already collected. No setup. | Which sessions reached for a pricier model than they opened with, and what that cost |
+| **ROUTING** | Recorded by your harness via `--record-routing` | Cost per passing test, retry / escalation / defect rates |
+
+They are never merged. A measured pass rate and an inferred transition would be
+indistinguishable in one table, which is the same failure `CostStatus` exists to prevent one
+level up: nothing this tool inferred should look like something it observed.
+
+## Derived escalations
+
+For each session with more than one request, the model it opened with is compared against every
+model it used afterwards. If any of them costs more per input token, the session escalated. The
+block reports how many sessions did, the most common opening-to-priciest pairs, and the spend on
+models above the opening rate.
+
+What it does **not** claim:
+
+- **An escalation is not a failure of the cheaper model.** Tasks get harder. The number supports
+  "this happens N times in M sessions and costs this much", not a verdict.
+- **It is not a routing event.** Derived transitions are never written to the journal or folded
+  into recorded aggregates.
+- **It does not guess at unknown prices.** Ordering two models needs a price for both. Without
+  one, the change is reported as unranked rather than assumed flat — so a low escalation count
+  is distinguishable from a count taken with one eye shut.
+
+Counting is per session, not per model switch. Sessions interleave models rather than stepping
+up once; a real session switched models 20 times, 10 of them upward. Counting each switch and
+attributing the spend that followed reported **$233 of escalated spend for a $29 session**. Each
+session is characterised once and each request counted once, so the reported figure cannot
+exceed what the sessions actually cost.
+
+Sessions without a session id are skipped rather than pooled — pooling would invent adjacency
+between unrelated requests.
 
 ## Recording Routing Events
 
