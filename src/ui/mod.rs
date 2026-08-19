@@ -55,7 +55,7 @@ pub use theme::cost_display;
 use panels::{
     alerts::draw_alert_banner, breakdown::draw_breakdown, budgets::draw_budgets,
     header::draw_header, metrics::draw_metrics, models::draw_models, projects::draw_projects,
-    routing::draw_routing,
+    routing::draw_routing, timeseries::draw_timeseries,
 };
 use theme::MUTED;
 
@@ -114,6 +114,7 @@ pub fn run(
                     KeyCode::Char('b') => app.toggle_panel(Panel::Budgets),
                     KeyCode::Char('t') => app.toggle_panel(Panel::Routing),
                     KeyCode::Char('p') => app.toggle_panel(Panel::Projects),
+                    KeyCode::Char('g') => app.toggle_panel(Panel::TimeSeries),
                     KeyCode::Char('1') => app.set_range(Range::Today),
                     KeyCode::Char('2') => app.set_range(Range::Week),
                     KeyCode::Char('3') => app.set_range(Range::Month),
@@ -165,6 +166,7 @@ fn draw(frame: &mut Frame, app: &App) {
         Panel::Routing => draw_routing(frame, body[1], app),
         Panel::Budgets => draw_budgets(frame, body[1], app),
         Panel::Projects => draw_projects(frame, body[1], app),
+        Panel::TimeSeries => draw_timeseries(frame, body[1], app),
         Panel::Models => draw_models(frame, body[1], app),
     }
     let footer = Paragraph::new(Line::from(vec![
@@ -181,6 +183,8 @@ fn draw(frame: &mut Frame, app: &App) {
         Span::raw(" routing  "),
         Span::styled("p", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
         Span::raw(" projects  "),
+        Span::styled("g", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
+        Span::raw(" graph  "),
         Span::styled(
             "j/k",
             Style::default().fg(CYAN).add_modifier(Modifier::BOLD),

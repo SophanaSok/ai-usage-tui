@@ -4,6 +4,17 @@
 
 ### Added
 
+- **Spend-over-time panel** (`g`). Daily tokens and cost, as a sparkline of the whole visible
+  range plus a table of the days that fit. Days with no usage are kept as zero bars — dropping
+  them compresses a quiet week to the width of a busy one and reads as steady activity. Bars use
+  eighth-block characters so a day below a twelfth of the peak still renders; whole-cell bars
+  would make a chart of mostly-small days look empty. The sparkline is drawn right-to-left from
+  the newest day, so time runs left to right and truncation drops the oldest days rather than
+  the most recent. A partly-priced day shows `≥ $x`; a day with no priced usage says `unpriced`
+  rather than the technically-true and useless `≥ $0.00`.
+- **The project's first TUI rendering tests**, via ratatui's `TestBackend`. The audit noted
+  nothing verified rendering; a panel that computes correct numbers and draws nothing was
+  previously indistinguishable from a working one.
 - **Contributor onboarding.** `CONTRIBUTING.md` was 31 lines of commands and rules with no map
   of the codebase and no route in. It now covers where things live, the three most likely
   contributions (a collector, a panel, a pricing correction) with concrete steps, and the

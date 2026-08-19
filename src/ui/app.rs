@@ -8,10 +8,12 @@ use std::time::{Duration, Instant};
 
 use crate::budget::{Alert, BudgetEngine};
 use crate::collector::background::CollectorHandle;
-use crate::model::{Category, CostStatus, ProjectTotals, Range, RoutingAggregates, Totals, Usage};
+use crate::model::{
+    Category, CostStatus, DayTotals, ProjectTotals, Range, RoutingAggregates, Totals, Usage,
+};
 use crate::utils::format_clock;
 
-use super::aggregate::{coverage, project_totals};
+use super::aggregate::{coverage, daily_totals, project_totals};
 
 pub struct App {
     pub range: Range,
@@ -57,6 +59,7 @@ pub enum Panel {
     Budgets,
     Routing,
     Projects,
+    TimeSeries,
 }
 
 #[derive(Default)]
@@ -67,6 +70,7 @@ pub struct DerivedView {
     category_totals: Vec<(Category, Totals)>,
     routing: Vec<RoutingAggregates>,
     projects: Vec<ProjectTotals>,
+    daily: Vec<DayTotals>,
     coverage: Coverage,
 }
 
@@ -178,6 +182,7 @@ impl App {
         .collect();
 
         self.view.projects = project_totals(&self.view.filtered);
+        self.view.daily = daily_totals(&self.view.filtered);
         self.view.coverage = coverage(&self.view.filtered);
 
         let mut grouped = BTreeMap::<(String, String, Category, CostStatus), Usage>::new();
@@ -215,6 +220,10 @@ impl App {
 
     pub fn projects(&self) -> &[ProjectTotals] {
         &self.view.projects
+    }
+
+    pub fn daily(&self) -> &[DayTotals] {
+        &self.view.daily
     }
 
     pub fn coverage(&self) -> Coverage {
