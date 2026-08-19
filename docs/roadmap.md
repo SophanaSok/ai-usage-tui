@@ -6,7 +6,7 @@ enough evidence attached that each item can be picked up cold.
 
 ## Where things stand
 
-119 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
+125 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
 macOS / Windows with an MSRV job (1.88) and `cargo-deny`. All six checks green on PR #5, including
 macOS, Windows and `cargo-deny`, which had never run before that branch.
 
@@ -141,9 +141,11 @@ cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets && cargo test --doc
 
-# Against the committed fixture
+# Against the committed fixture. `--claude-dir` matters: without it this reads your real
+# ~/.claude/projects and stops being a fixture check.
 cargo build --release
-./target/release/ai-usage-tui --json --db tests/fixtures/opencode_test.db --all
+./target/release/ai-usage-tui --json --all \
+  --db tests/fixtures/opencode_test.db --claude-dir /nonexistent
 
 # Against real Claude Code logs — the true end-to-end check.
 # Watch the unpriced count: it should be zero.
@@ -154,4 +156,5 @@ cargo build --release
 ```
 
 Tests are hermetic — they never read the developer's real `~/.claude/projects`. Keep it that way:
-pass an explicit `claude_dir` in any new test that goes through `load_usage` or `print_once`.
+pass an explicit `claude_dir` in any new test that goes through `load_usage` or `print_once`, and
+in any command in this file.

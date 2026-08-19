@@ -60,6 +60,11 @@
 
 ### Fixed
 
+- **`--json | head` crashed.** `println!` panics when the write fails and a closed pipe is a
+  write failure, so piping any output into `head`, `grep -q`, or a `less` the user quits out of
+  aborted with "failed printing to stdout: Broken pipe". A closed pipe is now a clean exit. Fixed
+  without `libc` or an `unsafe` block — the usual `SIGPIPE` fix needs both, and this crate has
+  neither. The CLI smoke test only ever wrote to a file, so nothing caught it; it now pipes.
 - **Two right-hand panels could both be "on".** `show_budgets` and `show_routing` were
   independent booleans and the draw order silently picked a winner. One `Panel` enum now.
 - **A panicking collector was retired for the life of the process.** The supervisor recorded the

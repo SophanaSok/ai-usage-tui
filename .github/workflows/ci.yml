@@ -53,6 +53,10 @@ jobs:
           "$BIN" --json --db tests/fixtures/opencode_test.db --all > out.json
           head -c 400 out.json
           grep -q '"usage"' out.json
+          # A reader that closes the pipe is a normal end to a pipeline, not a crash. This
+          # used to abort with "failed printing to stdout: Broken pipe".
+          "$BIN" --json --db tests/fixtures/opencode_test.db --all | head -c 200 > /dev/null
+          "$BIN" --json --db tests/fixtures/opencode_test.db --all | grep -q '"usage"' 
 
   msrv:
     name: MSRV

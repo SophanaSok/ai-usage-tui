@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use crate::cli::Cli;
 use crate::collector::load_usage;
+use crate::helpers::print_line;
 use crate::model::{Range, Usage};
 use crate::ui::cost_display;
 use crate::utils::{format_count, journal_path};
@@ -49,7 +50,11 @@ pub fn print_once(cli: &Cli) -> Result<()> {
             ));
         }
         fs::write(path, csv)?;
-        println!("Wrote usage CSV to {} ({})", path.display(), source);
+        print_line(&format!(
+            "Wrote usage CSV to {} ({})",
+            path.display(),
+            source
+        ))?;
     } else if cli.json {
         let rows: Vec<_> = usages
             .iter()
@@ -73,22 +78,19 @@ pub fn print_once(cli: &Cli) -> Result<()> {
                 })
             })
             .collect();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(
-                &serde_json::json!({"source": source, "range": cli.range.label(), "usage": rows})
-            )?
-        );
+        print_line(&serde_json::to_string_pretty(
+            &serde_json::json!({"source": source, "range": cli.range.label(), "usage": rows}),
+        )?)?;
     } else {
-        println!("{} ({})", source, cli.range.label());
+        print_line(&format!("{} ({})", source, cli.range.label()))?;
         for usage in usages.iter().filter(|usage| filter.matches(usage)) {
-            println!(
+            print_line(&format!(
                 "{} / {}: {} tokens [{}]",
                 usage.provider,
                 usage.model,
                 format_count(usage.total_tokens()),
                 cost_display(usage)
-            );
+            ))?;
         }
     }
     Ok(())

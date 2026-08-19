@@ -25,27 +25,43 @@ use ai_usage_tui::{
     config::CollectorConfig,
     config::{apply_config, ConfigFile},
     export::{csv_field, print_once},
+    helpers::{is_broken_pipe, print_line},
     ui::run,
 };
 
 fn main() -> Result<()> {
+    match dispatch() {
+        // A downstream reader closing the pipe — `| head`, `| grep -q`, quitting out of
+        // `| less` — is a normal way for a command in a pipeline to end, not a failure.
+        Err(error) if is_broken_pipe(&error) => Ok(()),
+        other => other,
+    }
+}
+
+fn dispatch() -> Result<()> {
     let parsed_cli = parse_cli(env::args().skip(1))?;
     if parsed_cli.help {
         print_help();
         return Ok(());
     }
     if parsed_cli.version {
-        println!("ai-usage-tui {}", env!("CARGO_PKG_VERSION"));
+        print_line(&format!("ai-usage-tui {}", env!("CARGO_PKG_VERSION")))?;
         return Ok(());
     }
     if parsed_cli.refresh_zen {
         let path = refresh_zen_catalog()?;
-        println!("Cached OpenCode Zen catalog at {}", path.display());
+        print_line(&format!(
+            "Cached OpenCode Zen catalog at {}",
+            path.display()
+        ))?;
         return Ok(());
     }
     if parsed_cli.refresh_pricing {
         let path = refresh_pricing()?;
-        println!("Refreshed Zen pricing table at {}", path.display());
+        print_line(&format!(
+            "Refreshed Zen pricing table at {}",
+            path.display()
+        ))?;
         return Ok(());
     }
     let (cli, config) = apply_config(parsed_cli)?;
@@ -204,7 +220,7 @@ fn webhook_url(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Option<Stri
 fn check_budgets(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
     let budget_engine = budget_engine(config);
     if budget_engine.is_empty() {
-        println!("{{\"budgets\": 0, \"alerts\": []}}");
+        print_line("{\"budgets\": 0, \"alerts\": []}")?;
         return Ok(());
     }
 
@@ -238,7 +254,7 @@ fn check_budgets(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()
             })
         }).collect::<Vec<_>>(),
     });
-    println!("{}", serde_json::to_string_pretty(&json)?);
+    print_line(&serde_json::to_string_pretty(&json)?)?;
 
     if has_alerts {
         // Report a failed dispatch rather than swallowing it: a webhook that silently never
@@ -301,7 +317,7 @@ fn export_routing(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
             ));
         }
         std::fs::write(path, csv)?;
-        println!("Wrote routing CSV to {}", path.display());
+        print_line(&format!("Wrote routing CSV to {}", path.display()))?;
     } else {
         let rows: Vec<_> = aggregates
             .iter()
@@ -324,14 +340,11 @@ fn export_routing(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
                 })
             })
             .collect();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "source": format!("journal: {}", journal.display()),
-                "events": events.len(),
-                "aggregates": rows
-            }))?
-        );
+        print_line(&serde_json::to_string_pretty(&serde_json::json!({
+            "source": format!("journal: {}", journal.display()),
+            "events": events.len(),
+            "aggregates": rows
+        }))?)?;
     }
     Ok(())
 }
