@@ -1,4 +1,4 @@
-//! Per-project cost, with a pricing-coverage figure in the title.
+//! Per-project cost. Range-wide pricing coverage lives in the header.
 //!
 //! Adding a panel: create a sibling module here, add a `Panel` variant in `app.rs`, a key
 //! binding in `mod.rs`, and a match arm in `draw`.
@@ -46,15 +46,14 @@ pub fn draw_projects(frame: &mut Frame, area: Rect, app: &App) {
         Constraint::Length(7),
         Constraint::Length(6),
     ];
-    let title = match app.coverage().pct() {
-        Some(pct) => format!("PROJECT COST  ({:.0}% priced)", pct),
-        None => "PROJECT COST".to_string(),
-    };
+    // Coverage is a range-wide figure, not a per-project one, and the header now carries it on
+    // every screen. Repeating it in this title invited reading it as "of this project's spend".
+    let title = "PROJECT COST";
     frame.render_widget(
         Table::new(rows, widths)
             .header(header)
             .column_spacing(1)
-            .block(panel(&title, CYAN)),
+            .block(panel(title, CYAN)),
         area,
     );
 }

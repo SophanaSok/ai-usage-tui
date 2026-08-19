@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Routing analytics now leads with the question it answers.** The panel is titled *cost per
+  delivered result* and sorts by exactly that — dollars spent per passing test, cheapest model
+  first — instead of listing agents in arbitrary order and leaving the arithmetic to the reader.
+  This is the one view no comparable tool has, and it read like a debug dump.
+  An agent that never reported a test result shows `—`, not `0%`: never having been measured is
+  not the same as failing everything, and the older rendering made an uninstrumented agent look
+  like the worst one on the board. A genuinely free model reads `free` rather than `$0.0000`.
+  When there is nothing recorded, the panel explains what it would show and how to record it,
+  rather than showing an empty table.
+
+- **Pricing coverage moved to the header**, where it is visible on every panel, and reads
+  `all priced` when nothing is missing. It previously appeared only in the project panel's
+  title, so a reader could take any other panel's total at face value without learning it
+  covered two thirds of the requests. Below 100% it is highlighted — that is the case worth
+  noticing. Cost provenance is the thing this project does that the alternatives do not, and it
+  had been living in an internal enum.
+
 ### Added
 
 - **Sessions panel** (`s`). Individual sessions, most recently active first. A session id is a

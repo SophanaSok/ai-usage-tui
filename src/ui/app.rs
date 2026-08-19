@@ -345,6 +345,11 @@ impl App {
     pub fn category_totals(&self) -> &[(Category, Totals)] {
         &self.view.category_totals
     }
+    #[cfg(test)]
+    pub(super) fn set_routing_for_test(&mut self, routing: Vec<RoutingAggregates>) {
+        self.view.routing = routing;
+    }
+
     pub fn routing(&self) -> &[RoutingAggregates] {
         &self.view.routing
     }

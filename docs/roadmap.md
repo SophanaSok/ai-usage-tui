@@ -60,9 +60,10 @@ Remaining:
   with the flat session list: it introduces panel *state* — which project am I inside? — that no
   panel currently has, and that is a larger change than any of the panels were.
 - **Interactive depth** — `/` search, sortable columns, `?` help overlay, mouse support.
-- **Surface the differentiators** — routing analytics is still behind a `t` toggle with no
-  signposting. Pricing coverage shows in the project panel's title; the same figure belongs on
-  the metrics row where it is always visible.
+- **Routing analytics needs data before it can answer anything.** The panel now leads with
+  cost-per-delivered-result, but only `--record-routing` populates it, and nothing yet records
+  routing events automatically. Deriving retries and escalations from the sessions already
+  collected would make the panel useful without asking the user to instrument anything.
 
 ### P3 — Polish
 
