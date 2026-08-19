@@ -366,8 +366,18 @@ current command and TUI do not dispatch webhook requests.
 
 ## Model-routing analytics
 
+This answers a question a usage total cannot: **is the expensive model actually
+earning its cost on your work?** A model that costs 5x more but lands the change
+on the first try can be the cheaper one. The panel ranks agent/model pairs by
+**cost per delivered result** — dollars spent per passing test — alongside the
+retry, escalation, and review-defect rates behind that figure.
+
+A pair that never reported a test result shows `—`, not `0%`. Never having been
+measured is not the same as failing everything.
+
 Routing events are separate, opt-in records for evaluating model-selection
-outcomes. Record an event as JSON on stdin:
+outcomes. Nothing records them for you — emit one per task from whatever drives
+your agents. Record an event as JSON on stdin:
 
 ```sh
 echo '{

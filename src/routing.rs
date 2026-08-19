@@ -60,6 +60,35 @@ pub fn escalation_rate(agg: &RoutingAggregates) -> f64 {
     }
 }
 
+/// Share of tasks whose recorded test result passed.
+///
+/// `None` when no task recorded a test result at all. A rate computed over zero observations
+/// is not 0% — it is unknown, and rendering it as 0% would make an uninstrumented agent look
+/// like a failing one.
+pub fn success_rate(agg: &RoutingAggregates) -> Option<f64> {
+    let observed = agg.test_passes + agg.test_failures;
+    if observed == 0 {
+        return None;
+    }
+    Some(agg.test_passes as f64 / observed as f64 * 100.0)
+}
+
+/// Dollars spent per task that passed its tests.
+///
+/// This is the number the routing panel exists for: it is what makes "is the expensive model
+/// worth it?" answerable rather than a matter of taste. A model at twice the token price that
+/// passes first time can be cheaper per delivered result than a cheap one that needs three
+/// attempts.
+///
+/// `None` when nothing passed — dividing by zero successes is either infinite or, rendered
+/// carelessly, $0.00.
+pub fn cost_per_success(agg: &RoutingAggregates) -> Option<f64> {
+    if agg.test_passes == 0 {
+        return None;
+    }
+    Some(agg.cost / agg.test_passes as f64)
+}
+
 pub fn defect_rate(agg: &RoutingAggregates) -> f64 {
     if agg.tasks == 0 {
         0.0
@@ -75,6 +104,48 @@ pub fn load_routing_events(path: &std::path::Path) -> anyhow::Result<Vec<Routing
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn agg(tasks: u64, cost: f64, passes: u32, failures: u32) -> RoutingAggregates {
+        RoutingAggregates {
+            agent: "a".into(),
+            model: "m".into(),
+            provider: "p".into(),
+            tasks,
+            cost,
+            test_passes: passes,
+            test_failures: failures,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn an_uninstrumented_agent_has_an_unknown_success_rate_not_a_zero_one() {
+        // Rendering "0%" for an agent that simply never reported a test result would make it
+        // look like it fails everything.
+        assert_eq!(success_rate(&agg(5, 1.0, 0, 0)), None);
+        assert_eq!(success_rate(&agg(5, 1.0, 3, 1)), Some(75.0));
+    }
+
+    #[test]
+    fn cost_per_success_answers_whether_the_expensive_model_earned_it() {
+        // The whole point: a model at 4x the cost that passes every time beats a cheap one
+        // that needs several attempts.
+        let pricey = agg(4, 40.0, 4, 0);
+        let cheap = agg(4, 12.0, 1, 3);
+        let pricey_per_win = cost_per_success(&pricey).expect("has passes");
+        let cheap_per_win = cost_per_success(&cheap).expect("has passes");
+        assert!((pricey_per_win - 10.0).abs() < 1e-9);
+        assert!((cheap_per_win - 12.0).abs() < 1e-9);
+        assert!(
+            pricey_per_win < cheap_per_win,
+            "the pricier model is cheaper per delivered result"
+        );
+    }
+
+    #[test]
+    fn nothing_passing_yields_no_cost_per_success_rather_than_zero() {
+        assert_eq!(cost_per_success(&agg(3, 9.0, 0, 3)), None);
+    }
     use crate::model::{Category, CostStatus, RoutingEvent};
     use std::time::{SystemTime, UNIX_EPOCH};
 

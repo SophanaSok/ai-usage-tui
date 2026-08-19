@@ -859,3 +859,172 @@ fn the_selection_clamps_to_the_visible_panel_not_the_model_table() {
     app.panel = Panel::Models;
     assert_eq!(app.visible_rows(), 1);
 }
+
+fn routing_agg(
+    agent: &str,
+    model: &str,
+    tasks: u64,
+    cost: f64,
+    passes: u32,
+    failures: u32,
+) -> crate::model::RoutingAggregates {
+    crate::model::RoutingAggregates {
+        agent: agent.into(),
+        model: model.into(),
+        provider: "p".into(),
+        tasks,
+        tokens: 100_000,
+        cost,
+        test_passes: passes,
+        test_failures: failures,
+        ..Default::default()
+    }
+}
+
+fn render_routing(app: &App, w: u16, h: u16) -> String {
+    use ratatui::{backend::TestBackend, Terminal};
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("backend");
+    terminal
+        .draw(|frame| crate::ui::panels::routing::draw_routing(frame, frame.area(), app))
+        .expect("draw");
+    terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect()
+}
+
+#[test]
+fn routing_leads_with_cost_per_delivered_result() {
+    let mut app = test_app(Vec::new());
+    // Passed in the opposite order to the expected ranking, so the assertion below fails if the
+    // panel merely echoes its input.
+    app.set_routing_for_test(vec![
+        routing_agg("junior", "opencode/glm-5.2", 20, 60.00, 5, 15),
+        routing_agg("reviewer", "anthropic/claude-opus-5", 12, 41.20, 12, 0),
+    ]);
+    let rendered = render_routing(&app, 84, 6);
+    assert!(rendered.contains("$/SUCCESS"), "{rendered}");
+    // $41.20/12 = $3.43 beats $60/5 = $12.00, so the pricier model ranks first.
+    let reviewer = rendered.find("reviewer").expect("reviewer row");
+    let junior = rendered.find("junior").expect("junior row");
+    assert!(
+        reviewer < junior,
+        "rows are not ranked by cost per success:\n{rendered}"
+    );
+}
+
+#[test]
+fn a_free_model_says_free_rather_than_implying_a_precise_comparison() {
+    // $0.0000 for a free model is arithmetically true and analytically empty: the metric cannot
+    // discriminate between free models however badly they perform.
+    let mut app = test_app(Vec::new());
+    app.set_routing_for_test(vec![routing_agg(
+        "junior",
+        "opencode/free-model",
+        20,
+        0.0,
+        8,
+        12,
+    )]);
+    let rendered = render_routing(&app, 84, 5);
+    assert!(rendered.contains("free"), "{rendered}");
+    assert!(!rendered.contains("$0.0000"), "{rendered}");
+}
+
+#[test]
+fn an_uninstrumented_agent_shows_a_dash_not_a_zero_pass_rate() {
+    // An agent that never reported a test result must not read as one that fails everything.
+    // Both its pass rate and its cost-per-success are unknown, so both render as a dash.
+    //
+    // Scoped to the row rather than the whole buffer, for two reasons: a genuine zero retry
+    // rate is also "0%", and the panel title itself contains an em dash.
+    let mut app = test_app(Vec::new());
+    app.set_routing_for_test(vec![routing_agg(
+        "explorer",
+        "opencode/glm-5.2",
+        9,
+        3.10,
+        0,
+        0,
+    )]);
+    let rendered = render_routing(&app, 84, 5);
+
+    let row_start = rendered.find("explorer").expect("the agent row");
+    let row_end = rendered[row_start..]
+        .find("100.0K")
+        .expect("the token column")
+        + row_start;
+    let row = &rendered[row_start..row_end];
+
+    assert_eq!(
+        row.matches('\u{2014}').count(),
+        2,
+        "expected unknown pass rate and unknown cost-per-success in this row:\n{row}"
+    );
+}
+
+#[test]
+fn the_empty_routing_panel_explains_the_feature_and_how_to_use_it() {
+    // This is the state nearly every user sees: routing events come from the user's own
+    // harness, so a bare "no events recorded" made the most differentiated thing this project
+    // does also its least discoverable.
+    let app = test_app(Vec::new());
+    let rendered = render_routing(&app, 76, 19);
+    assert!(
+        rendered.contains("earning its cost"),
+        "no explanation of what it answers:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("--record-routing"),
+        "no way to enable it:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("routing-analytics.md"),
+        "no pointer to the docs:\n{rendered}"
+    );
+}
+
+#[test]
+fn the_header_shows_how_much_of_the_spend_is_actually_priced() {
+    // Provenance is the project's differentiator and it lived in an internal enum. A reader
+    // could take a total at face value without learning it covered two thirds of the requests.
+    use ratatui::{backend::TestBackend, Terminal};
+
+    let render = |app: &App| -> String {
+        let mut terminal = Terminal::new(TestBackend::new(120, 3)).expect("backend");
+        terminal
+            .draw(|frame| crate::ui::panels::header::draw_header(frame, frame.area(), app))
+            .expect("draw");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    };
+
+    let mut partial = test_app(vec![
+        usage_at("2026-08-01", 1000, Some(1.0)),
+        usage_at("2026-08-01", 1000, Some(1.0)),
+        usage_at("2026-08-01", 1000, None),
+    ]);
+    partial.recompute();
+    assert!(
+        render(&partial).contains("67% priced"),
+        "{}",
+        render(&partial)
+    );
+
+    let mut complete = test_app(vec![usage_at("2026-08-01", 1000, Some(1.0))]);
+    complete.recompute();
+    let rendered = render(&complete);
+    assert!(rendered.contains("all priced"), "{rendered}");
+    assert!(
+        !rendered.contains('%'),
+        "a fully priced range should not shout a percentage:\n{rendered}"
+    );
+}
