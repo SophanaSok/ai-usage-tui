@@ -73,6 +73,12 @@
 
 ### Fixed
 
+- **A dated comment was the only thing guarding a pricing deadline.** `claude-sonnet-5` runs on
+  introductory rates that lapse after 2026-08-31; nothing read the comment saying so. A test now
+  fails the build on 2026-09-01 with the exact replacement rates in its message, and guards the
+  other direction too — applying list rates before the lapse date overcharges every request. All
+  eleven Anthropic entries were re-verified against the `claude-api` skill; every rate, including
+  the 0.1x cache-read and 1.25x cache-write multipliers, was already correct.
 - **`--json | head` crashed.** `println!` panics when the write fails and a closed pipe is a
   write failure, so piping any output into `head`, `grep -q`, or a `less` the user quits out of
   aborted with "failed printing to stdout: Broken pipe". A closed pipe is now a clean exit. Fixed

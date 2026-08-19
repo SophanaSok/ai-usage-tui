@@ -6,7 +6,7 @@ enough evidence attached that each item can be picked up cold.
 
 ## Where things stand
 
-125 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
+126 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
 macOS / Windows with an MSRV job (1.88) and `cargo-deny`. All six checks green on PR #5, including
 macOS, Windows and `cargo-deny`, which had never run before that branch.
 
@@ -47,9 +47,18 @@ only source. The bundled table is ~60 hand-maintained models. LiteLLM's
 competitor uses. Adopt it as primary with the Zen TOML kept as an overlay for Zen-specific and
 stealth models; vendor a snapshot via `include_str!` so offline still works.
 
-**Time-boxed:** `claude-sonnet-5` in `pricing/zen.toml` carries **introductory** pricing that
-lapses **2026-08-31** ($2/$10 → $3/$15, cache 0.20/2.50 → 0.30/3.75). There is a dated comment at
-the entry. This needs a manual update.
+**Time-boxed — now guarded, not just noted.** `claude-sonnet-5` carries **introductory** pricing
+that lapses after **2026-08-31** ($2/$10 → $3/$15, cache 0.20/2.50 → 0.30/3.75). Verified against
+the `claude-api` skill on 2026-08-19: the table is *correct as it stands* — the intro rate is still
+in effect, and applying the list rates early would overcharge every request until the lapse date.
+
+`claude_sonnet_5_introductory_pricing_matches_the_calendar` in `src/pricing.rs` fails the build on
+2026-09-01 if the entry has not been updated, and names the exact edit in the failure message. A
+dated comment was the previous mechanism; nothing reads a comment.
+
+*This interacts with 1.6 above.* Because pricing is applied retroactively, making that edit on
+2026-09-01 also re-prices every August `claude-sonnet-5` request at September rates. Fixing 1.6
+before the lapse date would avoid it; the volume is small (38 requests, $3.27 as of 2026-08-19).
 
 ### P2 — Coverage
 

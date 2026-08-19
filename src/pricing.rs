@@ -774,6 +774,55 @@ mod tests {
     }
 
     #[test]
+    fn claude_sonnet_5_introductory_pricing_matches_the_calendar() {
+        // `claude-sonnet-5` is priced at an introductory rate that lapses after
+        // 2026-08-31. A dated comment in the TOML is not a reminder, because nothing
+        // reads it — this test is, and it fails the build the day the rate changes.
+        //
+        // It guards both directions: applying the list rates early overcharges every
+        // request until the lapse date, and leaving the intro rates late undercharges
+        // every request after it. Either way the dashboard reports a confident wrong
+        // number, which is the one failure this project exists to prevent.
+        use chrono::{Local, NaiveDate};
+
+        let lapses_after = NaiveDate::from_ymd_opt(2026, 8, 31).expect("valid date");
+        let today = Local::now().date_naive();
+
+        let engine = PricingEngine::bundled();
+        let million_input = Usage {
+            provider: "anthropic".into(),
+            model: "claude-sonnet-5".into(),
+            input: 1_000_000,
+            ..Default::default()
+        };
+        let (cost, _) = engine
+            .estimate_cost(&million_input)
+            .expect("claude-sonnet-5 must be priced");
+
+        if today <= lapses_after {
+            assert!(
+                (cost - 2.00).abs() < 1e-9,
+                "introductory pricing is in effect until {lapses_after}, but \
+                 claude-sonnet-5 bills 1M input tokens at ${cost:.2} rather than $2.00. \
+                 Applying the list rates before the lapse date overcharges every request."
+            );
+        } else {
+            assert!(
+                (cost - 3.00).abs() < 1e-9,
+                "claude-sonnet-5 introductory pricing lapsed on {lapses_after} and today \
+                 is {today}, but the table still bills 1M input tokens at ${cost:.2}.\n\
+                 Update pricing/zen.toml to the list rates:\n\
+                 \x20   input = 3.00   output = 15.00   cache_read = 0.30   cache_write = 3.75\n\
+                 Confirm them against the claude-api skill first — never from memory — then \
+                 move `lapses_after` in this test to the next dated change, or delete the \
+                 test if the rate is no longer time-boxed.\n\
+                 Note: pricing is applied retroactively (docs/roadmap.md, finding 1.6), so \
+                 this edit re-prices August usage at September rates until that is fixed."
+            );
+        }
+    }
+
+    #[test]
     fn current_anthropic_models_are_priced() {
         // A model missing from the table reports UNKNOWN COST rather than a wrong number,
         // which is correct but silently hides real spend. `claude-opus-5` was absent while
