@@ -58,6 +58,12 @@
 
 ### Changed
 
+- **CI builds with `--locked`.** `AGENTS.md` told agents to always pass it while no CI job did —
+  an instruction diverging from actual practice. CI now passes it on clippy, test, doc-test,
+  check, and both release builds, so a dependency change that edits `Cargo.toml` without
+  regenerating `Cargo.lock` fails rather than resolving a different dependency set than the one
+  that was tested. `cargo fmt` is the exception; it resolves nothing.
+
 - **ratatui 0.30, rusqlite 0.40, toml 1.1.** toml 1.1 rejects the pricing table when parsed as
   `toml::Value`, which would have left every model in the catalog unpriced — silently, with the
   dashboard still rendering totals; it parses as `toml::Table`. rusqlite 0.40 removed the `u64`

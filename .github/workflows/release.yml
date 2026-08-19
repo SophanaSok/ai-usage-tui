@@ -59,7 +59,7 @@ jobs:
           echo "CARGO_TARGET_$(echo ${{ matrix.target }} | tr 'a-z-' 'A-Z_')_LINKER=${{ matrix.linker }}" >> "$GITHUB_ENV"
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       # The whole point of the rewrite: prove the binary is the architecture we are about to
       # put that architecture's name on.
@@ -127,7 +127,7 @@ jobs:
         run: cargo install cargo-deb cargo-generate-rpm --locked
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Build .deb
         run: cargo deb --no-build --target ${{ matrix.target }} --output "ai-usage-tui-${{ github.ref_name }}-${{ matrix.slug }}.deb"
