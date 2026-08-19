@@ -5,7 +5,7 @@
 
 use ratatui::{
     layout::{Constraint, Rect},
-    style::{Modifier, Style},
+    style::Style,
     text::Span,
     widgets::{Cell, Paragraph, Row, Table},
     Frame,
@@ -20,7 +20,7 @@ use crate::utils::format_count;
 
 pub fn draw_burn(frame: &mut Frame, area: Rect, app: &App) {
     let burn = app.burn();
-    let title = format!("BURN RATE  (last {})", format_duration(burn.window_secs));
+    let title = format!("BURN RATE  (last {})", window_label(burn.window_secs));
     let block = panel(&title, CYAN);
 
     if burn.requests == 0 {
@@ -36,14 +36,16 @@ pub fn draw_burn(frame: &mut Frame, area: Rect, app: &App) {
     let mut rows = vec![
         rate_row("tokens/min", format_count(burn.tokens_per_minute() as u64)),
         rate_row("requests", burn.requests.to_string()),
-        spend_row(&burn),
+        spend_row(burn),
     ];
 
     rows.push(Row::new(vec![Cell::from(""), Cell::from("")]));
-    rows.extend(projection_rows(&burn, app.alerts()));
+    rows.extend(projection_rows(burn, app.alerts()));
 
     frame.render_widget(
-        Table::new(rows, [Constraint::Length(22), Constraint::Min(20)])
+        // Wide enough for `model:<a long model id> monthly`, which is the longest label the
+        // budget scopes produce. Truncating it to `mo` made the period unreadable.
+        Table::new(rows, [Constraint::Length(28), Constraint::Min(18)])
             .column_spacing(1)
             .block(block),
         area,
@@ -130,6 +132,15 @@ fn projection_rows<'a>(burn: &BurnRate, alerts: &[Alert]) -> Vec<Row<'a>> {
             ])
         })
         .collect()
+}
+
+/// `1h`, `30m` — a whole-hour window reads better without a `00m` on the end.
+fn window_label(seconds: i64) -> String {
+    if seconds > 0 && seconds % 3600 == 0 {
+        format!("{}h", seconds / 3600)
+    } else {
+        format_duration(seconds)
+    }
 }
 
 fn money(value: f64) -> String {

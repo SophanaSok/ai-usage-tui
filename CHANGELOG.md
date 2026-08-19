@@ -4,6 +4,17 @@
 
 ### Added
 
+- **Burn-rate panel** (`w`). Tokens/min and spend/hour over a trailing hour, and — the part that
+  matters — **how long until each configured budget is exhausted at the current rate**. A rate on
+  its own is trivia; a rate measured against a limit you set is an answer, and it is only
+  possible because the budget engine and the collectors run in the same process.
+  Two refusals are deliberate: a window with fewer than five requests says *too little activity
+  to project* rather than extrapolating from noise, and a window containing unpriced usage shows
+  `≥ $x/hr` rather than presenting a floor as a rate. Both are the same discipline as never
+  rendering unknown cost as `$0.00`.
+
+### Added
+
 - **Spend-over-time panel** (`g`). Daily tokens and cost, as a sparkline of the whole visible
   range plus a table of the days that fit. Days with no usage are kept as zero bars — dropping
   them compresses a quiet week to the width of a busy one and reads as steady activity. Bars use

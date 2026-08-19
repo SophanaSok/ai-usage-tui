@@ -535,3 +535,118 @@ fn durations_read_coarsely() {
     assert_eq!(format_duration(3600 + 14 * 60), "1h 14m");
     assert_eq!(format_duration(3 * 86400 + 3600), "3d 1h");
 }
+
+/// Render the burn panel and return its text, for the assertions below.
+fn render_burn(app: &App, w: u16, h: u16) -> String {
+    use ratatui::{backend::TestBackend, Terminal};
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("backend");
+    terminal
+        .draw(|frame| crate::ui::panels::burn::draw_burn(frame, frame.area(), app))
+        .expect("draw");
+    terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect()
+}
+
+#[test]
+fn the_burn_panel_projects_against_a_budget() {
+    use crate::budget::{Alert, AlertLevel, BudgetPeriod, BudgetScope};
+    let now = crate::utils::now();
+    let usages: Vec<Usage> = (0..40)
+        .map(|i| burn_usage(i * 80, now, 180_000, Some(0.85)))
+        .collect();
+    let mut app = test_app(usages);
+    app.recompute();
+    app.alerts = vec![Alert {
+        scope: BudgetScope::Global,
+        period: BudgetPeriod::Daily,
+        spend: 42.0,
+        limit: 60.0,
+        pct: 70.0,
+        level: AlertLevel::Ok,
+    }];
+
+    let rendered = render_burn(&app, 64, 9);
+    assert!(rendered.contains("BURN RATE"), "{rendered}");
+    assert!(
+        rendered.contains("/hr"),
+        "missing a spend rate:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("left"),
+        "missing the time-to-budget projection:\n{rendered}"
+    );
+    assert!(rendered.contains("$18.00 remaining"), "{rendered}");
+    // The label column must be wide enough for the period, or `monthly` truncates to `mo`.
+    assert!(rendered.contains("global daily"), "{rendered}");
+}
+
+#[test]
+fn the_burn_panel_declines_to_project_from_too_little() {
+    use crate::budget::{Alert, AlertLevel, BudgetPeriod, BudgetScope};
+    let now = crate::utils::now();
+    let mut app = test_app(vec![burn_usage(60, now, 1000, Some(1.0))]);
+    app.recompute();
+    app.alerts = vec![Alert {
+        scope: BudgetScope::Global,
+        period: BudgetPeriod::Daily,
+        spend: 1.0,
+        limit: 60.0,
+        pct: 1.7,
+        level: AlertLevel::Ok,
+    }];
+
+    let rendered = render_burn(&app, 64, 9);
+    assert!(
+        rendered.contains("too little activity"),
+        "one request should not produce a confident projection:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("left"),
+        "it projected anyway:\n{rendered}"
+    );
+}
+
+#[test]
+fn the_burn_panel_says_when_no_budgets_are_configured() {
+    let now = crate::utils::now();
+    let usages: Vec<Usage> = (0..10)
+        .map(|i| burn_usage(i * 60, now, 1000, Some(1.0)))
+        .collect();
+    let mut app = test_app(usages);
+    app.recompute();
+    let rendered = render_burn(&app, 70, 9);
+    assert!(rendered.contains("no budgets configured"), "{rendered}");
+}
+
+#[test]
+fn an_idle_window_says_so_rather_than_showing_a_zero_rate() {
+    let mut app = test_app(Vec::new());
+    app.recompute();
+    let rendered = render_burn(&app, 64, 6);
+    assert!(
+        rendered.contains("No usage in the trailing window"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn a_partly_unpriced_window_renders_the_rate_as_a_floor() {
+    let now = crate::utils::now();
+    let mut usages: Vec<Usage> = (0..8)
+        .map(|i| burn_usage(i * 60, now, 1000, Some(1.0)))
+        .collect();
+    usages.push(burn_usage(500, now, 1000, None));
+    let mut app = test_app(usages);
+    app.recompute();
+    let rendered = render_burn(&app, 70, 8);
+    assert!(
+        rendered.contains("≥ $"),
+        "a partial rate was shown as exact:\n{rendered}"
+    );
+    assert!(rendered.contains("unpriced"), "{rendered}");
+}
