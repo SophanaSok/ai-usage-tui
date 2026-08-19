@@ -4,6 +4,20 @@
 
 ### Added
 
+- **Sessions panel** (`s`). Individual sessions, most recently active first. A session id is a
+  bare UUID and tells a reader nothing, so every column exists to make the row identifiable
+  without it: when it started, how long it ran, which project, which model — or `N models` when
+  it used several. Data that had been collected since the Claude Code collector landed and never
+  shown.
+
+### Fixed
+
+- **The selection clamped to the model table on every panel.** `j`/`k` bounded themselves by the
+  model row count regardless of which table was visible, so on any other panel the selection
+  either stopped short of the last row or ran past the end. It now follows the visible panel.
+
+### Added
+
 - **Burn-rate panel** (`w`). Tokens/min and spend/hour over a trailing hour, and — the part that
   matters — **how long until each configured budget is exhausted at the current rate**. A rate on
   its own is trivia; a rate measured against a limit you set is an answer, and it is only

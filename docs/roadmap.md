@@ -6,7 +6,7 @@ enough evidence attached that each item can be picked up cold.
 
 ## Where things stand
 
-135 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
+164 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
 macOS / Windows with an MSRV job (1.88) and `cargo-deny`. All six checks green on PR #5, including
 macOS, Windows and `cargo-deny`, which had never run before that branch.
 
@@ -50,20 +50,19 @@ installed?") and per-source enable/disable, which `CollectorsConfig` already mod
 
 ### P3 — Dashboard
 
-The `btop-inspired` claim is not yet earned — btop's identity *is* the graph, and there isn't one.
+Shipped since the audit: the time-series panel (`g`), burn rate with budget projection (`w`), the
+per-project view (`p`), and per-session drill-down (`s`). `src/ui.rs` was split into `src/ui/`
+with one module per panel, which is what made each of those a small independent change.
 
-- **Time-series panel** — sparkline / braille chart of tokens and spend per day.
-- **Burn rate + window tracking** — tokens/min over a trailing window, projected spend, 5-hour
-  block progress. This is `Claude-Code-Usage-Monitor`'s headline feature and the reason it has
-  8.6k stars.
-- **Interactive depth** — `/` search, sortable columns, `Enter` to drill into a model's sessions,
-  `?` help overlay, mouse support.
+Remaining:
+
+- **Drill from a project into its sessions.** `Enter` on a project row. Deliberately not done
+  with the flat session list: it introduces panel *state* — which project am I inside? — that no
+  panel currently has, and that is a larger change than any of the panels were.
+- **Interactive depth** — `/` search, sortable columns, `?` help overlay, mouse support.
 - **Surface the differentiators** — routing analytics is still behind a `t` toggle with no
-  signposting. (Pricing coverage now shows in the project panel's title; the same figure belongs
-  on the metrics row.)
-- **Per-session drill-down** — `session_id` is collected and counted per project, but there is no
-  view that lists sessions. `Enter` on a project is the natural gesture.
-- `ui.rs` is ~950 lines in one module and should be decomposed into `src/ui/` alongside this work.
+  signposting. Pricing coverage shows in the project panel's title; the same figure belongs on
+  the metrics row where it is always visible.
 
 ### P3 — Polish
 
