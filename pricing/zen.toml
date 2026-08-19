@@ -147,8 +147,18 @@ output = 25.00
 cache_read = 0.50
 cache_write = 6.25
 
-# Introductory pricing through 2026-08-31; list rates are 3.00 / 15.00
-# (cache_read 0.30, cache_write 0.375 * 10 = 3.75). Update after that date.
+# INTRODUCTORY pricing, in effect through 2026-08-31 inclusive.
+#
+# On 2026-09-01 this entry becomes wrong and must be replaced with the list rates:
+#     input = 3.00   output = 15.00   cache_read = 0.30   cache_write = 3.75
+#
+# Cache rates are not independent quantities — they are multiples of the input rate:
+# a read is 0.1x and a 5-minute write is 1.25x. Both the intro and list numbers above
+# follow from that, so if you change `input` you change all three.
+#
+# `claude_sonnet_5_introductory_pricing_matches_the_calendar` in src/pricing.rs fails
+# on 2026-09-01 if this has not been updated. That test is the reminder; this comment
+# is not — nothing reads a comment.
 [model."claude-sonnet-5"]
 input = 2.00
 output = 10.00
