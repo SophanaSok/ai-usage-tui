@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - v*
+  # The release path only ever ran on a real tag, which meant its first execution was also
+  # its first test — with a published release riding on the outcome. A dispatch run exercises
+  # every build, package, and verification step and skips only the publish.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to simulate. Nothing is published on a dispatch run."
+        default: v0.0.0-dryrun
+        type: string
 
 permissions:
   contents: write
@@ -41,7 +50,7 @@ jobs:
             target: x86_64-pc-windows-gnu
             slug: x86_64-windows
     env:
-      ARTIFACT: ai-usage-tui-${{ github.ref_name }}-${{ matrix.slug }}
+      ARTIFACT: ai-usage-tui-${{ inputs.tag || github.ref_name }}-${{ matrix.slug }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -130,28 +139,28 @@ jobs:
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Build .deb
-        run: cargo deb --no-build --target ${{ matrix.target }} --output "ai-usage-tui-${{ github.ref_name }}-${{ matrix.slug }}.deb"
+        run: cargo deb --no-build --target ${{ matrix.target }} --output "ai-usage-tui-${{ inputs.tag || github.ref_name }}-${{ matrix.slug }}.deb"
 
       - name: Build .rpm
-        run: cargo generate-rpm --target ${{ matrix.target }} --output "ai-usage-tui-${{ github.ref_name }}-${{ matrix.slug }}.rpm"
+        run: cargo generate-rpm --target ${{ matrix.target }} --output "ai-usage-tui-${{ inputs.tag || github.ref_name }}-${{ matrix.slug }}.rpm"
 
       # A package that installs nothing useful is worse than no package. Prove the payload is
       # present and executable before publishing it.
       - name: Verify package contents
         run: |
-          dpkg-deb -c "ai-usage-tui-${{ github.ref_name }}-${{ matrix.slug }}.deb" | tee /tmp/deb.txt
+          dpkg-deb -c "ai-usage-tui-${{ inputs.tag || github.ref_name }}-${{ matrix.slug }}.deb" | tee /tmp/deb.txt
           grep -q "usr/bin/ai-usage-tui" /tmp/deb.txt \
             || { echo "::error::.deb does not contain the binary"; exit 1; }
-          rpm -qlp "ai-usage-tui-${{ github.ref_name }}-${{ matrix.slug }}.rpm" | tee /tmp/rpm.txt
+          rpm -qlp "ai-usage-tui-${{ inputs.tag || github.ref_name }}-${{ matrix.slug }}.rpm" | tee /tmp/rpm.txt
           grep -q "/usr/bin/ai-usage-tui" /tmp/rpm.txt \
             || { echo "::error::.rpm does not contain the binary"; exit 1; }
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ai-usage-tui-${{ github.ref_name }}-${{ matrix.slug }}-linux-packages
+          name: ai-usage-tui-${{ inputs.tag || github.ref_name }}-${{ matrix.slug }}-linux-packages
           path: |
-            ai-usage-tui-${{ github.ref_name }}-${{ matrix.slug }}.deb
-            ai-usage-tui-${{ github.ref_name }}-${{ matrix.slug }}.rpm
+            ai-usage-tui-${{ inputs.tag || github.ref_name }}-${{ matrix.slug }}.deb
+            ai-usage-tui-${{ inputs.tag || github.ref_name }}-${{ matrix.slug }}.rpm
           if-no-files-found: error
 
   release:
@@ -200,7 +209,7 @@ jobs:
           ! grep -rn "PLACEHOLDER\|__TAG__\|__VERSION__\|_SHA256__" rendered/ \
             || { echo "::error::unrendered placeholder left in packaging manifest"; exit 1; }
         env:
-          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_REF_NAME: ${{ inputs.tag || github.ref_name }}
 
       - name: Extract changelog
         id: changelog
@@ -218,9 +227,17 @@ jobs:
           cat body.txt >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
         env:
-          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_REF_NAME: ${{ inputs.tag || github.ref_name }}
+
+      - name: Dry run — skipping publish
+        if: github.event_name != 'push'
+        run: |
+          echo "::notice::Dry run complete. Artifacts, packages, checksums and rendered"
+          echo "::notice::manifests were all built and verified; nothing was published."
+          ls -la artifacts/ rendered/
 
       - uses: softprops/action-gh-release@v3
+        if: github.event_name == 'push'
         with:
           draft: false
           prerelease: false

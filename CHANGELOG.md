@@ -58,6 +58,14 @@
 
 ### Changed
 
+- **The release workflow can be dry-run.** It only fired on tag push, so its first execution was
+  also its first test — with a published release riding on the result. `workflow_dispatch` now
+  exercises every build, architecture assertion, package build and inspection, checksum, and
+  manifest render, and skips only the publish.
+- **Dependabot groups GitHub Actions updates.** Ungrouped, it opened one PR per action; four sat
+  open for weeks, went stale against main, and each needed an individual rebase before it could
+  merge. Cargo updates were already grouped.
+
 - **CI builds with `--locked`.** `AGENTS.md` told agents to always pass it while no CI job did —
   an instruction diverging from actual practice. CI now passes it on clippy, test, doc-test,
   check, and both release builds, so a dependency change that edits `Cargo.toml` without
