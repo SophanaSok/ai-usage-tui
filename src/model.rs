@@ -112,6 +112,23 @@ impl Usage {
     }
 }
 
+/// Usage rolled up by local calendar day, for the time-series view.
+///
+/// The day boundary is *local*, matching `Range::Today` and the budget engine. A UTC bucket
+/// would put a user's evening work on the wrong bar and disagree with the TODAY total shown
+/// two panels away.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct DayTotals {
+    /// Local calendar day, as `YYYY-MM-DD`.
+    pub day: String,
+    pub requests: u64,
+    pub tokens: u64,
+    pub cost: f64,
+    /// Requests that should carry a price but do not. A day that is only partly priced must
+    /// not render its cost as if it were complete.
+    pub unpriced_requests: u64,
+}
+
 /// Usage rolled up by project, for the per-project cost view.
 #[derive(Debug, Default, Clone)]
 pub struct ProjectTotals {

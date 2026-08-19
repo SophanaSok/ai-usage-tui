@@ -8,3 +8,4 @@ pub mod metrics;
 pub mod models;
 pub mod projects;
 pub mod routing;
+pub mod timeseries;

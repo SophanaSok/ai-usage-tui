@@ -3,7 +3,7 @@
 //! Deliberately free of any ratatui types: these are the numbers the dashboard shows, and they
 //! are unit-testable without constructing a terminal or an `App`.
 
-use crate::model::{ProjectTotals, Usage};
+use crate::model::{DayTotals, ProjectTotals, Usage};
 
 use super::app::Coverage;
 
@@ -113,4 +113,63 @@ pub fn coverage(usages: &[Usage]) -> Coverage {
         }
     }
     coverage
+}
+
+/// Roll usage up by local calendar day, oldest first, with empty days filled in.
+///
+/// Gaps matter: a chart that silently omits days with no usage compresses a quiet week into
+/// the same width as a busy one and misreads as steady activity. A day with no requests is a
+/// real observation and gets a zero bar.
+pub fn daily_totals(usages: &[Usage]) -> Vec<DayTotals> {
+    use std::collections::BTreeMap;
+
+    let mut by_day: BTreeMap<chrono::NaiveDate, DayTotals> = BTreeMap::new();
+    for usage in usages {
+        let Some(day) = local_day(usage.created) else {
+            continue;
+        };
+        let entry = by_day.entry(day).or_insert_with(|| DayTotals {
+            day: day.format("%Y-%m-%d").to_string(),
+            ..Default::default()
+        });
+        entry.requests += usage.requests;
+        entry.tokens += usage.total_tokens();
+        if usage.cost_status.needs_price() {
+            match usage.cost.filter(|_| usage.cost_status.is_billable()) {
+                Some(cost) => entry.cost += cost,
+                None => entry.unpriced_requests += usage.requests,
+            }
+        }
+    }
+
+    let (Some(first), Some(last)) = (by_day.keys().next().copied(), by_day.keys().last().copied())
+    else {
+        return Vec::new();
+    };
+
+    let mut days = Vec::new();
+    let mut cursor = first;
+    while cursor <= last {
+        days.push(by_day.remove(&cursor).unwrap_or_else(|| DayTotals {
+            day: cursor.format("%Y-%m-%d").to_string(),
+            ..Default::default()
+        }));
+        cursor = match cursor.succ_opt() {
+            Some(next) => next,
+            None => break,
+        };
+    }
+    days
+}
+
+/// The local calendar day an event happened on, or `None` for an undated event.
+fn local_day(created: i64) -> Option<chrono::NaiveDate> {
+    use chrono::TimeZone;
+    if created <= 0 {
+        return None;
+    }
+    match chrono::Local.timestamp_opt(created, 0) {
+        chrono::offset::LocalResult::Single(dt) => Some(dt.date_naive()),
+        _ => None,
+    }
 }
