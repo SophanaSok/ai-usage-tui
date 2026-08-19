@@ -73,6 +73,18 @@
 
 ### Fixed
 
+- **Pricing was retroactive** (audit finding 1.6). Cost was computed from whatever the table said
+  *now*, so correcting a rate after a vendor price change silently re-priced every historical
+  event — a request made in August got billed at September's price the moment someone edited a
+  number. Rates are now effective-dated: a model entry can carry `[[model."x".period]]` blocks with
+  a `through` date, and an event is priced at the rates in effect on the UTC day it happened. On
+  real August `claude-sonnet-5` usage this is the difference between $3.27 and $4.91.
+- **`claude-sonnet-5`'s introductory-to-list rate change is now encoded rather than pending.**
+  Because pricing is effective-dated, both sides of the 2026-08-31 boundary are correct as
+  written; there is no dated edit left to make and the calendar-guard test is gone with it.
+  A refresh cannot erase a historical period — the scraper reads current rates and has no way to
+  know what a rate used to be — but an overlay that supplies its own periods still wins, so a
+  wrong recorded history can be corrected.
 - **A dated comment was the only thing guarding a pricing deadline.** `claude-sonnet-5` runs on
   introductory rates that lapse after 2026-08-31; nothing read the comment saying so. A test now
   fails the build on 2026-09-01 with the exact replacement rates in its message, and guards the

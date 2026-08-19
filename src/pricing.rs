@@ -20,6 +20,22 @@ struct ModelPricing {
     reasoning: Option<f64>,
 }
 
+/// Rates that applied up to and including a past date.
+///
+/// A published rate change is a fact about *when* work happened, not about what the table
+/// says today. Without this, correcting the table after a vendor price change silently
+/// re-prices every historical event at the new rate — a request made in August gets billed at
+/// September's price the moment someone edits a number.
+#[derive(Debug, Clone)]
+struct PricePeriod {
+    /// Last day these rates were in effect, inclusive, interpreted in **UTC**.
+    ///
+    /// Vendor price changes are announced against a calendar date, not a user's timezone, so
+    /// this boundary is deliberately not the local-calendar-day used for range filtering.
+    through: chrono::NaiveDate,
+    rates: ResolvedPricing,
+}
+
 #[derive(Debug, Clone, Default)]
 struct ResolvedPricing {
     input: Option<f64>,
@@ -33,6 +49,8 @@ struct ResolvedPricing {
 pub struct PricingEngine {
     models: HashMap<String, ModelPricing>,
     tiers: HashMap<String, Vec<(u64, ResolvedPricing)>>,
+    /// Historical rates per model, ascending by end date.
+    periods: HashMap<String, Vec<PricePeriod>>,
     warnings: Vec<String>,
 }
 
@@ -100,6 +118,8 @@ impl PricingEngine {
 
         let mut models = HashMap::new();
         let mut tiers: HashMap<String, Vec<(u64, ResolvedPricing)>> = HashMap::new();
+        let mut periods: HashMap<String, Vec<PricePeriod>> = HashMap::new();
+        let mut warnings: Vec<String> = Vec::new();
 
         if let Some(model_table) = model_table {
             for (model_id, model_value) in model_table {
@@ -115,6 +135,17 @@ impl PricingEngine {
                             .entry(model_id.clone())
                             .or_default()
                             .push((threshold, parse_pricing_from_value(value)));
+                    } else if key == "period" {
+                        match parse_periods(value) {
+                            Ok(parsed) => {
+                                periods.entry(model_id.clone()).or_default().extend(parsed)
+                            }
+                            Err(error) => warnings.push(format!(
+                                "{}: ignoring historical pricing period ({}); events before the \
+                                 rate change will be priced at current rates",
+                                model_id, error
+                            )),
+                        }
                     } else {
                         set_pricing_field(&mut base_pricing, key, value);
                     }
@@ -127,11 +158,27 @@ impl PricingEngine {
         for tier_list in tiers.values_mut() {
             tier_list.sort_by_key(|b| std::cmp::Reverse(b.0));
         }
+        for period_list in periods.values_mut() {
+            period_list.sort_by_key(|p| p.through);
+        }
+
+        // Tiered rates describe *current* pricing, so a historical period cannot express them.
+        // Rather than silently applying today's tier rates to a past event, say so.
+        for model_id in periods.keys() {
+            if tiers.contains_key(model_id) {
+                warnings.push(format!(
+                    "{}: has both context tiers and historical pricing periods; periods are \
+                     applied without tiering",
+                    model_id
+                ));
+            }
+        }
 
         Ok(Self {
             models,
             tiers,
-            warnings: Vec::new(),
+            periods,
+            warnings,
         })
     }
 
@@ -141,7 +188,7 @@ impl PricingEngine {
             self.models.insert(model_id.clone(), pricing);
             match other.tiers.get(&model_id) {
                 Some(tiers) => {
-                    self.tiers.insert(model_id, tiers.clone());
+                    self.tiers.insert(model_id.clone(), tiers.clone());
                 }
                 // The overlay redefined this model without tiers; stale tiers from the bundled
                 // table would otherwise silently apply the wrong rates above the threshold.
@@ -149,7 +196,30 @@ impl PricingEngine {
                     self.tiers.remove(&model_id);
                 }
             }
+            // Periods are treated the opposite way to tiers, deliberately. A tier is a property
+            // of *current* pricing, so a stale one is wrong. A period is a record of what a
+            // rate *was*, which a scraped page cannot know and must not erase — dropping it
+            // here would re-price every historical event at the refreshed rate, which is the
+            // bug this whole mechanism exists to prevent.
+            if let Some(overlay_periods) = other.periods.get(&model_id) {
+                self.periods.insert(model_id, overlay_periods.clone());
+            }
         }
+        self.warnings.extend(other.warnings);
+    }
+
+    /// Rates in effect for an event, or `None` when current rates apply.
+    fn period_rates(
+        &self,
+        model_id: &str,
+        at: Option<chrono::NaiveDate>,
+    ) -> Option<&ResolvedPricing> {
+        let at = at?;
+        self.periods
+            .get(model_id)?
+            .iter()
+            .find(|period| at <= period.through)
+            .map(|period| &period.rates)
     }
 
     pub fn warnings(&self) -> &[String] {
@@ -171,7 +241,12 @@ impl PricingEngine {
         }
 
         let context_tokens = usage.input + usage.cache_read;
-        let resolved = self.resolve_tier(&model_id, pricing, context_tokens);
+        // Price the event at the rates in effect when it happened, not at whatever the table
+        // says now. An undated event falls through to current rates.
+        let resolved = match self.period_rates(&model_id, event_date(usage.created)) {
+            Some(historical) => historical.clone(),
+            None => self.resolve_tier(&model_id, pricing, context_tokens),
+        };
 
         // Reasoning tokens are billed at the output rate unless the table publishes a distinct
         // one; that is the near-universal provider convention.
@@ -208,6 +283,39 @@ impl PricingEngine {
             reasoning: base.reasoning,
         }
     }
+}
+
+/// The UTC calendar date an event happened on.
+///
+/// `None` for a missing or nonsensical timestamp: an event we cannot date is priced at current
+/// rates rather than silently inheriting the oldest historical rate on file.
+fn event_date(created: i64) -> Option<chrono::NaiveDate> {
+    if created <= 0 {
+        return None;
+    }
+    chrono::DateTime::from_timestamp(created, 0).map(|dt| dt.date_naive())
+}
+
+/// Parse a `[[model."x".period]]` array into dated rate sets.
+fn parse_periods(value: &toml::Value) -> Result<Vec<PricePeriod>, String> {
+    let entries = value
+        .as_array()
+        .ok_or_else(|| "`period` must be an array of tables".to_string())?;
+
+    let mut periods = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let through = entry
+            .get("through")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "each period needs a `through = \"YYYY-MM-DD\"` date".to_string())?;
+        let through = chrono::NaiveDate::parse_from_str(through, "%Y-%m-%d")
+            .map_err(|_| format!("`through` is not a YYYY-MM-DD date: {through}"))?;
+        periods.push(PricePeriod {
+            through,
+            rates: parse_pricing_from_value(entry),
+        });
+    }
+    Ok(periods)
 }
 
 /// Cost of one token bucket, in dollars.
@@ -773,53 +881,145 @@ mod tests {
         assert!(engine.estimate_cost(&usage).is_some());
     }
 
-    #[test]
-    fn claude_sonnet_5_introductory_pricing_matches_the_calendar() {
-        // `claude-sonnet-5` is priced at an introductory rate that lapses after
-        // 2026-08-31. A dated comment in the TOML is not a reminder, because nothing
-        // reads it — this test is, and it fails the build the day the rate changes.
-        //
-        // It guards both directions: applying the list rates early overcharges every
-        // request until the lapse date, and leaving the intro rates late undercharges
-        // every request after it. Either way the dashboard reports a confident wrong
-        // number, which is the one failure this project exists to prevent.
-        use chrono::{Local, NaiveDate};
-
-        let lapses_after = NaiveDate::from_ymd_opt(2026, 8, 31).expect("valid date");
-        let today = Local::now().date_naive();
-
-        let engine = PricingEngine::bundled();
-        let million_input = Usage {
+    /// Build a usage row dated at a specific UTC day.
+    fn usage_on(model: &str, date: &str, input: u64) -> Usage {
+        let day = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").expect("valid date");
+        Usage {
             provider: "anthropic".into(),
-            model: "claude-sonnet-5".into(),
-            input: 1_000_000,
+            model: model.into(),
+            input,
+            created: day
+                .and_hms_opt(12, 0, 0)
+                .expect("valid time")
+                .and_utc()
+                .timestamp(),
             ..Default::default()
-        };
-        let (cost, _) = engine
-            .estimate_cost(&million_input)
-            .expect("claude-sonnet-5 must be priced");
-
-        if today <= lapses_after {
-            assert!(
-                (cost - 2.00).abs() < 1e-9,
-                "introductory pricing is in effect until {lapses_after}, but \
-                 claude-sonnet-5 bills 1M input tokens at ${cost:.2} rather than $2.00. \
-                 Applying the list rates before the lapse date overcharges every request."
-            );
-        } else {
-            assert!(
-                (cost - 3.00).abs() < 1e-9,
-                "claude-sonnet-5 introductory pricing lapsed on {lapses_after} and today \
-                 is {today}, but the table still bills 1M input tokens at ${cost:.2}.\n\
-                 Update pricing/zen.toml to the list rates:\n\
-                 \x20   input = 3.00   output = 15.00   cache_read = 0.30   cache_write = 3.75\n\
-                 Confirm them against the claude-api skill first — never from memory — then \
-                 move `lapses_after` in this test to the next dated change, or delete the \
-                 test if the rate is no longer time-boxed.\n\
-                 Note: pricing is applied retroactively (docs/roadmap.md, finding 1.6), so \
-                 this edit re-prices August usage at September rates until that is fixed."
-            );
         }
+    }
+
+    #[test]
+    fn a_rate_change_does_not_re_price_events_from_before_it() {
+        // Finding 1.6. `claude-sonnet-5` moved from introductory to list pricing after
+        // 2026-08-31. Both sides must hold simultaneously and permanently: an August request
+        // keeps August's price forever, and a September request gets September's. Before this
+        // mechanism existed, editing the table on the changeover date silently re-priced every
+        // historical request at the new rate.
+        let engine = PricingEngine::bundled();
+
+        let (august, _) = engine
+            .estimate_cost(&usage_on("claude-sonnet-5", "2026-08-15", 1_000_000))
+            .expect("priced");
+        assert!(
+            (august - 2.00).abs() < 1e-9,
+            "an August request must stay at the introductory $2.00/1M, got ${august:.2}"
+        );
+
+        let (september, _) = engine
+            .estimate_cost(&usage_on("claude-sonnet-5", "2026-09-15", 1_000_000))
+            .expect("priced");
+        assert!(
+            (september - 3.00).abs() < 1e-9,
+            "a September request must use list pricing of $3.00/1M, got ${september:.2}"
+        );
+    }
+
+    #[test]
+    fn the_period_boundary_is_inclusive_and_lands_on_the_right_day() {
+        // An off-by-one here misprices a full day of requests, so pin both sides of midnight.
+        let engine = PricingEngine::bundled();
+        let cost = |date: &str| {
+            engine
+                .estimate_cost(&usage_on("claude-sonnet-5", date, 1_000_000))
+                .expect("priced")
+                .0
+        };
+        assert!((cost("2026-08-31") - 2.00).abs() < 1e-9, "last intro day");
+        assert!((cost("2026-09-01") - 3.00).abs() < 1e-9, "first list day");
+    }
+
+    #[test]
+    fn an_undated_event_is_priced_at_current_rates() {
+        // `created` defaults to 0. Treating that as 1970 would hand every undated row the
+        // oldest rate on file — quietly, and more wrongly the longer the table's history gets.
+        let engine = PricingEngine::bundled();
+        let (cost, _) = engine
+            .estimate_cost(&Usage {
+                provider: "anthropic".into(),
+                model: "claude-sonnet-5".into(),
+                input: 1_000_000,
+                ..Default::default()
+            })
+            .expect("priced");
+        assert!(
+            (cost - 3.00).abs() < 1e-9,
+            "expected current rates, got ${cost:.2}"
+        );
+    }
+
+    #[test]
+    fn a_refresh_cannot_erase_pricing_history() {
+        // The scraper reads a page of *current* rates; it has no way to know what a rate used
+        // to be. If an overlay dropped historical periods, `--refresh-pricing` would re-price
+        // every past event at today's rate — reintroducing finding 1.6 through the back door.
+        let mut engine = PricingEngine::bundled();
+        let scraped =
+            PricingEngine::parse("[model.\"claude-sonnet-5\"]\ninput = 3.00\noutput = 15.00\n")
+                .expect("valid overlay");
+        engine.overlay(scraped);
+
+        let (august, _) = engine
+            .estimate_cost(&usage_on("claude-sonnet-5", "2026-08-15", 1_000_000))
+            .expect("priced");
+        assert!(
+            (august - 2.00).abs() < 1e-9,
+            "a refresh erased the introductory period; August re-priced to ${august:.2}"
+        );
+    }
+
+    #[test]
+    fn an_overlay_may_still_correct_pricing_history() {
+        // The flip side: when our recorded history is itself wrong, an overlay that supplies
+        // its own periods must win. Preserving history must not mean freezing a mistake.
+        let mut engine = PricingEngine::bundled();
+        let corrected = PricingEngine::parse(
+            "[model.\"claude-sonnet-5\"]\ninput = 3.00\n\n\
+             [[model.\"claude-sonnet-5\".period]]\nthrough = \"2026-08-31\"\ninput = 2.50\n",
+        )
+        .expect("valid overlay");
+        engine.overlay(corrected);
+
+        let (august, _) = engine
+            .estimate_cost(&usage_on("claude-sonnet-5", "2026-08-15", 1_000_000))
+            .expect("priced");
+        assert!(
+            (august - 2.50).abs() < 1e-9,
+            "expected the corrected rate, got ${august:.2}"
+        );
+    }
+
+    #[test]
+    fn a_malformed_period_warns_rather_than_silently_dropping_history() {
+        let engine = PricingEngine::parse(
+            "[model.\"m\"]\ninput = 3.00\n\n[[model.\"m\".period]]\ninput = 2.00\n",
+        )
+        .expect("table still parses");
+        assert!(
+            engine.warnings().iter().any(|w| w.contains("through")),
+            "expected a warning naming the missing date, got {:?}",
+            engine.warnings()
+        );
+    }
+
+    #[test]
+    fn models_without_periods_are_unaffected() {
+        // The mechanism must be inert for the ~60 models that have no dated changes.
+        let engine = PricingEngine::bundled();
+        let old = usage_on("claude-opus-5", "2020-01-01", 1_000_000);
+        let new = usage_on("claude-opus-5", "2030-01-01", 1_000_000);
+        assert_eq!(
+            engine.estimate_cost(&old).map(|(c, _)| c),
+            engine.estimate_cost(&new).map(|(c, _)| c)
+        );
     }
 
     #[test]
@@ -831,7 +1031,9 @@ mod tests {
         for (model, input_rate) in [
             ("claude-opus-5", 5.00),
             ("claude-opus-4-8", 5.00),
-            ("claude-sonnet-5", 2.00), // introductory rate through 2026-08-31
+            // List rate. The introductory $2.00 that applied through 2026-08-31 is a dated
+            // period now, exercised by `a_rate_change_does_not_re_price_events_from_before_it`.
+            ("claude-sonnet-5", 3.00),
             ("claude-haiku-4-5", 1.00),
             ("claude-fable-5", 10.00),
         ] {

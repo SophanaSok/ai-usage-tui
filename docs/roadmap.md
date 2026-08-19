@@ -6,7 +6,7 @@ enough evidence attached that each item can be picked up cold.
 
 ## Where things stand
 
-126 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
+132 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
 macOS / Windows with an MSRV job (1.88) and `cargo-deny`. All six checks green on PR #5, including
 macOS, Windows and `cargo-deny`, which had never run before that branch.
 
@@ -29,11 +29,6 @@ Numbering follows the original audit. Everything not listed here has shipped.
 
 ### P2 — Pricing depth
 
-**1.6 Pricing is retroactive.** `apply_estimated_pricing` re-prices every event at whatever is in
-the cache *now*, so a `--refresh-pricing` silently rewrites historical costs. Fix: persist resolved
-unit rates onto the journal row when an event is first priced; re-price only rows still
-`Unavailable`.
-
 **Provider-blind pricing keys.** `pricing/zen.toml` keys on bare model id, so the same model at two
 providers with different rates is indistinguishable. This is also what blocks classifying
 aggregators (OpenRouter, Bedrock, Azure) as `PAID` — see the comment in
@@ -47,18 +42,18 @@ only source. The bundled table is ~60 hand-maintained models. LiteLLM's
 competitor uses. Adopt it as primary with the Zen TOML kept as an overlay for Zen-specific and
 stealth models; vendor a snapshot via `include_str!` so offline still works.
 
-**Time-boxed — now guarded, not just noted.** `claude-sonnet-5` carries **introductory** pricing
-that lapses after **2026-08-31** ($2/$10 → $3/$15, cache 0.20/2.50 → 0.30/3.75). Verified against
-the `claude-api` skill on 2026-08-19: the table is *correct as it stands* — the intro rate is still
-in effect, and applying the list rates early would overcharge every request until the lapse date.
+**Stale pricing cache can undo a dated correction.** `PricingEngine::load()` overlays the
+refreshed cache on the bundled table, and the overlay's *base* rates win. Historical periods are
+preserved (a refresh cannot erase them), but a stale cache still supplies the wrong **current**
+rate: a cache written before a rate change keeps applying the old rate to new events indefinitely,
+because nothing expires it.
 
-`claude_sonnet_5_introductory_pricing_matches_the_calendar` in `src/pricing.rs` fails the build on
-2026-09-01 if the entry has not been updated, and names the exact edit in the failure message. A
-dated comment was the previous mechanism; nothing reads a comment.
+Found on the developer's own machine — `~/.local/share/ai-usage-tui/zen-pricing.toml` dated
+2026-07-24, still carrying `claude-sonnet-4-6` in the pre-fix dash form. It masked an A/B
+measurement of the point-in-time work until the data dir was isolated.
 
-*This interacts with 1.6 above.* Because pricing is applied retroactively, making that edit on
-2026-09-01 also re-prices every August `claude-sonnet-5` request at September rates. Fixing 1.6
-before the lapse date would avoid it; the volume is small (38 requests, $3.27 as of 2026-08-19).
+*Fix:* record a written-at timestamp in the cache and either warn or ignore the overlay past some
+age. Deleting the file falls back to the bundled table, which is correct.
 
 ### P2 — Coverage
 
