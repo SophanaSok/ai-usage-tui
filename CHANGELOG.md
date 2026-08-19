@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 0.3.0 - 2026-08-19
+
 ### Fixed
 
 - **The release workflow's tag variable was silently ignored.** The dry-run plumbing passed the

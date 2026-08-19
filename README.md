@@ -77,9 +77,14 @@ OpenCode rows and can still display journaled Ollama usage.
 Download a prebuilt binary, put it on your `PATH`, and run the dashboard:
 
 ```sh
-# Linux x86_64 example — replace VERSION with the latest release tag
-VERSION=v0.2.0
-curl -fsSL "https://github.com/SophanaSok/ai-usage-tui/releases/download/${VERSION}/ai-usage-tui-${VERSION}-x86_64-linux.tar.gz" \
+VERSION=v0.3.0
+case "$(uname -s)-$(uname -m)" in
+  Linux-x86_64)  SLUG=x86_64-linux   ;;
+  Linux-aarch64) SLUG=aarch64-linux  ;;
+  Darwin-arm64)  SLUG=aarch64-macos  ;;
+  Darwin-x86_64) SLUG=x86_64-macos   ;;
+esac
+curl -fsSL "https://github.com/SophanaSok/ai-usage-tui/releases/download/${VERSION}/ai-usage-tui-${VERSION}-${SLUG}.tar.gz" \
   | tar xz
 install -m 755 ai-usage-tui ~/.local/bin/   # or sudo install ... /usr/local/bin/
 
@@ -107,19 +112,34 @@ Download the archive for your platform from
 extract it, and place `ai-usage-tui` (or `ai-usage-tui.exe`) on your `PATH`.
 Checksums are published with each release.
 
+**Match the archive to your machine's architecture.** Every published binary is verified with
+`file` during the release build to confirm it is the architecture its name claims, so an
+`x86_64` archive really does contain an x86_64 binary and will not run on Apple Silicon.
+
 | Platform | Archive name pattern |
 | --- | --- |
 | Linux x86_64 | `ai-usage-tui-VERSION-x86_64-linux.tar.gz` |
-| macOS x86_64 | `ai-usage-tui-VERSION-x86_64-macos.tar.gz` |
+| Linux aarch64 | `ai-usage-tui-VERSION-aarch64-linux.tar.gz` |
+| macOS Apple Silicon | `ai-usage-tui-VERSION-aarch64-macos.tar.gz` |
+| macOS Intel | `ai-usage-tui-VERSION-x86_64-macos.tar.gz` |
 | Windows x86_64 | `ai-usage-tui-VERSION-x86_64-windows.zip` |
+| Debian/Ubuntu | `ai-usage-tui-VERSION-amd64.deb`, `-arm64.deb` |
+| Fedora/RHEL | `ai-usage-tui-VERSION-amd64.rpm`, `-arm64.rpm` |
 
-macOS example:
+macOS example (Apple Silicon — use `x86_64-macos` on an Intel Mac):
 
 ```sh
-VERSION=v0.2.0
-curl -fsSL "https://github.com/SophanaSok/ai-usage-tui/releases/download/${VERSION}/ai-usage-tui-${VERSION}-x86_64-macos.tar.gz" \
+VERSION=v0.3.0
+curl -fsSL "https://github.com/SophanaSok/ai-usage-tui/releases/download/${VERSION}/ai-usage-tui-${VERSION}-aarch64-macos.tar.gz" \
   | tar xz
 install -m 755 ai-usage-tui /usr/local/bin/
+```
+
+Linux package example:
+
+```sh
+sudo dpkg -i ai-usage-tui-v0.3.0-amd64.deb      # Debian/Ubuntu
+sudo rpm -i ai-usage-tui-v0.3.0-amd64.rpm       # Fedora/RHEL
 ```
 
 On Windows, extract the zip and add the directory containing
