@@ -6,9 +6,9 @@ enough evidence attached that each item can be picked up cold.
 
 ## Where things stand
 
-164 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
-macOS / Windows with an MSRV job (1.88) and `cargo-deny`. All six checks green on PR #5, including
-macOS, Windows and `cargo-deny`, which had never run before that branch.
+204 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
+macOS / Windows with an MSRV job (1.88) and `cargo-deny` — six checks, all green on every branch
+since PR #5.
 
 **Every P0 and P1 finding from the original audit has shipped.** What remains is P2 and P3 — depth
 and breadth, not correctness.

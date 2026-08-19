@@ -44,8 +44,19 @@
 
 ## In progress (unreleased)
 
-Audit-driven correctness, distribution, and coverage work started 2026-08-18. Full detail in
+Dashboard and analytics work on top of the audit fixes released in v0.3.0. Full detail in
 [`CHANGELOG.md`](../CHANGELOG.md) under `[Unreleased]`.
+
+- Four new panels: cost per project (`p`), spend over time (`g`), burn rate against budgets (`w`),
+  and sessions (`s`)
+- Routing analytics reworked to lead with cost per delivered result, plus escalations derived from
+  collected sessions
+- Pricing coverage surfaced in the header, and quota-billed usage separated from usage that has no
+  price — the coverage figure previously reported a deliberate refusal to price as a failure
+- `?` key reference; the footer no longer truncates on an 80-column terminal
+- `src/ui.rs` split into `src/ui/`, with the project's first TUI rendering tests
+
+### Released in v0.3.0 (audit-driven correctness, distribution, coverage)
 
 - Accounting fixes: stable `event_id` deduplication, reasoning tokens billed, integer pricing
   rates parsed, missing rates yield `UNKNOWN COST` rather than `$0.00`, refreshed pricing applied
@@ -58,12 +69,13 @@ Audit-driven correctness, distribution, and coverage work started 2026-08-18. Fu
 - Release workflow builds and verifies per-architecture artifacts; packaging manifests rendered
   at release time
 - CI matrix (Linux/macOS/Windows), MSRV job, `cargo-deny`, Dependabot
-- 92 tests (from 51), clippy clean
+- 204 tests (from 51), clippy clean
 
 **Next steps and outstanding audit findings: [`docs/roadmap.md`](roadmap.md).**
 
 ## Released
 
+- v0.3.0 — 2026-08-19
 - v0.2.0 — 2026-07-24
 
 ## Agent Routing
