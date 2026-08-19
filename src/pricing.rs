@@ -47,6 +47,15 @@ impl PricingEngine {
         }
     }
 
+    /// Whether the table keys this model id exactly, with no fallback resolution.
+    ///
+    /// Deliberately exact: this exists to check that the scraper and the bundled table agree
+    /// on a model's *spelling*, and layered resolution would paper over exactly the mismatch
+    /// it is meant to catch.
+    pub fn has_model(&self, model_id: &str) -> bool {
+        self.models.contains_key(model_id) || self.tiers.contains_key(model_id)
+    }
+
     /// Load the bundled table, then overlay the refreshed cache on top of it.
     ///
     /// The cache is an *overlay*, never a replacement. A refresh that drops or misspells a

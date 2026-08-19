@@ -6,9 +6,12 @@ enough evidence attached that each item can be picked up cold.
 
 ## Where things stand
 
-105 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
+109 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
 macOS / Windows with an MSRV job (1.88) and `cargo-deny`. All six checks green on PR #5, including
 macOS, Windows and `cargo-deny`, which had never run before that branch.
+
+**Every P0 and P1 finding from the original audit has shipped.** What remains is P2 and P3 — depth
+and breadth, not correctness.
 
 Sources read today: OpenCode SQLite, Claude Code JSONL, the local Ollama/routing journal, and the
 Zen pricing table. Verified end to end against ~103MB of real Claude Code logs — 5,879 requests
@@ -24,16 +27,6 @@ The two things worth defending, and the reason to prefer depth over breadth belo
 
 Numbering follows the original audit. Everything not listed here has shipped.
 
-### P1 — Robustness
-
-**1.21 The pricing scraper can only re-price models it already hardcodes.** `pricing_refresh.rs`
-skips any scraped row whose display name is absent from `known_model_names()`. A refresh can never
-discover a new model. Combined with a hand-written `find("<table>")` / `split("<tr>")` parser over
-one vendor's docs page, this is the most brittle code in the repo.
-
-*Note:* the overlay-merge fix means a lossy refresh can no longer **delete** pricing, so this is
-now a staleness problem rather than a data-loss one.
-
 ### P2 — Pricing depth
 
 **1.6 Pricing is retroactive.** `apply_estimated_pricing` re-prices every event at whatever is in
@@ -46,7 +39,10 @@ providers with different rates is indistinguishable. This is also what blocks cl
 aggregators (OpenRouter, Bedrock, Azure) as `PAID` — see the comment in
 `classify.rs::FIRST_PARTY_PAID_PROVIDERS`. Provider-qualified keys unblock both.
 
-**LiteLLM as the pricing source.** The bundled table is ~60 hand-maintained models. LiteLLM's
+**LiteLLM as the pricing source.** The scraper now discovers models rather than filtering them
+against a hardcoded list, so a new model on the Zen page gets priced without a release — but it
+still parses one vendor's HTML with `find("<table>")` and `split("<tr>")`, and that page is the
+only source. The bundled table is ~60 hand-maintained models. LiteLLM's
 `model_prices_and_context_window.json` is community-maintained at ~2,200 models and is what every
 competitor uses. Adopt it as primary with the Zen TOML kept as an overlay for Zen-specific and
 stealth models; vendor a snapshot via `include_str!` so offline still works.

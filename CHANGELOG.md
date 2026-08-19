@@ -31,6 +31,12 @@
   to a file. The dashboard holds the alternate screen, so stderr was invisible; a panicking
   collector left no trace anywhere. Off by default — a usage monitor should not silently
   accumulate a log file.
+- **The pricing refresh can discover models.** A scraped row previously had to match one of 65
+  hardcoded `(display name, model id)` pairs to survive, so a newly launched model stayed unpriced
+  until someone edited Rust source and cut a release — on the one code path whose purpose is to
+  pick up pricing changes *without* a release. Ids are now derived from the display name; all 66
+  entries of the deleted table are reproduced exactly by that rule, and that claim is a test. The
+  deleted table was also where the Claude Opus dash/dot mismatch lived.
 - **`.deb` and `.rpm` are now actually built.** `Cargo.toml` carried the packaging metadata and
   the changelog claimed the packages, but no job ever ran `cargo-deb` or `cargo-generate-rpm`.
   Both are built for amd64 and arm64, and each is asserted to contain the binary before publish.
