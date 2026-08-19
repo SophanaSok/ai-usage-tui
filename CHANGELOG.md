@@ -13,6 +13,11 @@
   captured blank. `scripts/make-demo-fixture.py` generates a small, deterministic, deliberately
   fictional set of Claude Code transcripts with several days of history ending today, more than
   one project, and sessions that escalate.
+  `scripts/capture-readme-screenshots-wayland.sh` is the Wayland equivalent of the X11 script
+  (foot / wtype / grim), for sessions where `xdotool` and `scrot` cannot work. It refuses to
+  capture while any other window overlaps the target rectangle: `grim` captures a screen region
+  rather than a window, so a notification or a floating window on top lands in the PNG — which in
+  a repository that promises to read no message content is a leak, not a cosmetic flaw.
 
 ### Fixed
 
