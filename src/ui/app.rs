@@ -43,6 +43,9 @@ pub struct App {
     /// Which view occupies the right-hand pane. This was two independent booleans, so
     /// "budgets on" and "routing on" could both be true and one silently won.
     pub panel: Panel,
+    /// Whether the key reference is open. There are more bindings than fit on one footer line,
+    /// and a truncated footer hides them without saying so.
+    pub show_help: bool,
     pub budget_engine: BudgetEngine,
     /// Held to rank models by list price when deriving escalations. Loaded once: it is
     /// immutable data, and re-reading the table per refresh would put file I/O behind the
@@ -146,6 +149,7 @@ impl App {
             collector,
             panel: Panel::Models,
             budget_engine,
+            show_help: false,
             pricing: PricingEngine::load(),
             alerts: Vec::new(),
             alert_sink,

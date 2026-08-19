@@ -35,10 +35,10 @@ use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Clear, Paragraph},
     Frame, Terminal,
 };
 
@@ -57,7 +57,7 @@ use panels::{
     header::draw_header, metrics::draw_metrics, models::draw_models, projects::draw_projects,
     routing::draw_routing, sessions::draw_sessions, timeseries::draw_timeseries,
 };
-use theme::MUTED;
+use theme::{panel, MUTED};
 
 pub fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
@@ -110,6 +110,7 @@ pub fn run(
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => break,
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
+                    KeyCode::Char('?') => app.show_help = !app.show_help,
                     KeyCode::Char('r') => app.refresh(),
                     KeyCode::Char('b') => app.toggle_panel(Panel::Budgets),
                     KeyCode::Char('t') => app.toggle_panel(Panel::Routing),
@@ -137,7 +138,7 @@ pub fn run(
 }
 
 /// Lay out one frame and dispatch to the panel renderers.
-fn draw(frame: &mut Frame, app: &App) {
+pub(super) fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let alert_banner_height = if app.alerts.iter().any(|a| a.is_actionable()) {
         1u16
@@ -173,34 +174,110 @@ fn draw(frame: &mut Frame, app: &App) {
         Panel::Sessions => draw_sessions(frame, body[1], app),
         Panel::Models => draw_models(frame, body[1], app),
     }
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled(
-            " 1-4 ",
-            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("range  "),
-        Span::styled("r", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
-        Span::raw(" refresh  "),
-        Span::styled("b", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
-        Span::raw(" budgets  "),
-        Span::styled("t", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
-        Span::raw(" routing  "),
-        Span::styled("p", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
-        Span::raw(" projects  "),
-        Span::styled("g", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
-        Span::raw(" graph  "),
-        Span::styled("w", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
-        Span::raw(" burn  "),
-        Span::styled("s", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
-        Span::raw(" sessions  "),
-        Span::styled(
-            "j/k",
-            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" navigate  "),
-        Span::styled("q", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
-        Span::raw(" quit"),
-    ]))
-    .style(Style::default().fg(MUTED));
-    frame.render_widget(footer, chunks[4]);
+    frame.render_widget(footer(area.width), chunks[4]);
+    if app.show_help {
+        draw_help(frame, area);
+    }
+}
+
+/// Key hints, sized to the terminal.
+///
+/// The full list is 106 columns. It fit an 80-column terminal until the graph, burn and sessions
+/// panels were added, after which the tail — including how to quit — was simply cut off, because
+/// a `Paragraph` truncates without saying so. Below 110 columns this shows a compact form and
+/// leans on `?` for the rest.
+pub(super) fn footer<'a>(width: u16) -> Paragraph<'a> {
+    let key = |k: &'a str| Span::styled(k, Style::default().fg(CYAN).add_modifier(Modifier::BOLD));
+    let spans = if width >= 110 {
+        vec![
+            key(" 1-4 "),
+            Span::raw("range  "),
+            key("r"),
+            Span::raw(" refresh  "),
+            key("b"),
+            Span::raw(" budgets  "),
+            key("t"),
+            Span::raw(" routing  "),
+            key("p"),
+            Span::raw(" projects  "),
+            key("g"),
+            Span::raw(" graph  "),
+            key("w"),
+            Span::raw(" burn  "),
+            key("s"),
+            Span::raw(" sessions  "),
+            key("j/k"),
+            Span::raw(" navigate  "),
+            key("?"),
+            Span::raw(" help  "),
+            key("q"),
+            Span::raw(" quit"),
+        ]
+    } else {
+        vec![
+            key(" 1-4 "),
+            Span::raw("range  "),
+            key("r"),
+            Span::raw(" refresh  "),
+            key("btpgws"),
+            Span::raw(" panels  "),
+            key("j/k"),
+            Span::raw(" move  "),
+            key("?"),
+            Span::raw(" help  "),
+            key("q"),
+            Span::raw(" quit"),
+        ]
+    };
+    Paragraph::new(Line::from(spans)).style(Style::default().fg(MUTED))
+}
+
+/// Full key reference, centred over the dashboard.
+///
+/// Exists because there are more bindings than fit on one line, and truncating the line silently
+/// is how `q quit` became invisible on an 80-column terminal.
+fn draw_help(frame: &mut Frame, area: Rect) {
+    const ROWS: &[(&str, &str)] = &[
+        ("1 2 3 4", "range: today, 7 days, 30 days, all time"),
+        ("r", "refresh now"),
+        ("b", "budgets"),
+        ("t", "routing analytics and derived escalations"),
+        ("p", "cost per project"),
+        ("g", "spend over time"),
+        ("w", "burn rate and time to budget"),
+        ("s", "sessions"),
+        ("j / k", "move the selection (also arrow keys)"),
+        ("?", "close this help"),
+        ("q", "quit (also Esc, Ctrl-C)"),
+    ];
+
+    let width = 56.min(area.width.saturating_sub(4));
+    let height = (ROWS.len() as u16 + 2).min(area.height.saturating_sub(2));
+    let popup = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+
+    let lines: Vec<Line> = ROWS
+        .iter()
+        .map(|(k, what)| {
+            Line::from(vec![
+                Span::styled(
+                    format!("  {k:<9}"),
+                    Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(*what),
+            ])
+        })
+        .collect();
+
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel("KEYS", CYAN))
+            .style(Style::default().fg(MUTED)),
+        popup,
+    );
 }

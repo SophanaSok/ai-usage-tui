@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **The footer hid the quit binding on an 80-column terminal.** It was 77 columns at v0.3.0 and
+  fits; the graph, burn and sessions panels added since pushed it to 106, and a `Paragraph`
+  truncates without saying so, so `j/k navigate` and `q quit` were simply gone below 110 columns.
+  The footer is now sized to the terminal, and a **`?` help overlay** carries the full key
+  reference — the permanent answer to having more bindings than fit on one line. No test rendered
+  the whole dashboard at any width, which is why nothing caught this; one now runs at 80, 100 and
+  120 columns.
+
 - **The pricing-coverage figure counted a deliberate refusal as a failure.** The header reported
   **71.6% priced** against a dataset where **100%** of priceable work was priced. Every "unpriced"
   request was Ollama Cloud usage, which this tool refuses to price on purpose: it is billed against

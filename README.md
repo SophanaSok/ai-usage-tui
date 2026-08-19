@@ -287,6 +287,7 @@ activity. Press `b` for budget status or `t` for routing analytics:
 | `r` | Refresh now |
 | `b` | Toggle the budgets panel |
 | `t` | Toggle routing analytics |
+| `?` | Key reference overlay |
 | `j` / `Down` | Select the next model |
 | `k` / `Up` | Select the previous model |
 | `q` / `Esc` | Quit |
