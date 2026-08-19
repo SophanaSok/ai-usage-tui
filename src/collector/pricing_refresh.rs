@@ -521,7 +521,7 @@ mod tests {
         assert!(toml.contains("[model.\"gpt-5.6-luna\".tier-272000]"));
         assert!(toml.contains("[model.\"claude-sonnet-4.5\".tier-200000]"));
         // Ensure the parsed output is valid TOML.
-        let _: toml::Value = toml
+        let _: toml::Table = toml
             .parse()
             .expect("generated pricing TOML should be valid");
     }

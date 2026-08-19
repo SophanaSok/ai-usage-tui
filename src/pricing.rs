@@ -95,7 +95,7 @@ impl PricingEngine {
     }
 
     pub fn parse(toml_str: &str) -> Result<Self, toml::de::Error> {
-        let table: toml::Value = toml_str.parse()?;
+        let table: toml::Table = toml_str.parse()?;
         let model_table = table.get("model").and_then(|v| v.as_table());
 
         let mut models = HashMap::new();
