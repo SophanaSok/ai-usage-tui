@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
   <metadata>
     <id>ai-usage-tui</id>
-    <version>0.2.0</version>
+    <version>__VERSION__</version>
     <title>AI Usage TUI</title>
     <authors>Sophana Sok</authors>
     <projectUrl>https://github.com/SophanaSok/ai-usage-tui</projectUrl>

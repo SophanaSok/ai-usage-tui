@@ -1,13 +1,13 @@
 {
-    "version": "0.2.0",
+    "version": "__VERSION__",
     "description": "A btop-inspired dashboard for local and hosted AI usage",
     "homepage": "https://github.com/SophanaSok/ai-usage-tui",
     "license": "MIT",
-    "url": "https://github.com/SophanaSok/ai-usage-tui/releases/download/v0.2.0/ai-usage-tui-0.2.0-x86_64-windows.zip",
-    "hash": "PLACEHOLDER_SHA256",
+    "url": "https://github.com/SophanaSok/ai-usage-tui/releases/download/__TAG__/ai-usage-tui-__TAG__-x86_64-windows.zip",
+    "hash": "__WINDOWS_SHA256__",
     "bin": "ai-usage-tui.exe",
     "checkver": "github",
     "autoupdate": {
-        "url": "https://github.com/SophanaSok/ai-usage-tui/releases/download/v$version/ai-usage-tui-$version-x86_64-windows.zip"
+        "url": "https://github.com/SophanaSok/ai-usage-tui/releases/download/v$version/ai-usage-tui-v$version-x86_64-windows.zip"
     }
 }

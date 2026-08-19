@@ -10,11 +10,12 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 use ai_usage_tui::{
-    budget::BudgetEngine,
+    budget::{AlertDispatcher, BudgetEngine},
     cli::{parse_cli, print_help},
     collector::{
         background::{
-            Collector, CollectorHandle, JournalCollector, OpenCodeCollector, ZenPricingCollector,
+            ClaudeCodeCollector, Collector, CollectorHandle, JournalCollector, OpenCodeCollector,
+            ZenPricingCollector,
         },
         journal::{record_ollama, record_routing},
         load_usage,
@@ -52,7 +53,11 @@ fn main() -> Result<()> {
             .journal_path
             .clone()
             .or_else(ai_usage_tui::utils::journal_path)
-            .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "could not determine a home directory; pass an explicit path (see --help)"
+                )
+            })?;
         return record_ollama(&path);
     }
     if cli.record_routing {
@@ -60,7 +65,11 @@ fn main() -> Result<()> {
             .journal_path
             .clone()
             .or_else(ai_usage_tui::utils::journal_path)
-            .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "could not determine a home directory; pass an explicit path (see --help)"
+                )
+            })?;
         return record_routing(&path);
     }
     if cli.check_budgets {
@@ -74,8 +83,9 @@ fn main() -> Result<()> {
     }
 
     let budget_engine = load_budget_engine(&cli);
+    let dispatcher = AlertDispatcher::new(webhook_url(&cli));
     let collector_handle = build_collectors(&cli);
-    run_tui(&cli, collector_handle, budget_engine)
+    run_tui(&cli, collector_handle, budget_engine, dispatcher)
 }
 
 fn build_collectors(cli: &ai_usage_tui::cli::Cli) -> Option<CollectorHandle> {
@@ -92,6 +102,18 @@ fn build_collectors(cli: &ai_usage_tui::cli::Cli) -> Option<CollectorHandle> {
         collectors.push(Box::new(OpenCodeCollector {
             db_path: cli.db_path.clone(),
             interval_secs: opencode_cfg.interval.unwrap_or(30),
+            cursor: Default::default(),
+        }));
+    }
+
+    // Claude Code's own session logs: the largest source of Anthropic usage on most machines,
+    // and invisible to the OpenCode collector.
+    let claude_cfg = config.claude_code.unwrap_or_default();
+    if claude_cfg.enabled.unwrap_or(true) {
+        collectors.push(Box::new(ClaudeCodeCollector {
+            root: cli.claude_dir.clone(),
+            interval_secs: claude_cfg.interval.unwrap_or(30),
+            offsets: Default::default(),
         }));
     }
 
@@ -138,6 +160,7 @@ fn run_tui(
     cli: &ai_usage_tui::cli::Cli,
     collector: Option<CollectorHandle>,
     budget_engine: BudgetEngine,
+    dispatcher: AlertDispatcher,
 ) -> Result<()> {
     enable_raw_mode()?;
     let mut out = stdout();
@@ -145,7 +168,7 @@ fn run_tui(
     let backend = CrosstermBackend::new(out);
     let mut terminal = Terminal::new(backend)?;
     let result = catch_unwind(AssertUnwindSafe(|| {
-        run(&mut terminal, cli, collector, budget_engine)
+        run(&mut terminal, cli, collector, budget_engine, dispatcher)
     }));
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -162,6 +185,15 @@ fn load_budget_engine(cli: &ai_usage_tui::cli::Cli) -> BudgetEngine {
         Some(budgets) => BudgetEngine::from_config(budgets),
         None => BudgetEngine::empty(),
     }
+}
+
+/// The alert webhook, with the `--webhook` flag overriding `[budgets] webhook` in config.
+fn webhook_url(cli: &ai_usage_tui::cli::Cli) -> Option<String> {
+    cli.webhook_url.clone().or_else(|| {
+        load_full_config(cli)
+            .budgets
+            .and_then(|budgets| budgets.webhook)
+    })
 }
 
 fn load_full_config(cli: &ai_usage_tui::cli::Cli) -> ai_usage_tui::config::ConfigFile {
@@ -191,9 +223,13 @@ fn check_budgets(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
         .journal_path
         .clone()
         .or_else(ai_usage_tui::utils::journal_path)
-        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "could not determine a home directory; set AI_USAGE_JOURNAL_PATH or pass --journal"
+            )
+        })?;
 
-    let (usages, _) = load_usage(cli.db_path.as_deref(), &journal)?;
+    let (usages, _) = load_usage(cli.db_path.as_deref(), &journal, cli.claude_dir.as_deref())?;
     let alerts = budget_engine.check(&usages);
     let has_alerts = alerts.iter().any(|a| a.is_actionable());
 
@@ -216,6 +252,12 @@ fn check_budgets(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(&json)?);
 
     if has_alerts {
+        // Report a failed dispatch rather than swallowing it: a webhook that silently never
+        // fires is indistinguishable from a budget that never trips.
+        let mut dispatcher = AlertDispatcher::new(webhook_url(cli));
+        if let Err(error) = dispatcher.dispatch(&alerts) {
+            eprintln!("warning: budget webhook dispatch failed: {}", error);
+        }
         std::process::exit(1);
     }
     Ok(())
@@ -226,7 +268,11 @@ fn export_routing(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
         .journal_path
         .clone()
         .or_else(ai_usage_tui::utils::journal_path)
-        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "could not determine a home directory; set AI_USAGE_JOURNAL_PATH or pass --journal"
+            )
+        })?;
 
     let events = ai_usage_tui::collector::journal::load_routing(&journal)?;
     let aggregates = ai_usage_tui::routing::aggregate(&events);

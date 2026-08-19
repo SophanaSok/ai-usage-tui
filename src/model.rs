@@ -75,6 +75,9 @@ impl Category {
 
 #[derive(Clone, Debug, Default)]
 pub struct Usage {
+    /// Stable per-event identity from the source (OpenCode message id, journal `event_id`).
+    /// Used for deduplication; `None` falls back to shape-plus-timestamp matching.
+    pub event_id: Option<String>,
     pub provider: String,
     pub model: String,
     pub category: Category,
@@ -87,6 +90,11 @@ pub struct Usage {
     pub cost: Option<f64>,
     pub cost_status: CostStatus,
     pub created: i64,
+    /// Conversation/session this usage belongs to, when the source records one.
+    pub session_id: Option<String>,
+    /// Project the work happened in — for Claude Code, the repository working directory.
+    /// Enables per-project cost, which no view could express before.
+    pub project: Option<String>,
 }
 
 impl Usage {
@@ -149,15 +157,14 @@ impl Range {
         }
     }
     pub fn cutoff(self) -> i64 {
-        if self == Self::All {
-            return 0;
-        }
         let seconds: i64 = match self {
-            Self::Today => 86_400,
+            Self::All => return 0,
+            // "TODAY" means the local calendar day, matching how budgets bill and how users
+            // read the label. A rolling 24h window silently disagrees with both.
+            Self::Today => return crate::utils::local_day_start(),
             Self::Week => 604_800,
             Self::Month => 2_592_000,
             Self::Days(days) => days.saturating_mul(86_400).min(i64::MAX as u64) as i64,
-            Self::All => 0,
         };
         now().saturating_sub(seconds)
     }

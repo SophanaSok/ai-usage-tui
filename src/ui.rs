@@ -2,6 +2,7 @@ use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::io;
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Sender};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -11,14 +12,16 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, TableState},
     Frame, Terminal,
 };
 
-use crate::budget::{Alert, AlertLevel, BudgetEngine};
+use crate::budget::{Alert, AlertDispatcher, AlertLevel, BudgetEngine};
 use crate::cli::Cli;
 use crate::collector::background::CollectorHandle;
-use crate::model::{Category, CostStatus, Range, Totals, Usage, CYAN, RED, YELLOW};
+use crate::model::{
+    Category, CostStatus, Range, RoutingAggregates, Totals, Usage, CYAN, RED, YELLOW,
+};
 use crate::utils::{format_clock, format_count, journal_path};
 
 const MUTED: Color = Color::Rgb(125, 145, 160);
@@ -35,6 +38,7 @@ pub struct App {
     pub refreshed_at: Instant,
     pub db_path: Option<PathBuf>,
     pub journal_path: PathBuf,
+    pub claude_dir: Option<PathBuf>,
     pub provider_filter: Option<String>,
     pub model_filter: Option<String>,
     pub collector: Option<CollectorHandle>,
@@ -42,6 +46,23 @@ pub struct App {
     pub show_routing: bool,
     pub budget_engine: BudgetEngine,
     pub alerts: Vec<Alert>,
+    /// Alerts are handed to a worker thread; the webhook POST is blocking and must never
+    /// happen on the render path.
+    alert_sink: Option<Sender<Vec<Alert>>>,
+    /// Derived views, recomputed only when the data or the filters change.
+    ///
+    /// These were previously rebuilt inside `draw`, which cloned every `Usage` roughly eight
+    /// times per frame at 4fps and re-read the routing table from SQLite on the render thread.
+    view: DerivedView,
+}
+
+#[derive(Default)]
+pub struct DerivedView {
+    filtered: Vec<Usage>,
+    rows: Vec<Usage>,
+    totals: Totals,
+    category_totals: Vec<(Category, Totals)>,
+    routing: Vec<RoutingAggregates>,
 }
 
 impl App {
@@ -49,12 +70,14 @@ impl App {
     pub fn new(
         db_path: Option<PathBuf>,
         journal_path: PathBuf,
+        claude_dir: Option<PathBuf>,
         range: Range,
         refresh_interval: Duration,
         provider_filter: Option<String>,
         model_filter: Option<String>,
         collector: Option<CollectorHandle>,
         budget_engine: BudgetEngine,
+        alert_sink: Option<Sender<Vec<Alert>>>,
     ) -> Self {
         let mut app = Self {
             range,
@@ -67,6 +90,7 @@ impl App {
             refreshed_at: Instant::now(),
             db_path,
             journal_path,
+            claude_dir,
             provider_filter,
             model_filter,
             collector,
@@ -74,60 +98,62 @@ impl App {
             show_routing: false,
             budget_engine,
             alerts: Vec::new(),
+            alert_sink,
+            view: DerivedView::default(),
         };
         app.refresh();
         app
     }
-    pub fn refresh(&mut self) {
-        if let Some(ref collector) = self.collector {
-            self.usages = collector.snapshot();
-            self.status = collector.status();
-        } else {
-            match crate::collector::load_usage(self.db_path.as_deref(), &self.journal_path) {
-                Ok((usages, source)) => {
-                    self.usages = usages;
-                    self.status = source;
-                }
-                Err(error) => {
-                    self.usages.clear();
-                    self.status = format!("OpenCode unavailable: {}", error);
-                }
-            }
-        }
-        self.last_refresh = format_clock();
-        self.refreshed_at = Instant::now();
-        self.selected = self.selected.min(self.rows().len().saturating_sub(1));
-        if !self.budget_engine.is_empty() {
-            self.alerts = self.budget_engine.check(&self.usages);
-        }
-    }
-    pub fn refresh_if_due(&mut self) {
-        if self.refreshed_at.elapsed() >= self.refresh_interval {
-            self.refresh();
-        }
-    }
-    pub fn filtered(&self) -> Vec<Usage> {
-        self.usages
+
+    /// Rebuild every derived view from `usages`. Call after data or filters change.
+    pub fn recompute(&mut self) {
+        let cutoff = self.range.cutoff();
+        let is_all = self.range == Range::All;
+        let provider = self.provider_filter.as_deref();
+        let model = self.model_filter.as_deref();
+
+        self.view.filtered = self
+            .usages
             .iter()
-            .filter(|u| u.created >= self.range.cutoff() || self.range == Range::All)
-            .filter(|u| {
-                self.provider_filter
-                    .as_ref()
-                    .map(|provider| u.provider.eq_ignore_ascii_case(provider))
-                    .unwrap_or(true)
-            })
-            .filter(|u| {
-                self.model_filter
-                    .as_ref()
-                    .map(|model| u.model.eq_ignore_ascii_case(model))
-                    .unwrap_or(true)
-            })
+            .filter(|u| is_all || u.created >= cutoff)
+            .filter(|u| provider.is_none_or(|p| u.provider.eq_ignore_ascii_case(p)))
+            .filter(|u| model.is_none_or(|m| u.model.eq_ignore_ascii_case(m)))
             .cloned()
-            .collect()
-    }
-    pub fn rows(&self) -> Vec<Usage> {
+            .collect();
+
+        self.view.totals = self
+            .view
+            .filtered
+            .iter()
+            .fold(Totals::default(), |mut t, u| {
+                t.add(u);
+                t
+            });
+
+        self.view.category_totals = [
+            Category::Local,
+            Category::Free,
+            Category::Paid,
+            Category::Cloud,
+            Category::Unknown,
+        ]
+        .into_iter()
+        .map(|category| {
+            let totals = self
+                .view
+                .filtered
+                .iter()
+                .filter(|u| u.category == category)
+                .fold(Totals::default(), |mut t, u| {
+                    t.add(u);
+                    t
+                });
+            (category, totals)
+        })
+        .collect();
+
         let mut grouped = BTreeMap::<(String, String, Category, CostStatus), Usage>::new();
-        for u in self.filtered() {
+        for u in &self.view.filtered {
             let key = (
                 u.provider.clone(),
                 u.model.clone(),
@@ -153,15 +179,74 @@ impl App {
                 }
             }
         }
-        let mut rows: Vec<_> = grouped.into_values().collect();
-        rows.sort_by_key(|u| Reverse(u.total_tokens()));
-        rows
+        self.view.rows = grouped.into_values().collect();
+        self.view.rows.sort_by_key(|u| Reverse(u.total_tokens()));
+
+        self.selected = self.selected.min(self.view.rows.len().saturating_sub(1));
     }
-    pub fn totals(&self) -> Totals {
-        self.filtered().iter().fold(Totals::default(), |mut t, u| {
-            t.add(u);
-            t
-        })
+
+    /// Change the visible range and rebuild derived views.
+    pub fn set_range(&mut self, range: Range) {
+        self.range = range;
+        self.recompute();
+    }
+    pub fn refresh(&mut self) {
+        if let Some(ref collector) = self.collector {
+            self.usages = collector.snapshot();
+            self.status = collector.status();
+        } else {
+            match crate::collector::load_usage(
+                self.db_path.as_deref(),
+                &self.journal_path,
+                self.claude_dir.as_deref(),
+            ) {
+                Ok((usages, source)) => {
+                    self.usages = usages;
+                    self.status = source;
+                }
+                Err(error) => {
+                    self.usages.clear();
+                    self.status = format!("OpenCode unavailable: {}", error);
+                }
+            }
+        }
+        self.last_refresh = format_clock();
+        self.refreshed_at = Instant::now();
+        self.recompute();
+        // Routing lives in SQLite; read it here, not inside `draw`.
+        self.view.routing = match crate::collector::journal::load_routing(&self.journal_path) {
+            Ok(events) => crate::routing::aggregate(&events),
+            Err(_) => Vec::new(),
+        };
+        if !self.budget_engine.is_empty() {
+            self.alerts = self.budget_engine.check(&self.usages);
+            if let Some(sink) = &self.alert_sink {
+                if self.alerts.iter().any(Alert::is_actionable) {
+                    // Best-effort: a dead worker must not take the dashboard down with it.
+                    let _ = sink.send(self.alerts.clone());
+                }
+            }
+        }
+    }
+    pub fn refresh_if_due(&mut self) {
+        if self.refreshed_at.elapsed() >= self.refresh_interval {
+            self.refresh();
+        }
+    }
+    pub fn filtered(&self) -> &[Usage] {
+        &self.view.filtered
+    }
+    pub fn rows(&self) -> &[Usage] {
+        &self.view.rows
+    }
+    pub fn totals(&self) -> &Totals {
+        &self.view.totals
+    }
+    pub fn category_totals(&self) -> &[(Category, Totals)] {
+        &self.view.category_totals
+    }
+    pub fn routing(&self) -> &[RoutingAggregates] {
+        &self.view.routing
     }
 }
 
@@ -190,21 +275,40 @@ pub fn run(
     cli: &Cli,
     collector: Option<CollectorHandle>,
     budget_engine: BudgetEngine,
+    mut dispatcher: AlertDispatcher,
 ) -> Result<()> {
     let journal = cli
         .journal_path
         .clone()
         .or_else(journal_path)
-        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "could not determine a home directory; pass an explicit path (see --help)"
+            )
+        })?;
+    // The dispatcher owns a blocking HTTP client; give it its own thread and talk to it over
+    // a channel. Dropping the sender when `run` returns ends the worker.
+    let alert_sink = dispatcher.webhook_url.is_some().then(|| {
+        let (tx, rx) = mpsc::channel::<Vec<Alert>>();
+        std::thread::spawn(move || {
+            while let Ok(alerts) = rx.recv() {
+                let _ = dispatcher.dispatch(&alerts);
+            }
+        });
+        tx
+    });
+
     let mut app = App::new(
         cli.db_path.clone(),
         journal,
+        cli.claude_dir.clone(),
         cli.range,
         cli.refresh_interval,
         cli.provider_filter.clone(),
         cli.model_filter.clone(),
         collector,
         budget_engine,
+        alert_sink,
     );
     loop {
         app.refresh_if_due();
@@ -220,10 +324,10 @@ pub fn run(
                     KeyCode::Char('r') => app.refresh(),
                     KeyCode::Char('b') => app.show_budgets = !app.show_budgets,
                     KeyCode::Char('t') => app.show_routing = !app.show_routing,
-                    KeyCode::Char('1') => app.range = Range::Today,
-                    KeyCode::Char('2') => app.range = Range::Week,
-                    KeyCode::Char('3') => app.range = Range::Month,
-                    KeyCode::Char('4') => app.range = Range::All,
+                    KeyCode::Char('1') => app.set_range(Range::Today),
+                    KeyCode::Char('2') => app.set_range(Range::Week),
+                    KeyCode::Char('3') => app.set_range(Range::Month),
+                    KeyCode::Char('4') => app.set_range(Range::All),
                     KeyCode::Down | KeyCode::Char('j') => {
                         app.selected = (app.selected + 1).min(app.rows().len().saturating_sub(1))
                     }
@@ -341,13 +445,6 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
 
 fn draw_metrics(frame: &mut Frame, area: Rect, app: &App) {
     let t = app.totals();
-    let categories = [
-        Category::Local,
-        Category::Free,
-        Category::Paid,
-        Category::Cloud,
-        Category::Unknown,
-    ];
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -366,11 +463,7 @@ fn draw_metrics(frame: &mut Frame, area: Rect, app: &App) {
         format!("{} requests", t.requests),
     );
     frame.render_widget(total, cols[0]);
-    for (i, category) in categories.iter().enumerate() {
-        let mut cat = Totals::default();
-        for u in app.filtered().iter().filter(|u| u.category == *category) {
-            cat.add(u);
-        }
+    for (i, (category, cat)) in app.category_totals().iter().enumerate() {
         let subtitle = if *category == Category::Paid {
             format!("${:.4}", cat.cost)
         } else {
@@ -475,12 +568,16 @@ fn draw_models(frame: &mut Frame, area: Rect, app: &App) {
         Constraint::Length(11),
         Constraint::Length(7),
     ];
-    frame.render_widget(
+    // A plain `render_widget` has no viewport offset, so a selection below the fold simply
+    // vanished. `TableState` scrolls the viewport to keep it visible.
+    let mut state = TableState::default().with_selected(Some(app.selected));
+    frame.render_stateful_widget(
         Table::new(table_rows, widths)
             .header(header)
             .column_spacing(1)
             .block(panel("MODEL ACTIVITY", CYAN)),
         area,
+        &mut state,
     );
 }
 
@@ -586,8 +683,8 @@ fn draw_budgets(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_routing(frame: &mut Frame, area: Rect, app: &App) {
-    let events = crate::collector::journal::load_routing(&app.journal_path).unwrap_or_default();
-    if events.is_empty() {
+    let aggregates = app.routing();
+    if aggregates.is_empty() {
         frame.render_widget(
             Paragraph::new("No routing events recorded.\nUse --record-routing to capture.")
                 .style(Style::default().fg(MUTED))
@@ -596,7 +693,6 @@ fn draw_routing(frame: &mut Frame, area: Rect, app: &App) {
         );
         return;
     }
-    let aggregates = crate::routing::aggregate(&events);
     let table_rows = aggregates.iter().map(|agg| {
         Row::new(vec![
             Cell::from(agg.agent.clone()),
@@ -648,7 +744,7 @@ mod tests {
 
     #[test]
     fn rows_do_not_mix_cost_provenance() {
-        let app = App {
+        let mut app = App {
             range: Range::All,
             usages: vec![
                 Usage {
@@ -678,6 +774,7 @@ mod tests {
             refreshed_at: Instant::now(),
             db_path: None,
             journal_path: PathBuf::from("/tmp/unused-journal.db"),
+            claude_dir: None,
             provider_filter: None,
             model_filter: None,
             collector: None,
@@ -685,7 +782,10 @@ mod tests {
             show_routing: false,
             budget_engine: BudgetEngine::empty(),
             alerts: Vec::new(),
+            alert_sink: None,
+            view: DerivedView::default(),
         };
+        app.recompute();
         assert_eq!(app.rows().len(), 2);
     }
 }

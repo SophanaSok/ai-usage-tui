@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use chrono::{Datelike, TimeZone, Utc};
 use serde::Deserialize;
 
 use crate::model::Usage;
@@ -182,16 +181,11 @@ impl BudgetEngine {
 }
 
 fn period_cutoff(period: BudgetPeriod) -> i64 {
-    let now = Utc::now();
+    // Local calendar boundaries, shared with `Range::Today` so the budget panel and the
+    // dashboard's TODAY total can never report different numbers for the same data.
     match period {
-        BudgetPeriod::Daily => Utc
-            .with_ymd_and_hms(now.year(), now.month(), now.day(), 0, 0, 0)
-            .unwrap()
-            .timestamp(),
-        BudgetPeriod::Monthly => Utc
-            .with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0)
-            .unwrap()
-            .timestamp(),
+        BudgetPeriod::Daily => crate::utils::local_day_start(),
+        BudgetPeriod::Monthly => crate::utils::local_month_start(),
     }
 }
 
@@ -244,6 +238,12 @@ impl AlertDispatcher {
         let Some(webhook_url) = self.webhook_url.clone() else {
             return Ok(());
         };
+        if !webhook_url.starts_with("https://") && !webhook_url.starts_with("http://") {
+            return Err(anyhow::anyhow!(
+                "webhook URL must start with http:// or https://, got {:?}",
+                webhook_url
+            ));
+        }
         let actionable: Vec<&Alert> = alerts.iter().filter(|a| a.is_actionable()).collect();
         if actionable.is_empty() {
             return Ok(());

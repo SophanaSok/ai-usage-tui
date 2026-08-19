@@ -1,5 +1,90 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Claude Code collector.** Reads `~/.claude/projects/**/*.jsonl` — the largest source of
+  Anthropic usage on most machines, and previously invisible. Tails each session log by byte
+  offset (never re-parsing history), dedupes on `requestId`, and attributes usage to a session
+  and project. Only the `usage` block is parsed; transcripts contain source code and secrets, and
+  no message content is read or retained. Configurable via `--claude-dir` /
+  `[collectors.claude_code]` / `CLAUDE_PROJECTS_DIR`.
+- **`session_id` and `project` on `Usage`**, enabling per-project cost attribution — a dimension
+  the data model previously could not express.
+- **Layered model-ID resolution.** Real-world ids never arrive in table form: Claude Code writes
+  `claude-sonnet-4-5-20250929`, aggregators write `anthropic/claude-sonnet-4.5`, Ollama writes
+  `glm-5.2:cloud`. Resolution now tries provider-stripped, date-stripped, dotted-version, and
+  suffix-stripped spellings before giving up.
+- **Incremental ingestion.** The OpenCode collector resumes from a `time_created` high-water mark
+  instead of re-reading and re-parsing the entire message table every 30 seconds. The cursor is
+  inclusive by design; `event_id` deduplication absorbs the boundary overlap.
+- **Missing Anthropic pricing.** `claude-opus-5` was absent from the table entirely — against real
+  Claude Code logs that was 2,810 requests and ~1.01B cache-read tokens reporting no cost at all.
+  Added alongside `claude-mythos-5`, with tests asserting current Anthropic models resolve and
+  that cache rates follow the published 0.1x (read) and 1.25x (5-minute write) multipliers.
+- CI matrix across Linux, macOS and Windows, plus an MSRV job (`rust-version = "1.85"`),
+  doctests, a CLI smoke test against the fixture database, `cargo-deny`, and Dependabot.
+- Journal fixtures are constructed in-test rather than read from a gitignored binary that did not
+  exist on a fresh clone — which had let the pipeline test pass while covering nothing.
+
+### Fixed
+
+- **Under-counted usage.** Deduplication keyed only on token counts, so two distinct requests
+  with identical counts — routine in agent loops — silently collapsed into one. Events now carry
+  a stable `event_id` (OpenCode message id, journal `event_id`) and fall back to shape *plus*
+  timestamp.
+- **Claude Opus lost its pricing after `--refresh-pricing`.** The scraper emitted
+  `claude-opus-4-8` where the pricing table said `claude-opus-4.8` (likewise 4.5/4.6/4.7 and
+  `claude-sonnet-4.6`), so a refresh silently unpriced the whole Opus family. A test now asserts
+  every model id the scraper can emit resolves against the bundled table.
+- **Whole-dollar rates were charged as $0.00.** The refreshed cache writes `input = 5`, a TOML
+  integer, and the parser accepted only floats. Every whole-number rate was skipped and billed at
+  zero. Rates now accept integers and floats alike.
+- **Unpublished rates no longer become free.** Missing rate fields defaulted to `0.0`; a bucket
+  with tokens but no published rate now yields `UNKNOWN COST`, honouring the project's
+  never-convert-unknown-cost-to-zero invariant. An explicit `0.0` remains distinct from absent.
+- **Reasoning tokens are now billed**, at the output rate unless a model publishes a distinct
+  `reasoning` rate. They were counted in totals and displayed but excluded from cost.
+- **A corrupt pricing cache can no longer wipe all pricing.** The cache is applied as an overlay
+  on the bundled table rather than replacing it, and parse failures are surfaced as warnings
+  instead of silently yielding an empty table.
+- **`TODAY` and daily budgets agreed on nothing.** The dashboard used a rolling 24h window while
+  budgets used a UTC calendar day. Both now use the local calendar day; the clock renders in
+  local time.
+- **Windows could not start.** Path resolution required `HOME`, which Windows does not set, so
+  every lookup failed on a platform with published Scoop and Chocolatey packages. `USERPROFILE`,
+  `%LOCALAPPDATA%` and `%APPDATA%` are now honoured.
+- **`--webhook` silently did nothing.** `AlertDispatcher` was fully implemented but never
+  constructed. Alerts now dispatch from both `--check-budgets` and the TUI, on a background
+  thread, with URL scheme validation.
+- **Misclassification from substring matching.** Provider `cloudflare` matched "cloud"; any model
+  whose name contained "free" was treated as free and excluded from all cost totals. Matching is
+  now token-based, and the free-model list is derived from the pricing table instead of a second
+  hand-maintained copy.
+- **First-party providers classified as `UNKNOWN`.** Anthropic, OpenAI and Google usage fell
+  through to `UNKNOWN` and stayed there even after a cost was estimated, so the per-category tiles
+  disagreed with the aggregate cost. Estimated rows are now promoted to `PAID`.
+- **macOS releases shipped the wrong architecture.** The artifact labelled `x86_64-macos` was
+  built on an Apple Silicon runner without `--target` and contained an arm64 binary. Each
+  architecture now builds on a matching runner and the workflow verifies the binary before
+  packaging. `aarch64-linux` and `aarch64-macos` are now published.
+- **Every package-manager template 404'd.** They requested `ai-usage-tui-0.2.0-...` while releases
+  publish `ai-usage-tui-v0.2.0-...`, and all carried `PLACEHOLDER_SHA256`. Manifests are now
+  rendered at release time from the real artifact names and checksums.
+
+### Changed
+
+- Derived views (filtered set, grouped rows, totals, routing aggregates) are computed once per
+  refresh instead of per frame. `draw` no longer clones the dataset ~8 times per frame, opens
+  SQLite, or reads the clock per row. Collector merges use a hash index instead of a linear scan
+  over a rebuilt key vector, removing quadratic growth on every poll.
+- The model table scrolls: a selection past the fold used to disappear.
+
+### Removed
+
+- The unused `proptest` dev-dependency.
+
 ## 0.2.0 - 2026-07-24
 
 ### Added

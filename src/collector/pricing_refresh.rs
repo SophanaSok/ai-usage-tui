@@ -12,7 +12,9 @@ const MAX_RETRIES: u32 = 3;
 const INITIAL_BACKOFF_MS: u64 = 2000;
 
 pub fn refresh_pricing() -> Result<PathBuf> {
-    let path = pricing_cache_path().ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+    let path = pricing_cache_path().ok_or_else(|| {
+        anyhow::anyhow!("could not determine a home directory; pass an explicit path (see --help)")
+    })?;
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("pricing cache path has no parent directory"))?;
@@ -316,12 +318,12 @@ fn known_model_names() -> Vec<(String, String)> {
         ("DeepSeek V4 Pro".into(), "deepseek-v4-pro".into()),
         ("DeepSeek V4 Flash".into(), "deepseek-v4-flash".into()),
         ("Claude Fable 5".into(), "claude-fable-5".into()),
-        ("Claude Opus 4.8".into(), "claude-opus-4-8".into()),
-        ("Claude Opus 4.7".into(), "claude-opus-4-7".into()),
-        ("Claude Opus 4.6".into(), "claude-opus-4-6".into()),
-        ("Claude Opus 4.5".into(), "claude-opus-4-5".into()),
+        ("Claude Opus 4.8".into(), "claude-opus-4.8".into()),
+        ("Claude Opus 4.7".into(), "claude-opus-4.7".into()),
+        ("Claude Opus 4.6".into(), "claude-opus-4.6".into()),
+        ("Claude Opus 4.5".into(), "claude-opus-4.5".into()),
         ("Claude Sonnet 5".into(), "claude-sonnet-5".into()),
-        ("Claude Sonnet 4.6".into(), "claude-sonnet-4-6".into()),
+        ("Claude Sonnet 4.6".into(), "claude-sonnet-4.6".into()),
         (
             "Claude Sonnet 4.5 (\u{2264} 200K tokens)".into(),
             "claude-sonnet-4.5".into(),
@@ -460,5 +462,72 @@ mod tests {
         let _: toml::Value = toml
             .parse()
             .expect("generated pricing TOML should be valid");
+    }
+
+    #[test]
+    fn every_scraped_model_id_exists_in_the_bundled_table() {
+        // The refreshed cache REPLACES/overlays the bundled table. If the scraper emits an id
+        // spelled differently from the bundled key, that model silently loses its pricing.
+        // This guard is what prevents the dash-vs-dot class of drift, not any one-off fix.
+        let bundled: toml::Value = crate::pricing::BUNDLED_PRICING
+            .parse()
+            .expect("bundled pricing table should be valid TOML");
+        let models = bundled
+            .get("model")
+            .and_then(|v| v.as_table())
+            .expect("bundled table should have a [model] section");
+
+        let missing: Vec<String> = known_model_names()
+            .into_iter()
+            .map(|(_, id)| id)
+            .filter(|id| !models.contains_key(id))
+            .collect();
+
+        assert!(
+            missing.is_empty(),
+            "scraper emits model ids absent from pricing/zen.toml: {:?}",
+            missing
+        );
+    }
+
+    /// End-to-end guard for the dash-vs-dot regression.
+    ///
+    /// The refreshed cache is what `PricingEngine::load()` reads, so a scraper that emits
+    /// `claude-opus-4-8` where the table says `claude-opus-4.8` silently unprices the entire
+    /// Opus family -- the most expensive models the tool tracks -- with no error anywhere.
+    #[test]
+    fn claude_opus_is_still_priced_after_a_refresh_cycle() {
+        use crate::model::Usage;
+        use crate::pricing::PricingEngine;
+
+        let html = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/zen_pricing.html"
+        ))
+        .expect("missing fixture tests/fixtures/zen_pricing.html");
+        let refreshed = parse_pricing_html(&html).expect("fixture should parse");
+
+        let engine = PricingEngine::parse(&refreshed).expect("refreshed table should be valid");
+
+        for model in [
+            "claude-opus-4.5",
+            "claude-opus-4.6",
+            "claude-opus-4.7",
+            "claude-opus-4.8",
+            "claude-sonnet-4.6",
+            "claude-sonnet-5",
+        ] {
+            let usage = Usage {
+                model: model.into(),
+                input: 1_000_000,
+                ..Default::default()
+            };
+            let priced = engine.estimate_cost(&usage);
+            assert!(
+                priced.is_some_and(|(cost, _)| cost > 0.0),
+                "{} lost its pricing after a refresh cycle",
+                model
+            );
+        }
     }
 }

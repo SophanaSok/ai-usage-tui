@@ -1,4 +1,4 @@
-use std::{env, fs, path::PathBuf, time::Duration};
+use std::{fs, path::PathBuf, time::Duration};
 
 use anyhow::Result;
 use serde::Deserialize;
@@ -11,6 +11,7 @@ use crate::model::Range;
 pub struct ConfigFile {
     pub db: Option<String>,
     pub journal: Option<String>,
+    pub claude_dir: Option<String>,
     pub refresh_interval: Option<u64>,
     pub days: Option<u64>,
     pub provider: Option<String>,
@@ -22,6 +23,7 @@ pub struct ConfigFile {
 #[derive(Debug, Default, Deserialize)]
 pub struct CollectorsConfig {
     pub opencode: Option<CollectorConfig>,
+    pub claude_code: Option<CollectorConfig>,
     pub journal: Option<CollectorConfig>,
     pub zen_pricing: Option<CollectorConfig>,
 }
@@ -33,12 +35,10 @@ pub struct CollectorConfig {
 }
 
 pub fn config_path() -> Option<PathBuf> {
-    let home = env::var_os("HOME")?;
     Some(
-        env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(home).join(".config"))
-            .join("ai-usage-tui/config.toml"),
+        crate::utils::config_root()?
+            .join("ai-usage-tui")
+            .join("config.toml"),
     )
 }
 
@@ -63,6 +63,9 @@ pub fn apply_config(mut cli: Cli) -> Result<Cli> {
     }
     if cli.journal_path.is_none() {
         cli.journal_path = config.journal.map(PathBuf::from);
+    }
+    if cli.claude_dir.is_none() {
+        cli.claude_dir = config.claude_dir.map(PathBuf::from);
     }
     if !cli.refresh_interval_set {
         if let Some(seconds) = config.refresh_interval {

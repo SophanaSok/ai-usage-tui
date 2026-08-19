@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use crate::collector::usage_key;
+use crate::collector::{usage_key, UsageKey};
 use crate::model::Usage;
 use crate::pricing::{apply_estimated_pricing, PricingEngine};
 
@@ -22,6 +22,9 @@ pub trait Collector: Send + 'static {
 
 pub struct CollectorState {
     pub usages: Vec<Usage>,
+    /// Membership index over `usages`, maintained alongside it. Rebuilding this per poll and
+    /// scanning it linearly made merges quadratic in total history, on every poll, forever.
+    seen: HashSet<UsageKey>,
     pub sources: Vec<String>,
     pub last_poll: HashMap<String, Instant>,
     pub errors: HashMap<String, String>,
@@ -31,6 +34,7 @@ impl CollectorState {
     fn new() -> Self {
         Self {
             usages: Vec::new(),
+            seen: HashSet::new(),
             sources: Vec::new(),
             last_poll: HashMap::new(),
             errors: HashMap::new(),
@@ -38,11 +42,8 @@ impl CollectorState {
     }
 
     fn merge(&mut self, name: &str, usages: Vec<Usage>, source: String) {
-        let existing: Vec<(String, String, u64, u64, u64, u64, u64)> =
-            self.usages.iter().map(usage_key).collect();
         for u in usages {
-            let key = usage_key(&u);
-            if !existing.contains(&key) {
+            if self.seen.insert(usage_key(&u)) {
                 self.usages.push(u);
             }
         }
@@ -160,6 +161,8 @@ impl Drop for CollectorHandle {
 pub struct OpenCodeCollector {
     pub db_path: Option<PathBuf>,
     pub interval_secs: u64,
+    /// Resume point, so each poll reads only what arrived since the last one.
+    pub cursor: crate::collector::opencode::Cursor,
 }
 
 impl Collector for OpenCodeCollector {
@@ -170,7 +173,32 @@ impl Collector for OpenCodeCollector {
         Duration::from_secs(self.interval_secs)
     }
     fn poll(&mut self) -> Result<Vec<Usage>> {
-        let (usages, _) = crate::collector::opencode::load_opencode(self.db_path.as_deref())?;
+        let (usages, _, cursor) =
+            crate::collector::opencode::load_opencode_since(self.db_path.as_deref(), self.cursor)?;
+        self.cursor = cursor;
+        Ok(usages)
+    }
+}
+
+pub struct ClaudeCodeCollector {
+    pub root: Option<PathBuf>,
+    pub interval_secs: u64,
+    /// Per-file byte offsets, so each poll tails only what was appended.
+    pub offsets: crate::collector::claude_code::Offsets,
+}
+
+impl Collector for ClaudeCodeCollector {
+    fn name(&self) -> &str {
+        "claude_code"
+    }
+    fn interval(&self) -> Duration {
+        Duration::from_secs(self.interval_secs)
+    }
+    fn poll(&mut self) -> Result<Vec<Usage>> {
+        let (usages, _) = crate::collector::claude_code::load_claude_code(
+            self.root.as_deref(),
+            &mut self.offsets,
+        )?;
         Ok(usages)
     }
 }
@@ -296,5 +324,75 @@ mod tests {
             usages: vec![],
         })]);
         drop(handle);
+    }
+
+    #[test]
+    fn two_distinct_requests_with_identical_token_counts_both_survive() {
+        // Agent loops produce many requests with byte-identical token counts (repeated tool
+        // calls, retries, short confirmations). Collapsing them under-reports real spend.
+        let mut state = CollectorState::new();
+        let first = Usage {
+            event_id: Some("msg_001".into()),
+            provider: "anthropic".into(),
+            model: "claude-sonnet-4.6".into(),
+            requests: 1,
+            input: 100,
+            output: 50,
+            created: 1_700_000_000,
+            ..Default::default()
+        };
+        let second = Usage {
+            event_id: Some("msg_002".into()),
+            created: 1_700_000_060,
+            ..first.clone()
+        };
+        // Separate merges on purpose: the old key was compared against a snapshot taken at
+        // the top of each merge, so collapsing only showed up ACROSS polls, not within one.
+        state.merge("opencode", vec![first], "opencode: ok".into());
+        state.merge("opencode", vec![second], "opencode: ok".into());
+        assert_eq!(
+            state.usages.len(),
+            2,
+            "two distinct requests were collapsed into one"
+        );
+    }
+
+    #[test]
+    fn identical_untagged_requests_are_kept_apart_by_timestamp() {
+        let mut state = CollectorState::new();
+        let first = Usage {
+            provider: "opencode".into(),
+            model: "m".into(),
+            requests: 1,
+            input: 100,
+            created: 1_700_000_000,
+            ..Default::default()
+        };
+        let second = Usage {
+            created: 1_700_000_060,
+            ..first.clone()
+        };
+        state.merge("opencode", vec![first], "opencode: ok".into());
+        state.merge("opencode", vec![second], "opencode: ok".into());
+        assert_eq!(state.usages.len(), 2);
+    }
+
+    #[test]
+    fn a_replayed_poll_does_not_double_count() {
+        let mut state = CollectorState::new();
+        let usage = Usage {
+            event_id: Some("msg_001".into()),
+            provider: "opencode".into(),
+            model: "m".into(),
+            requests: 1,
+            input: 100,
+            created: 1_700_000_000,
+            ..Default::default()
+        };
+        // The collector re-reads the same rows every poll; replays must be idempotent.
+        state.merge("opencode", vec![usage.clone()], "opencode: ok".into());
+        state.merge("opencode", vec![usage.clone()], "opencode: ok".into());
+        state.merge("opencode", vec![usage], "opencode: ok".into());
+        assert_eq!(state.usages.len(), 1);
     }
 }

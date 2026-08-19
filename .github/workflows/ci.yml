@@ -2,10 +2,16 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  check:
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,5 +21,58 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    # Path resolution, timezone handling and the SQLite readers are all platform-sensitive,
+    # and Windows in particular was broken for the entire life of the project because nothing
+    # here ever compiled it.
+    name: Test ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
       - run: cargo test --all-targets
-      - run: cargo build --release
+      - run: cargo test --doc
+
+      - name: Smoke test the CLI against the fixture database
+        shell: bash
+        run: |
+          cargo build --release
+          BIN=target/release/ai-usage-tui
+          [ -f "$BIN" ] || BIN=target/release/ai-usage-tui.exe
+          "$BIN" --version
+          # Exercises path resolution end to end: this is the check that would have caught
+          # "HOME is not set" on Windows.
+          "$BIN" --json --db tests/fixtures/opencode_test.db --all > out.json
+          head -c 400 out.json
+          grep -q '"usage"' out.json
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: msrv
+        run: echo "version=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --all-targets
+
+  audit:
+    name: Advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-deny --locked
+      - run: cargo deny check

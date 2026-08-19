@@ -10,40 +10,86 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.os }}
+    name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact: ai-usage-tui-${{ github.ref_name }}-x86_64-linux.tar.gz
+            slug: x86_64-linux
+            arch: x86-64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            slug: aarch64-linux
+            arch: aarch64
+            linker: aarch64-linux-gnu-gcc
+            apt: gcc-aarch64-linux-gnu
+          # macos-latest is Apple Silicon. Building without --target here and labelling the
+          # result x86_64 shipped an arm64 binary to Intel users; each arch now builds on a
+          # runner of its own architecture and is verified below.
           - os: macos-latest
+            target: aarch64-apple-darwin
+            slug: aarch64-macos
+            arch: arm64
+          - os: macos-13
             target: x86_64-apple-darwin
-            artifact: ai-usage-tui-${{ github.ref_name }}-x86_64-macos.tar.gz
+            slug: x86_64-macos
+            arch: x86_64
           - os: windows-latest
             target: x86_64-pc-windows-gnu
-            artifact: ai-usage-tui-${{ github.ref_name }}-x86_64-windows.zip
+            slug: x86_64-windows
+    env:
+      ARTIFACT: ai-usage-tui-${{ github.ref_name }}-${{ matrix.slug }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
-      - if: matrix.os == 'windows-latest'
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install cross linker
+        if: matrix.apt != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.apt }}
+          echo "CARGO_TARGET_$(echo ${{ matrix.target }} | tr 'a-z-' 'A-Z_')_LINKER=${{ matrix.linker }}" >> "$GITHUB_ENV"
+
+      - name: Build
         run: cargo build --release --target ${{ matrix.target }}
-      - if: matrix.os != 'windows-latest'
-        run: cargo build --release
-      - if: matrix.os != 'windows-latest'
-        run: strip target/release/ai-usage-tui
-      - if: matrix.os != 'windows-latest'
-        run: tar czf ${{ matrix.artifact }} -C target/release ai-usage-tui
-      - if: matrix.os == 'windows-latest'
-        run: 7z a ${{ matrix.artifact }} ./target/${{ matrix.target }}/release/ai-usage-tui.exe
+
+      # The whole point of the rewrite: prove the binary is the architecture we are about to
+      # put that architecture's name on.
+      - name: Verify architecture
+        if: runner.os != 'Windows' && matrix.arch != ''
+        run: |
+          BIN="target/${{ matrix.target }}/release/ai-usage-tui"
+          file "$BIN"
+          file "$BIN" | grep -q -- "${{ matrix.arch }}" \
+            || { echo "::error::$BIN is not ${{ matrix.arch }}"; exit 1; }
+
+      - name: Strip
+        if: runner.os != 'Windows' && matrix.apt == ''
+        run: strip "target/${{ matrix.target }}/release/ai-usage-tui"
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        run: tar czf "$ARTIFACT.tar.gz" -C "target/${{ matrix.target }}/release" ai-usage-tui
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        run: 7z a "$env:ARTIFACT.zip" "./target/${{ matrix.target }}/release/ai-usage-tui.exe"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
+          name: ${{ env.ARTIFACT }}
+          path: |
+            ${{ env.ARTIFACT }}.tar.gz
+            ${{ env.ARTIFACT }}.zip
+          if-no-files-found: error
 
   release:
     name: Release
@@ -54,10 +100,45 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+
       - name: Generate checksums
         run: |
           cd artifacts
           sha256sum */* > checksums.txt
+          cat checksums.txt
+
+      # Package manifests referenced ai-usage-tui-0.2.0-... while the workflow publishes
+      # ai-usage-tui-v0.2.0-... , so every template URL 404'd. Render them from the real
+      # artifact names and real checksums instead of hand-maintaining both.
+      - name: Render packaging manifests
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          sha_for() { grep -E "  .*/$1$" artifacts/checksums.txt | awk '{print $1}'; }
+          LINUX_SHA="$(sha_for "ai-usage-tui-${TAG}-x86_64-linux.tar.gz")"
+          MACOS_ARM_SHA="$(sha_for "ai-usage-tui-${TAG}-aarch64-macos.tar.gz")"
+          MACOS_X86_SHA="$(sha_for "ai-usage-tui-${TAG}-x86_64-macos.tar.gz")"
+          WINDOWS_SHA="$(sha_for "ai-usage-tui-${TAG}-x86_64-windows.zip")"
+          mkdir -p rendered
+          for f in packaging/homebrew/ai-usage-tui.rb \
+                   packaging/scoop/ai-usage-tui.json \
+                   packaging/chocolatey/ai-usage-tui.nuspec \
+                   packaging/chocolatey/tools/chocolateyinstall.ps1; do
+            out="rendered/$(basename "$f")"
+            sed -e "s|__TAG__|${TAG}|g" \
+                -e "s|__VERSION__|${VERSION}|g" \
+                -e "s|__LINUX_SHA256__|${LINUX_SHA}|g" \
+                -e "s|__MACOS_ARM_SHA256__|${MACOS_ARM_SHA}|g" \
+                -e "s|__MACOS_X86_SHA256__|${MACOS_X86_SHA}|g" \
+                -e "s|__WINDOWS_SHA256__|${WINDOWS_SHA}|g" \
+                "$f" > "$out"
+          done
+          ! grep -rn "PLACEHOLDER\|__TAG__\|__VERSION__\|_SHA256__" rendered/ \
+            || { echo "::error::unrendered placeholder left in packaging manifest"; exit 1; }
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+
       - name: Extract changelog
         id: changelog
         run: |
@@ -75,6 +156,7 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}
+
       - uses: softprops/action-gh-release@v2
         with:
           draft: false
@@ -83,3 +165,4 @@ jobs:
           files: |
             artifacts/*/ai-usage-tui-*
             artifacts/checksums.txt
+            rendered/*

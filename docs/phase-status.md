@@ -42,13 +42,37 @@
 - Pre-flight checks passed (51 tests, clippy clean, release build verified)
 - Security audit passed (cost provenance, privacy, SQL injection, thread safety, no secrets in packaging)
 
+## In progress (unreleased)
+
+Audit-driven correctness, distribution, and coverage work started 2026-08-18. Full detail in
+[`CHANGELOG.md`](../CHANGELOG.md) under `[Unreleased]`.
+
+- Accounting fixes: stable `event_id` deduplication, reasoning tokens billed, integer pricing
+  rates parsed, missing rates yield `UNKNOWN COST` rather than `$0.00`, refreshed pricing applied
+  as an overlay, local calendar-day boundaries shared by `TODAY` and daily budgets
+- Claude Code JSONL collector, with `session_id` and `project` attribution on `Usage`
+- Layered model-ID resolution (dated, provider-namespaced, dash-versioned, `:cloud`-suffixed ids)
+- Incremental ingestion for the OpenCode collector
+- `claude-opus-5` and `claude-mythos-5` added to the pricing table
+- Windows path resolution; `--webhook` actually dispatches; token-based classification
+- Release workflow builds and verifies per-architecture artifacts; packaging manifests rendered
+  at release time
+- CI matrix (Linux/macOS/Windows), MSRV job, `cargo-deny`, Dependabot
+- 92 tests (from 51), clippy clean
+
+**Next steps and outstanding audit findings: [`docs/roadmap.md`](roadmap.md).**
+
 ## Released
 
 - v0.2.0 — 2026-07-24
 
 ## Agent Routing
 
-The following agents are configured in `~/.config/opencode/agent/` and mapped in [`MODEL_ROUTING.md`](../MODEL_ROUTING.md):
+The following agents are configured in `~/.config/opencode/agent/` and mapped in [`MODEL_ROUTING.md`](../MODEL_ROUTING.md).
+
+> **Stale:** `MODEL_ROUTING.md` has an uncommitted working-tree revision that moves most defaults
+> to local and free models and adds a `@reasoning` agent. This table still reflects the committed
+> version. Update both together — see [`docs/roadmap.md`](roadmap.md) (P3 — Polish).
 
 | Agent | Model | Use |
 | --- | --- | --- |
