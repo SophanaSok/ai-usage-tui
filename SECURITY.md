@@ -27,6 +27,9 @@ them is a security bug, not a feature request:
   line is read. A test plants a fake `AWS_SECRET_ACCESS_KEY` in a transcript and fails if it
   reaches a usage record.
 - **No prompt or completion content is persisted or transmitted**, ever.
+- **Working directory paths are recorded** for per-project attribution, and appear in `--json`
+  and `--csv` exports. This is the one identifying value the tool stores; it is local-only and
+  never transmitted, but review an export before sharing it.
 - **The user's OpenCode database is opened read-only** (`SQLITE_OPEN_READ_ONLY`).
 - **No telemetry.** Outbound network calls happen only when explicitly requested:
   `--refresh-zen`, `--refresh-pricing`, and a budget webhook you configure yourself.

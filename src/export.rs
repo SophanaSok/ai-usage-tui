@@ -22,7 +22,7 @@ pub fn print_once(cli: &Cli) -> Result<()> {
     let filter = UsageFilter::new(cli);
     if let Some(path) = &cli.csv_path {
         let mut csv = String::from(
-            "provider,model,category,cost_status,requests,input_tokens,output_tokens,reasoning_tokens,cache_read_tokens,cache_write_tokens,cost,created\n",
+            "provider,model,category,cost_status,requests,input_tokens,output_tokens,reasoning_tokens,cache_read_tokens,cache_write_tokens,cost,created,project,session_id\n",
         );
         for usage in usages.iter().filter(|usage| filter.matches(usage)) {
             let cost = usage
@@ -30,7 +30,7 @@ pub fn print_once(cli: &Cli) -> Result<()> {
                 .map(|value| value.to_string())
                 .unwrap_or_default();
             csv.push_str(&format!(
-                "{},{},{},{},{},{},{},{},{},{},{},{}\n",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
                 csv_field(&usage.provider),
                 csv_field(&usage.model),
                 usage.category.label(),
@@ -43,6 +43,9 @@ pub fn print_once(cli: &Cli) -> Result<()> {
                 usage.cache_write,
                 csv_field(&cost),
                 usage.created,
+                // Appended, never inserted: a consumer reading by column index keeps working.
+                csv_field(usage.project.as_deref().unwrap_or_default()),
+                csv_field(usage.session_id.as_deref().unwrap_or_default()),
             ));
         }
         fs::write(path, csv)?;
@@ -65,6 +68,8 @@ pub fn print_once(cli: &Cli) -> Result<()> {
                     "cache_write_tokens": usage.cache_write,
                     "cost": usage.cost,
                     "created": usage.created,
+                    "project": usage.project,
+                    "session_id": usage.session_id,
                 })
             })
             .collect();

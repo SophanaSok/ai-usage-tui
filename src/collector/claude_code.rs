@@ -192,17 +192,22 @@ pub fn parse_line(line: &str) -> Option<Usage> {
         cost_status: CostStatus::Unavailable,
         created,
         session_id: string(&json, &["sessionId", "session_id"]),
-        project: string(&json, &["cwd"]).map(|cwd| project_name(&cwd)),
+        // The full working directory, not its last segment: `~/a/build` and `~/b/build` are
+        // different projects, and collapsing them here would silently merge their costs with
+        // no way to tell from the aggregate. The UI shortens this for display.
+        project: string(&json, &["cwd"]).map(|cwd| normalize_project_path(&cwd)),
     })
 }
 
-/// Last path segment of the working directory — the repository name in practice.
-fn project_name(cwd: &str) -> String {
-    cwd.trim_end_matches(['/', '\\'])
-        .rsplit(['/', '\\'])
-        .find(|segment| !segment.is_empty())
-        .unwrap_or(cwd)
-        .to_string()
+/// The working directory, with a trailing separator removed so `/a/b` and `/a/b/` are one
+/// project rather than two.
+fn normalize_project_path(cwd: &str) -> String {
+    let trimmed = cwd.trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() {
+        cwd.to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -223,7 +228,7 @@ mod tests {
         assert_eq!(usage.cache_write, 500);
         assert_eq!(usage.event_id.as_deref(), Some("req_abc"));
         assert_eq!(usage.session_id.as_deref(), Some("sess-1"));
-        assert_eq!(usage.project.as_deref(), Some("ai-usage-tui"));
+        assert_eq!(usage.project.as_deref(), Some("/home/dev/ai-usage-tui"));
         assert_eq!(usage.created, 1_787_047_200); // 2026-08-18T10:00:00Z
     }
 
@@ -325,10 +330,18 @@ mod tests {
     }
 
     #[test]
-    fn project_name_is_the_last_path_segment() {
-        assert_eq!(project_name("/home/dev/ai-usage-tui"), "ai-usage-tui");
-        assert_eq!(project_name("/home/dev/ai-usage-tui/"), "ai-usage-tui");
-        assert_eq!(project_name("C:\\src\\my-app"), "my-app");
+    fn project_paths_are_kept_whole_and_trailing_separators_normalized() {
+        // Keeping only the last segment merged every `build` directory on the machine into
+        // one project row, silently summing unrelated work.
+        assert_eq!(
+            normalize_project_path("/home/dev/ai-usage-tui"),
+            "/home/dev/ai-usage-tui"
+        );
+        assert_eq!(
+            normalize_project_path("/home/dev/ai-usage-tui/"),
+            "/home/dev/ai-usage-tui"
+        );
+        assert_eq!(normalize_project_path("C:\\src\\my-app"), "C:\\src\\my-app");
     }
 
     #[test]

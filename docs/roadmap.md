@@ -6,7 +6,7 @@ enough evidence attached that each item can be picked up cold.
 
 ## Where things stand
 
-109 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
+119 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
 macOS / Windows with an MSRV job (1.88) and `cargo-deny`. All six checks green on PR #5, including
 macOS, Windows and `cargo-deny`, which had never run before that branch.
 
@@ -65,13 +65,13 @@ The `btop-inspired` claim is not yet earned — btop's identity *is* the graph, 
 - **Burn rate + window tracking** — tokens/min over a trailing window, projected spend, 5-hour
   block progress. This is `Claude-Code-Usage-Monitor`'s headline feature and the reason it has
   8.6k stars.
-- **Per-project view** — `session_id` and `project` are now populated by the Claude Code collector
-  but nothing renders them. This is the cheapest high-value view remaining.
 - **Interactive depth** — `/` search, sortable columns, `Enter` to drill into a model's sessions,
   `?` help overlay, mouse support.
-- **Surface the differentiators** — promote routing analytics from a hidden `t` toggle to a
-  first-class view, and add a "pricing coverage: N% of requests priced" indicator so provenance
-  becomes visible rather than an internal enum.
+- **Surface the differentiators** — routing analytics is still behind a `t` toggle with no
+  signposting. (Pricing coverage now shows in the project panel's title; the same figure belongs
+  on the metrics row.)
+- **Per-session drill-down** — `session_id` is collected and counted per project, but there is no
+  view that lists sessions. `Enter` on a project is the natural gesture.
 - `ui.rs` is ~950 lines in one module and should be decomposed into `src/ui/` alongside this work.
 
 ### P3 — Polish

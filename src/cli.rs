@@ -283,6 +283,7 @@ KEYS:
     r              Refresh data
     b              Toggle budgets panel
     t              Toggle routing panel
+    p              Toggle per-project cost panel
     j / Down       Select next model
     k / Up         Select previous model
     q / Esc        Quit

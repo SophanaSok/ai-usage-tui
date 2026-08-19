@@ -47,6 +47,15 @@ impl CostStatus {
         )
     }
 
+    /// Whether this usage ought to carry a price.
+    ///
+    /// Distinct from `is_billable`, which means "has a known cost worth summing" and so
+    /// excludes `Unavailable` — the very case a coverage figure exists to count. `Free` and
+    /// `Local` are genuinely costless and are not missing anything.
+    pub fn needs_price(self) -> bool {
+        !matches!(self, Self::Free | Self::Local)
+    }
+
     pub fn is_known(self) -> bool {
         self != Self::Unavailable
     }
@@ -101,6 +110,20 @@ impl Usage {
     pub fn total_tokens(&self) -> u64 {
         self.input + self.output + self.reasoning + self.cache_read + self.cache_write
     }
+}
+
+/// Usage rolled up by project, for the per-project cost view.
+#[derive(Debug, Default, Clone)]
+pub struct ProjectTotals {
+    pub project: String,
+    pub requests: u64,
+    pub tokens: u64,
+    pub cost: f64,
+    /// Requests whose cost is billable but unknown. Rendering `$12.00` next to work that is
+    /// only two-thirds priced would misstate the number without saying so.
+    pub unpriced_requests: u64,
+    pub sessions: usize,
+    pub models: usize,
 }
 
 #[derive(Default)]

@@ -23,6 +23,17 @@
   Claude Code logs that was 2,810 requests and ~1.01B cache-read tokens reporting no cost at all.
   Added alongside `claude-mythos-5`, with tests asserting current Anthropic models resolve and
   that cache rates follow the published 0.1x (read) and 1.25x (5-minute write) multipliers.
+- **Per-project cost view** (`p`). `session_id` and `project` had been populated since the Claude
+  Code collector landed and nothing rendered them. Shows tokens, cost, requests and distinct
+  sessions per project, ranked by spend, with unpriced work marked `≥ $x` rather than folded into
+  a confident total. `project` now holds the full working directory, so `~/a/build` and
+  `~/b/build` are separate projects instead of one silently merged row; the table shows the
+  shortest name that tells them apart.
+- **Pricing coverage is visible.** The project panel's title reports what share of billable
+  requests actually carry a known cost. Provenance was the project's differentiator and lived
+  entirely in an internal enum — a total could cover two thirds of the requests without saying so.
+- **`project` and `session_id` in `--json` and `--csv`.** Appended to the CSV, never inserted, so
+  a consumer reading by column index keeps working.
 - **Collector health, rendered rather than logged.** Each collector now reports a liveness state
   (starting / ok / failing / restarting / dead) and is flagged stale after three missed intervals.
   A degraded source names itself in the header, in red. A monitoring tool that goes quiet used to
@@ -49,6 +60,8 @@
 
 ### Fixed
 
+- **Two right-hand panels could both be "on".** `show_budgets` and `show_routing` were
+  independent booleans and the draw order silently picked a winner. One `Panel` enum now.
 - **A panicking collector was retired for the life of the process.** The supervisor recorded the
   panic and `break`, so that source never updated again while the UI kept showing its last
   numbers as current. Collectors now restart with capped exponential backoff and are marked

@@ -442,6 +442,14 @@ Environment variables:
 - Routing events contain only the JSON fields supplied by the caller.
 - Prompts, completions, API keys, credentials, and interaction content are not
   collected.
+- Claude Code session transcripts contain source code and secrets; only the
+  `usage` block of each line is parsed. A test plants a fake credential in a
+  transcript and fails if it reaches a usage record.
+- Per-project attribution records the **working directory path** of each
+  session, so `~/a/build` and `~/b/build` stay separate projects. The dashboard
+  shows only the shortest name that distinguishes them, but `--json` and
+  `--csv` export the full path — worth knowing before pasting an export into a
+  ticket.
 - Normal dashboard and export operation does not require a network request.
 - `--refresh-pricing`, `--refresh-zen`, and an enabled `zen_pricing`
   background collector make outbound requests to OpenCode/Zen endpoints.

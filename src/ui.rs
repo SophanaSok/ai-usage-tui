@@ -20,7 +20,7 @@ use crate::budget::{Alert, AlertDispatcher, AlertLevel, BudgetEngine};
 use crate::cli::Cli;
 use crate::collector::background::CollectorHandle;
 use crate::model::{
-    Category, CostStatus, Range, RoutingAggregates, Totals, Usage, CYAN, RED, YELLOW,
+    Category, CostStatus, ProjectTotals, Range, RoutingAggregates, Totals, Usage, CYAN, RED, YELLOW,
 };
 use crate::utils::{format_clock, format_count, journal_path};
 
@@ -45,8 +45,9 @@ pub struct App {
     pub provider_filter: Option<String>,
     pub model_filter: Option<String>,
     pub collector: Option<CollectorHandle>,
-    pub show_budgets: bool,
-    pub show_routing: bool,
+    /// Which view occupies the right-hand pane. This was two independent booleans, so
+    /// "budgets on" and "routing on" could both be true and one silently won.
+    pub panel: Panel,
     pub budget_engine: BudgetEngine,
     pub alerts: Vec<Alert>,
     /// Alerts are handed to a worker thread; the webhook POST is blocking and must never
@@ -59,6 +60,16 @@ pub struct App {
     view: DerivedView,
 }
 
+/// The right-hand pane's contents. Exactly one at a time.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Panel {
+    #[default]
+    Models,
+    Budgets,
+    Routing,
+    Projects,
+}
+
 #[derive(Default)]
 pub struct DerivedView {
     filtered: Vec<Usage>,
@@ -66,6 +77,28 @@ pub struct DerivedView {
     totals: Totals,
     category_totals: Vec<(Category, Totals)>,
     routing: Vec<RoutingAggregates>,
+    projects: Vec<ProjectTotals>,
+    coverage: Coverage,
+}
+
+/// How much of the visible usage the pricing engine could actually price.
+///
+/// Provenance is the project's differentiator but it lived entirely in an internal enum: a
+/// user could read a total without knowing it covered two thirds of their requests.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Coverage {
+    pub priced_requests: u64,
+    pub billable_requests: u64,
+}
+
+impl Coverage {
+    /// `None` when nothing billable is in range — 100% of nothing is not a useful claim.
+    pub fn pct(&self) -> Option<f64> {
+        if self.billable_requests == 0 {
+            return None;
+        }
+        Some((self.priced_requests as f64 / self.billable_requests as f64) * 100.0)
+    }
 }
 
 impl App {
@@ -98,8 +131,7 @@ impl App {
             provider_filter,
             model_filter,
             collector,
-            show_budgets: false,
-            show_routing: false,
+            panel: Panel::Models,
             budget_engine,
             alerts: Vec::new(),
             alert_sink,
@@ -156,6 +188,9 @@ impl App {
         })
         .collect();
 
+        self.view.projects = project_totals(&self.view.filtered);
+        self.view.coverage = coverage(&self.view.filtered);
+
         let mut grouped = BTreeMap::<(String, String, Category, CostStatus), Usage>::new();
         for u in &self.view.filtered {
             let key = (
@@ -187,6 +222,23 @@ impl App {
         self.view.rows.sort_by_key(|u| Reverse(u.total_tokens()));
 
         self.selected = self.selected.min(self.view.rows.len().saturating_sub(1));
+    }
+
+    pub fn projects(&self) -> &[ProjectTotals] {
+        &self.view.projects
+    }
+
+    pub fn coverage(&self) -> Coverage {
+        self.view.coverage
+    }
+
+    /// Toggle a panel on, or back to the model list if it is already showing.
+    pub fn toggle_panel(&mut self, panel: Panel) {
+        self.panel = if self.panel == panel {
+            Panel::Models
+        } else {
+            panel
+        };
     }
 
     /// Change the visible range and rebuild derived views.
@@ -336,8 +388,9 @@ pub fn run(
                     KeyCode::Char('q') | KeyCode::Esc => break,
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
                     KeyCode::Char('r') => app.refresh(),
-                    KeyCode::Char('b') => app.show_budgets = !app.show_budgets,
-                    KeyCode::Char('t') => app.show_routing = !app.show_routing,
+                    KeyCode::Char('b') => app.toggle_panel(Panel::Budgets),
+                    KeyCode::Char('t') => app.toggle_panel(Panel::Routing),
+                    KeyCode::Char('p') => app.toggle_panel(Panel::Projects),
                     KeyCode::Char('1') => app.set_range(Range::Today),
                     KeyCode::Char('2') => app.set_range(Range::Week),
                     KeyCode::Char('3') => app.set_range(Range::Month),
@@ -355,6 +408,121 @@ pub fn run(
         app.pulse = app.pulse.wrapping_add(1);
     }
     Ok(())
+}
+
+/// Shorten project paths to the fewest trailing segments that still tell them apart.
+///
+/// `project` holds the whole working directory so that `~/a/build` and `~/b/build` stay
+/// distinct rows. Rendering the whole path would be unreadable and would put the user's home
+/// directory on screen, so each label is trimmed to its last segment and lengthened only where
+/// that would collide with another visible project.
+pub fn project_labels(paths: &[String]) -> Vec<String> {
+    fn segments(path: &str) -> Vec<&str> {
+        path.split(['/', '\\']).filter(|s| !s.is_empty()).collect()
+    }
+
+    let split: Vec<Vec<&str>> = paths.iter().map(|p| segments(p)).collect();
+    let deepest = split.iter().map(Vec::len).max().unwrap_or(0);
+
+    let mut labels: Vec<String> = Vec::with_capacity(paths.len());
+    for (index, parts) in split.iter().enumerate() {
+        if parts.is_empty() {
+            labels.push(paths[index].clone());
+            continue;
+        }
+        let mut take = 1;
+        while take < parts.len().min(deepest) {
+            let candidate = &parts[parts.len() - take..];
+            let collides = split.iter().enumerate().any(|(other, other_parts)| {
+                other != index
+                    && other_parts.len() >= take
+                    && &other_parts[other_parts.len() - take..] == candidate
+            });
+            if !collides {
+                break;
+            }
+            take += 1;
+        }
+        labels.push(parts[parts.len() - take..].join("/"));
+    }
+    labels
+}
+
+/// Roll usage up by project.
+///
+/// `project` and `session_id` have been populated by the Claude Code collector since it
+/// landed, and nothing rendered them. Sorted by cost, then tokens: the question this view
+/// answers is "where is the money going", and a project can burn tokens cheaply.
+pub fn project_totals(usages: &[Usage]) -> Vec<ProjectTotals> {
+    use std::collections::{BTreeMap, HashSet};
+
+    struct Acc {
+        totals: ProjectTotals,
+        sessions: HashSet<String>,
+        models: HashSet<String>,
+    }
+
+    let mut grouped: BTreeMap<String, Acc> = BTreeMap::new();
+    for usage in usages {
+        // Usage from a source that records no project still has to be accounted for
+        // somewhere, or the per-project totals silently disagree with the headline total.
+        let name = usage
+            .project
+            .clone()
+            .unwrap_or_else(|| "(unattributed)".to_string());
+        let acc = grouped.entry(name.clone()).or_insert_with(|| Acc {
+            totals: ProjectTotals {
+                project: name,
+                ..Default::default()
+            },
+            sessions: HashSet::new(),
+            models: HashSet::new(),
+        });
+        acc.totals.requests += usage.requests;
+        acc.totals.tokens += usage.total_tokens();
+        if usage.cost_status.needs_price() {
+            match usage.cost.filter(|_| usage.cost_status.is_billable()) {
+                Some(cost) => acc.totals.cost += cost,
+                None => acc.totals.unpriced_requests += usage.requests,
+            }
+        }
+        if let Some(session) = &usage.session_id {
+            acc.sessions.insert(session.clone());
+        }
+        acc.models
+            .insert(format!("{}/{}", usage.provider, usage.model));
+    }
+
+    let mut rows: Vec<ProjectTotals> = grouped
+        .into_values()
+        .map(|acc| ProjectTotals {
+            sessions: acc.sessions.len(),
+            models: acc.models.len(),
+            ..acc.totals
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        b.cost
+            .partial_cmp(&a.cost)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(b.tokens.cmp(&a.tokens))
+    });
+    rows
+}
+
+/// What share of billable requests carry a known cost.
+pub fn coverage(usages: &[Usage]) -> Coverage {
+    let mut coverage = Coverage::default();
+    for usage in usages {
+        if !usage.cost_status.needs_price() {
+            continue;
+        }
+        coverage.billable_requests += usage.requests;
+        if usage.cost.is_some() && usage.cost_status.is_billable() {
+            coverage.priced_requests += usage.requests;
+        }
+    }
+    coverage
 }
 
 fn panel<'a>(title: &'a str, color: Color) -> Block<'a> {
@@ -395,12 +563,11 @@ fn draw(frame: &mut Frame, app: &App) {
         .constraints([Constraint::Percentage(36), Constraint::Percentage(64)])
         .split(chunks[3]);
     draw_breakdown(frame, body[0], app);
-    if app.show_routing {
-        draw_routing(frame, body[1], app);
-    } else if app.show_budgets {
-        draw_budgets(frame, body[1], app);
-    } else {
-        draw_models(frame, body[1], app);
+    match app.panel {
+        Panel::Routing => draw_routing(frame, body[1], app),
+        Panel::Budgets => draw_budgets(frame, body[1], app),
+        Panel::Projects => draw_projects(frame, body[1], app),
+        Panel::Models => draw_models(frame, body[1], app),
     }
     let footer = Paragraph::new(Line::from(vec![
         Span::styled(
@@ -414,6 +581,8 @@ fn draw(frame: &mut Frame, app: &App) {
         Span::raw(" budgets  "),
         Span::styled("t", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
         Span::raw(" routing  "),
+        Span::styled("p", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
+        Span::raw(" projects  "),
         Span::styled(
             "j/k",
             Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
@@ -599,6 +768,48 @@ fn draw_models(frame: &mut Frame, area: Rect, app: &App) {
     );
 }
 
+fn draw_projects(frame: &mut Frame, area: Rect, app: &App) {
+    let projects = app.projects();
+    let paths: Vec<String> = projects.iter().map(|p| p.project.clone()).collect();
+    let labels = project_labels(&paths);
+    let rows = projects.iter().zip(labels).map(|(p, label)| {
+        // A project with unpriced requests gets its cost shown as a floor, not a total. The
+        // never-render-unknown-cost-as-zero invariant applies to partial sums too.
+        let cost = if p.unpriced_requests > 0 {
+            Span::styled(format!("≥ ${:.2}", p.cost), Style::default().fg(YELLOW))
+        } else {
+            Span::raw(format!("${:.2}", p.cost))
+        };
+        Row::new(vec![
+            Cell::from(label),
+            Cell::from(format_count(p.tokens)),
+            Cell::from(cost),
+            Cell::from(p.requests.to_string()),
+            Cell::from(p.sessions.to_string()),
+        ])
+    });
+    let header = Row::new(vec!["PROJECT", "TOKENS", "COST", "REQS", "SESS"])
+        .style(Style::default().fg(MUTED).add_modifier(Modifier::BOLD));
+    let widths = [
+        Constraint::Min(24),
+        Constraint::Length(11),
+        Constraint::Length(12),
+        Constraint::Length(7),
+        Constraint::Length(6),
+    ];
+    let title = match app.coverage().pct() {
+        Some(pct) => format!("PROJECT COST  ({:.0}% priced)", pct),
+        None => "PROJECT COST".to_string(),
+    };
+    frame.render_widget(
+        Table::new(rows, widths)
+            .header(header)
+            .column_spacing(1)
+            .block(panel(&title, CYAN)),
+        area,
+    );
+}
+
 fn draw_alert_banner(frame: &mut Frame, area: Rect, app: &App) {
     let actionable: Vec<&Alert> = app.alerts.iter().filter(|a| a.is_actionable()).collect();
     if actionable.is_empty() {
@@ -750,6 +961,182 @@ mod tests {
     use crate::model::{CostStatus, Range};
     use crate::utils::now;
 
+    fn usage(
+        project: Option<&str>,
+        session: Option<&str>,
+        cost: Option<f64>,
+        tokens: u64,
+    ) -> Usage {
+        Usage {
+            provider: "anthropic".into(),
+            model: "claude-sonnet-5".into(),
+            category: Category::Paid,
+            cost_status: if cost.is_some() {
+                CostStatus::Calculated
+            } else {
+                CostStatus::Unavailable
+            },
+            requests: 1,
+            input: tokens,
+            cost,
+            created: now(),
+            session_id: session.map(str::to_string),
+            project: project.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn projects_are_ranked_by_cost_and_count_distinct_sessions() {
+        let rows = project_totals(&[
+            usage(Some("/w/api"), Some("s1"), Some(1.0), 100),
+            usage(Some("/w/api"), Some("s1"), Some(2.0), 100),
+            usage(Some("/w/api"), Some("s2"), Some(3.0), 100),
+            usage(Some("/w/docs"), Some("s3"), Some(10.0), 50),
+        ]);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].project, "/w/docs");
+        assert_eq!(rows[1].project, "/w/api");
+        assert_eq!(rows[1].cost, 6.0);
+        assert_eq!(rows[1].sessions, 2, "two sessions, three requests");
+        assert_eq!(rows[1].requests, 3);
+    }
+
+    #[test]
+    fn usage_without_a_project_is_still_accounted_for() {
+        // Dropping unattributed rows would make the per-project totals quietly disagree with
+        // the headline total — the same class of bug as two panels disagreeing on PAID.
+        let rows = project_totals(&[
+            usage(Some("/w/api"), None, Some(1.0), 100),
+            usage(None, None, Some(4.0), 100),
+        ]);
+        let total: f64 = rows.iter().map(|r| r.cost).sum();
+        assert_eq!(total, 5.0);
+        assert!(rows.iter().any(|r| r.project == "(unattributed)"));
+    }
+
+    #[test]
+    fn a_project_with_unpriced_requests_reports_them() {
+        let rows = project_totals(&[
+            usage(Some("/w/api"), None, Some(1.0), 100),
+            usage(Some("/w/api"), None, None, 100),
+        ]);
+        assert_eq!(rows[0].cost, 1.0);
+        assert_eq!(
+            rows[0].unpriced_requests, 1,
+            "an unpriced request must not vanish into a confident total"
+        );
+    }
+
+    #[test]
+    fn coverage_reports_the_priced_share_of_billable_requests() {
+        let c = coverage(&[
+            usage(Some("/w"), None, Some(1.0), 100),
+            usage(Some("/w"), None, Some(1.0), 100),
+            usage(Some("/w"), None, None, 100),
+        ]);
+        assert_eq!(c.billable_requests, 3);
+        assert_eq!(c.priced_requests, 2);
+        assert!((c.pct().unwrap() - 66.666).abs() < 0.01);
+    }
+
+    #[test]
+    fn coverage_of_nothing_is_not_a_hundred_percent() {
+        assert_eq!(coverage(&[]).pct(), None);
+    }
+
+    /// A bare `App` with no collector and no I/O, for testing view logic.
+    fn test_app(usages: Vec<Usage>) -> App {
+        App {
+            range: Range::All,
+            usages,
+            selected: 0,
+            status: String::new(),
+            degraded: false,
+            last_refresh: String::new(),
+            pulse: 0,
+            refresh_interval: Duration::from_secs(30),
+            refreshed_at: Instant::now(),
+            db_path: None,
+            journal_path: PathBuf::from("/tmp/unused-journal.db"),
+            claude_dir: None,
+            provider_filter: None,
+            model_filter: None,
+            collector: None,
+            panel: Panel::Models,
+            budget_engine: BudgetEngine::empty(),
+            alerts: Vec::new(),
+            alert_sink: None,
+            view: DerivedView::default(),
+        }
+    }
+
+    #[test]
+    fn the_projects_view_and_the_headline_total_agree() {
+        // Two panels reporting different numbers for the same data is the exact bug 1.8b was.
+        let mut app = test_app(vec![
+            usage(Some("/w/api"), Some("s1"), Some(1.5), 100),
+            usage(Some("/w/docs"), Some("s2"), Some(2.5), 100),
+            usage(None, None, Some(1.0), 100),
+        ]);
+        app.recompute();
+        let per_project: f64 = app.projects().iter().map(|p| p.cost).sum();
+        assert!((per_project - app.totals().cost).abs() < 1e-9);
+    }
+
+    #[test]
+    fn project_labels_lengthen_only_where_they_would_collide() {
+        let labels = project_labels(&[
+            "/home/dev/api/build".to_string(),
+            "/home/dev/web/build".to_string(),
+            "/home/dev/ai-usage-tui".to_string(),
+        ]);
+        assert_eq!(labels[0], "api/build");
+        assert_eq!(labels[1], "web/build");
+        assert_eq!(
+            labels[2], "ai-usage-tui",
+            "an unambiguous name should not be lengthened"
+        );
+    }
+
+    #[test]
+    fn project_labels_handle_a_single_project_and_windows_paths() {
+        assert_eq!(project_labels(&["/home/dev/app".into()]), vec!["app"]);
+        assert_eq!(project_labels(&["C:\\src\\my-app".into()]), vec!["my-app"]);
+        assert_eq!(
+            project_labels(&["(unattributed)".into()]),
+            vec!["(unattributed)"]
+        );
+    }
+
+    #[test]
+    fn two_projects_sharing_a_basename_are_not_merged() {
+        // The rollup keys on the full path; only the label is shortened.
+        let mut a = usage(Some("/home/dev/api/build"), None, Some(1.0), 100);
+        a.project = Some("/home/dev/api/build".into());
+        let mut b = usage(Some("/home/dev/web/build"), None, Some(2.0), 100);
+        b.project = Some("/home/dev/web/build".into());
+        let rows = project_totals(&[a, b]);
+        assert_eq!(rows.len(), 2, "distinct projects were merged by basename");
+    }
+
+    #[test]
+    fn only_one_panel_can_be_active() {
+        // Two independent booleans let "budgets" and "routing" both be on, with one silently
+        // winning the draw dispatch.
+        let mut app = test_app(Vec::new());
+        app.toggle_panel(Panel::Budgets);
+        assert_eq!(app.panel, Panel::Budgets);
+        app.toggle_panel(Panel::Routing);
+        assert_eq!(app.panel, Panel::Routing);
+        app.toggle_panel(Panel::Routing);
+        assert_eq!(
+            app.panel,
+            Panel::Models,
+            "toggling off returns to the models"
+        );
+    }
+
     #[test]
     fn missing_cost_never_displays_as_paid_zero() {
         let usage = Usage {
@@ -797,8 +1184,7 @@ mod tests {
             provider_filter: None,
             model_filter: None,
             collector: None,
-            show_budgets: false,
-            show_routing: false,
+            panel: Panel::Models,
             budget_engine: BudgetEngine::empty(),
             alerts: Vec::new(),
             alert_sink: None,
