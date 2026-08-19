@@ -48,12 +48,15 @@ pub fn load_journal(path: &Path) -> Result<Vec<Usage>> {
             model: row.get(1)?,
             category: category_from_label(&category),
             cost_status: cost_status_from_label(&cost_status),
-            requests: row.get(4)?,
-            input: row.get(5)?,
-            output: row.get(6)?,
-            reasoning: row.get(7)?,
-            cache_read: row.get(8)?,
-            cache_write: row.get(9)?,
+            // SQLite integers are signed 64-bit; rusqlite 0.40 removed the `u64` impls
+            // rather than keep silently reinterpreting the top bit. Read as `i64` and clamp
+            // — a negative token count is corruption, and zero is the honest reading of it.
+            requests: count(row.get(4)?),
+            input: count(row.get(5)?),
+            output: count(row.get(6)?),
+            reasoning: count(row.get(7)?),
+            cache_read: count(row.get(8)?),
+            cache_write: count(row.get(9)?),
             cost: row.get(10)?,
             created: row.get(11)?,
             session_id: None,
@@ -61,6 +64,20 @@ pub fn load_journal(path: &Path) -> Result<Vec<Usage>> {
         })
     })?;
     Ok(rows.filter_map(Result::ok).collect())
+}
+
+/// A token or request count read back from SQLite.
+///
+/// SQLite has no unsigned integer type, so every counter round-trips through `i64`. A
+/// negative value means the row is corrupt; reporting it as a huge positive number — which is
+/// what an `as u64` cast would do — would put a fabricated figure in a cost total.
+fn count(value: i64) -> u64 {
+    value.max(0) as u64
+}
+
+/// A counter on its way into SQLite, saturated at the largest value the column can hold.
+fn stored(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
 }
 
 pub fn record_ollama(path: &Path) -> Result<()> {
@@ -176,8 +193,8 @@ pub fn record_ollama(path: &Path) -> Result<()> {
                 model,
                 category.label(),
                 cost_status.label(),
-                number(&json, &["prompt_eval_count"]),
-                number(&json, &["eval_count"]),
+                stored(number(&json, &["prompt_eval_count"])),
+                stored(number(&json, &["eval_count"])),
                 created,
             ],
         )?;
@@ -227,8 +244,8 @@ pub fn load_routing(path: &Path) -> Result<Vec<RoutingEvent>> {
             provider: row.get(4)?,
             category: category_from_label(&category),
             cost_status: cost_status_from_label(&cost_status),
-            requests: row.get(7)?,
-            tokens: row.get(8)?,
+            requests: count(row.get(7)?),
+            tokens: count(row.get(8)?),
             cost,
             retries: row.get(10)?,
             escalations: row.get(11)?,
@@ -319,8 +336,8 @@ pub fn record_routing(path: &Path) -> Result<()> {
             string(&json, &["provider"]).unwrap_or_else(|| "unknown".to_string()),
             category_label,
             cost_status_label,
-            number(&json, &["requests"]).max(1),
-            number(&json, &["tokens"]),
+            stored(number(&json, &["requests"]).max(1)),
+            stored(number(&json, &["tokens"])),
             cost,
             number(&json, &["retries"]) as u32,
             number(&json, &["escalations"]) as u32,
