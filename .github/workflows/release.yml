@@ -193,16 +193,46 @@ jobs:
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
-          sha_for() { grep -E "  .*/$1$" artifacts/checksums.txt | awk '{print $1}'; }
+
+          if [ ! -f artifacts/checksums.txt ]; then
+            echo "::error::artifacts/checksums.txt is missing; the checksum step did not run"
+            exit 1
+          fi
+          echo "--- checksums.txt ---"
+          cat artifacts/checksums.txt
+
+          # Matched with awk on the path's final component rather than a regex, so a filename
+          # containing regex metacharacters (every one of ours contains dots) cannot silently
+          # match the wrong line or none at all.
+          sha_for() {
+            local name="$1" sha
+            sha="$(awk -v n="$name" 'index($2, n) && substr($2, length($2) - length(n) + 1) == n { print $1 }' artifacts/checksums.txt)"
+            if [ -z "$sha" ]; then
+              echo "::error::no checksum found for $name — the build job that produces it did not upload an artifact" >&2
+              return 1
+            fi
+            printf '%s' "$sha"
+          }
+
           LINUX_SHA="$(sha_for "ai-usage-tui-${TAG}-x86_64-linux.tar.gz")"
           MACOS_ARM_SHA="$(sha_for "ai-usage-tui-${TAG}-aarch64-macos.tar.gz")"
           MACOS_X86_SHA="$(sha_for "ai-usage-tui-${TAG}-x86_64-macos.tar.gz")"
           WINDOWS_SHA="$(sha_for "ai-usage-tui-${TAG}-x86_64-windows.zip")"
+          echo "--- resolved checksums ---"
+          echo "linux      $LINUX_SHA"
+          echo "macos arm  $MACOS_ARM_SHA"
+          echo "macos x86  $MACOS_X86_SHA"
+          echo "windows    $WINDOWS_SHA"
+
           mkdir -p rendered
           for f in packaging/homebrew/ai-usage-tui.rb \
                    packaging/scoop/ai-usage-tui.json \
                    packaging/chocolatey/ai-usage-tui.nuspec \
                    packaging/chocolatey/tools/chocolateyinstall.ps1; do
+            if [ ! -f "$f" ]; then
+              echo "::error::packaging template $f is missing from the checkout"
+              exit 1
+            fi
             out="rendered/$(basename "$f")"
             sed -e "s|__TAG__|${TAG}|g" \
                 -e "s|__VERSION__|${VERSION}|g" \
@@ -211,9 +241,17 @@ jobs:
                 -e "s|__MACOS_X86_SHA256__|${MACOS_X86_SHA}|g" \
                 -e "s|__WINDOWS_SHA256__|${WINDOWS_SHA}|g" \
                 "$f" > "$out"
+            echo "rendered $out"
           done
-          ! grep -rn "PLACEHOLDER\|__TAG__\|__VERSION__\|_SHA256__" rendered/ \
-            || { echo "::error::unrendered placeholder left in packaging manifest"; exit 1; }
+
+          # Written as an explicit if rather than `! grep ... || { ... }`: the negation form
+          # made a failure anywhere in this step exit with no output at all, which is how the
+          # first dry run failed in 9ms with nothing to go on.
+          if grep -rn "PLACEHOLDER\|__TAG__\|__VERSION__\|_SHA256__" rendered/; then
+            echo "::error::unrendered placeholder left in packaging manifest (shown above)"
+            exit 1
+          fi
+          echo "all manifests rendered with no placeholders remaining"
         env:
           GITHUB_REF_NAME: ${{ inputs.tag || github.ref_name }}
 
