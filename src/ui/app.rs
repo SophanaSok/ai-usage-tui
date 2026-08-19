@@ -9,11 +9,16 @@ use std::time::{Duration, Instant};
 use crate::budget::{Alert, BudgetEngine};
 use crate::collector::background::CollectorHandle;
 use crate::model::{
-    Category, CostStatus, DayTotals, ProjectTotals, Range, RoutingAggregates, Totals, Usage,
+    BurnRate, Category, CostStatus, DayTotals, ProjectTotals, Range, RoutingAggregates, Totals,
+    Usage,
 };
 use crate::utils::format_clock;
 
-use super::aggregate::{coverage, daily_totals, project_totals};
+use super::aggregate::{burn_rate, coverage, daily_totals, project_totals};
+
+/// Trailing window for the burn-rate panel. One hour is long enough to smooth out a single
+/// large request and short enough to reflect what you are doing now.
+const BURN_WINDOW_SECS: i64 = 3600;
 
 pub struct App {
     pub range: Range,
@@ -60,6 +65,7 @@ pub enum Panel {
     Routing,
     Projects,
     TimeSeries,
+    Burn,
 }
 
 #[derive(Default)]
@@ -71,6 +77,7 @@ pub struct DerivedView {
     routing: Vec<RoutingAggregates>,
     projects: Vec<ProjectTotals>,
     daily: Vec<DayTotals>,
+    burn: BurnRate,
     coverage: Coverage,
 }
 
@@ -183,6 +190,9 @@ impl App {
 
         self.view.projects = project_totals(&self.view.filtered);
         self.view.daily = daily_totals(&self.view.filtered);
+        // Computed here, once per refresh, because `burn_rate` needs the clock and the render
+        // path must not read it.
+        self.view.burn = burn_rate(&self.usages, BURN_WINDOW_SECS, crate::utils::now());
         self.view.coverage = coverage(&self.view.filtered);
 
         let mut grouped = BTreeMap::<(String, String, Category, CostStatus), Usage>::new();
@@ -224,6 +234,14 @@ impl App {
 
     pub fn daily(&self) -> &[DayTotals] {
         &self.view.daily
+    }
+
+    pub fn burn(&self) -> &BurnRate {
+        &self.view.burn
+    }
+
+    pub fn alerts(&self) -> &[Alert] {
+        &self.alerts
     }
 
     pub fn coverage(&self) -> Coverage {

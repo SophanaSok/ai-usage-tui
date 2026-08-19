@@ -128,7 +128,54 @@ pub struct DayTotals {
     /// not render its cost as if it were complete.
     pub unpriced_requests: u64,
 }
+/// How fast usage is being consumed over a trailing window.
+///
+/// Deliberately carries the evidence alongside the rate. A burn rate computed from three
+/// requests is noise, and one computed over partly-unpriced usage is a floor rather than a
+/// figure — a consumer that cannot see either would present both as confident numbers.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct BurnRate {
+    /// Length of the trailing window, in seconds.
+    pub window_secs: i64,
+    pub requests: u64,
+    pub tokens: u64,
+    pub cost: f64,
+    /// Requests in the window that should carry a price but do not.
+    pub unpriced_requests: u64,
+}
 
+impl BurnRate {
+    /// Fewer than this many requests in the window is too thin to extrapolate from.
+    pub const MIN_SAMPLE: u64 = 5;
+
+    pub fn tokens_per_minute(&self) -> f64 {
+        if self.window_secs <= 0 {
+            return 0.0;
+        }
+        self.tokens as f64 / (self.window_secs as f64 / 60.0)
+    }
+
+    pub fn cost_per_hour(&self) -> f64 {
+        if self.window_secs <= 0 {
+            return 0.0;
+        }
+        self.cost / (self.window_secs as f64 / 3600.0)
+    }
+
+    /// Whether there is enough in the window to project from.
+    ///
+    /// Three requests in an hour does not support "you will hit your budget at 4pm". Printing a
+    /// confident figure from too little evidence is the same failure as rendering unknown cost
+    /// as `$0.00`, wearing a different hat.
+    pub fn is_projectable(&self) -> bool {
+        self.requests >= Self::MIN_SAMPLE && self.cost > 0.0
+    }
+
+    /// Whether some of the window's usage has no price, making `cost` a floor.
+    pub fn is_partial(&self) -> bool {
+        self.unpriced_requests > 0
+    }
+}
 /// Usage rolled up by project, for the per-project cost view.
 #[derive(Debug, Default, Clone)]
 pub struct ProjectTotals {
