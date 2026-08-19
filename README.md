@@ -270,13 +270,18 @@ The dashboard refreshes every 30 seconds by default. OpenCode and journal
 collectors run in the background at their configured intervals.
 
 The main view combines summary metrics, token-flow breakdown, and per-model
-activity. Press `b` for budget status or `t` for routing analytics:
+activity. One other panel occupies the right-hand pane at a time; `?` lists every
+key.
 
-| View | Keys | Screenshot |
+| View | Key | What it answers |
 | --- | --- | --- |
-| Model activity | default | [dashboard](docs/assets/dashboard.png) |
-| Budgets | `b` | [budgets](docs/assets/budgets.png) |
-| Routing | `t` | [routing](docs/assets/routing.png) |
+| Model activity | default | Where did the tokens and the money go, by model |
+| Budgets | `b` | How close am I to a limit I set |
+| Routing | `t` | Is the expensive model earning its cost, and how often do sessions escalate |
+| Projects | `p` | Which repository is this spend attributable to |
+| Spend over time | `g` | What does the trend look like day by day |
+| Burn rate | `w` | At this rate, when do I hit my budget |
+| Sessions | `s` | Which individual runs cost the most |
 
 | Key | Action |
 | --- | --- |

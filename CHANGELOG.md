@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **README screenshots.** `routing.png` showed a panel layout that no longer exists and has been
+  removed rather than left to mislead; the panel table now says what each view answers, which is
+  more use than a list of image links. `scripts/capture-readme-screenshots.sh` captures all seven
+  panels and fails if any capture is empty.
+  It also needed a dataset that can show them: the old fixture is nine rows on one day in 2023
+  with no session ids and no project paths, so projects, sessions, spend-over-time and burn all
+  captured blank. `scripts/make-demo-fixture.py` generates a small, deterministic, deliberately
+  fictional set of Claude Code transcripts with several days of history ending today, more than
+  one project, and sessions that escalate.
+
 ### Fixed
 
 - **The footer hid the quit binding on an 80-column terminal.** It was 77 columns at v0.3.0 and
