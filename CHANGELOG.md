@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **`src/ui.rs` split into `src/ui/`.** It was 1,196 lines in one file — the single largest
+  barrier to finding anything, and a merge-conflict magnet for concurrent work. Now `app.rs`
+  (state), `aggregate.rs` (pure functions over usage), `theme.rs` (palette and shared widgets),
+  and one module per panel under `panels/`. Largest file is 306 lines. Adding a panel is now:
+  write `panels/yours.rs`, add a `Panel` variant, a key binding, and a match arm — which is
+  also the on-ramp for the dashboard work on the roadmap. Pure refactor: `--json` output is
+  byte-identical before and after.
+
 ## 0.3.0 - 2026-08-19
 
 ### Fixed
