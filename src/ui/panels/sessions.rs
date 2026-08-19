@@ -11,7 +11,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::model::{SessionTotals, CYAN, YELLOW};
+use crate::model::{SessionTotals, CLOUD, CYAN, YELLOW};
 use crate::ui::aggregate::format_duration;
 use crate::ui::app::App;
 use crate::ui::theme::{panel, MUTED};
@@ -124,6 +124,10 @@ fn model_label(session: &SessionTotals) -> String {
 
 fn cost_cell<'a>(session: &SessionTotals) -> Cell<'a> {
     match (session.unpriced_requests, session.cost) {
+        // Entirely quota-billed: real cost, no per-request price, never `$0.00`.
+        (0, cost) if cost == 0.0 && session.quota_requests > 0 => {
+            Cell::from(Span::styled("quota", Style::default().fg(CLOUD)))
+        }
         (0, cost) => Cell::from(format!("${cost:.2}")),
         (_, cost) if cost > 0.0 => Cell::from(Span::styled(
             format!("≥ ${cost:.2}"),

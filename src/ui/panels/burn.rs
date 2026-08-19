@@ -12,7 +12,7 @@ use ratatui::{
 };
 
 use crate::budget::Alert;
-use crate::model::{BurnRate, CYAN, RED, YELLOW};
+use crate::model::{BurnRate, CLOUD, CYAN, RED, YELLOW};
 use crate::ui::aggregate::{format_duration, seconds_to_exhaust};
 use crate::ui::app::App;
 use crate::ui::theme::{panel, MUTED};
@@ -61,7 +61,13 @@ fn rate_row<'a>(label: &'a str, value: String) -> Row<'a> {
 
 /// Spend per hour, marked as a floor when part of the window is unpriced.
 fn spend_row<'a>(burn: &BurnRate) -> Row<'a> {
-    let value = if burn.is_partial() {
+    let value = if burn.is_quota_only() {
+        // A rate of `$0.00/hr` would read as "this is costing you nothing", which is false.
+        Span::styled(
+            format!("on quota  ({} requests)", burn.quota_requests),
+            Style::default().fg(CLOUD),
+        )
+    } else if burn.is_partial() {
         Span::styled(
             format!(
                 "≥ ${:.2}/hr  ({} unpriced)",

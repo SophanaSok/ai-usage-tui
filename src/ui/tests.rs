@@ -544,6 +544,37 @@ fn durations_read_coarsely() {
 }
 
 /// Render the burn panel and return its text, for the assertions below.
+fn render_timeseries(app: &App, w: u16, h: u16) -> String {
+    render_panel(w, h, |frame, area| {
+        crate::ui::panels::timeseries::draw_timeseries(frame, area, app)
+    })
+}
+
+fn render_projects(app: &App, w: u16, h: u16) -> String {
+    render_panel(w, h, |frame, area| {
+        crate::ui::panels::projects::draw_projects(frame, area, app)
+    })
+}
+
+fn render_panel(
+    w: u16,
+    h: u16,
+    draw: impl FnOnce(&mut ratatui::Frame, ratatui::layout::Rect),
+) -> String {
+    use ratatui::{backend::TestBackend, Terminal};
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("backend");
+    terminal
+        .draw(|frame| draw(frame, frame.area()))
+        .expect("draw");
+    terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect()
+}
+
 fn render_burn(app: &App, w: u16, h: u16) -> String {
     use ratatui::{backend::TestBackend, Terminal};
     let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("backend");
@@ -1150,5 +1181,176 @@ fn nothing_derived_leaves_the_routing_panel_as_it_was() {
     assert!(
         !rendered.contains("ESCALATIONS"),
         "an empty derived block should not be rendered at all:\n{rendered}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Quota-billed usage: cost this tool deliberately will not attribute per request.
+// ---------------------------------------------------------------------------------------------
+
+/// A cloud row as the collectors produce it — unpriced and `Category::Cloud` — normalised by the
+/// real pricing pass rather than by hand-setting the enum, so these tests exercise the seam.
+fn quota_usage(tokens: u64, created: i64) -> Usage {
+    let mut usage = Usage {
+        provider: "ollama-cloud".into(),
+        model: "glm-5.2:cloud".into(),
+        category: Category::Cloud,
+        cost_status: CostStatus::Unavailable,
+        requests: 1,
+        input: tokens,
+        cost: None,
+        created,
+        session_id: Some("cloud-session".into()),
+        project: Some("/w/cloud".into()),
+        ..Default::default()
+    };
+    let engine = crate::pricing::PricingEngine::bundled();
+    crate::pricing::apply_estimated_pricing(std::slice::from_mut(&mut usage), &engine);
+    assert_eq!(
+        usage.cost_status,
+        CostStatus::Quota,
+        "fixture must go through the real normalisation"
+    );
+    usage
+}
+
+#[test]
+fn quota_billed_usage_does_not_reduce_pricing_coverage() {
+    // Measured against real data: the header read "71.6% priced" when every unpriced request was
+    // Ollama Cloud usage the tool deliberately refuses to price. A correct refusal to invent a
+    // number was being reported as a failure to produce one.
+    let now = crate::utils::now();
+    let mut usages: Vec<Usage> = (0..7).map(|_| usage(None, None, Some(1.0), 100)).collect();
+    usages.extend((0..3).map(|i| quota_usage(100, now - i)));
+
+    let c = coverage(&usages);
+    assert_eq!(
+        c.pct(),
+        Some(100.0),
+        "quota-billed work is not a pricing gap; every priceable request here was priced"
+    );
+    assert_eq!(
+        c.quota_requests, 3,
+        "and it must still be counted, or the volume silently disappears"
+    );
+}
+
+#[test]
+fn a_billable_model_with_no_rate_still_counts_against_coverage() {
+    // The anti-test for the one above: the fix must not make coverage unconditionally 100% by
+    // swallowing the real case the figure exists to report.
+    let mut unpriceable = usage(None, None, None, 100);
+    unpriceable.model = "a-model-no-table-has".into();
+    let usages = vec![usage(None, None, Some(1.0), 100), unpriceable];
+
+    let c = coverage(&usages);
+    assert_eq!(c.pct(), Some(50.0), "a genuine missing rate is still a gap");
+    assert_eq!(c.quota_requests, 0);
+}
+
+#[test]
+fn a_day_of_only_quota_work_is_not_rendered_as_free() {
+    // Discriminating in both directions. Before the fix this said "unpriced"; the naive fix —
+    // dropping quota rows from unpriced_requests with no replacement counter — makes the
+    // arithmetic produce 0.0 and renders "$0.00" for usage that genuinely costs money.
+    let now = crate::utils::now();
+    let mut app = test_app((0..3).map(|i| quota_usage(50_000, now - i)).collect());
+    app.recompute();
+
+    let rendered = render_timeseries(&app, 84, 8);
+    assert!(
+        rendered.contains("quota"),
+        "a quota-billed day must say so:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("$0.00"),
+        "never render cost this tool declined to attribute as zero:\n{rendered}"
+    );
+}
+
+#[test]
+fn a_session_of_only_quota_work_is_not_rendered_as_free() {
+    let now = crate::utils::now();
+    let mut app = test_app((0..3).map(|i| quota_usage(50_000, now - i)).collect());
+    app.recompute();
+
+    let rendered = render_sessions(&app, 100, 8);
+    assert!(rendered.contains("quota"), "{rendered}");
+    assert!(!rendered.contains("$0.00"), "{rendered}");
+}
+
+#[test]
+fn a_project_of_only_quota_work_is_not_rendered_as_free() {
+    let now = crate::utils::now();
+    let mut app = test_app((0..3).map(|i| quota_usage(50_000, now - i)).collect());
+    app.recompute();
+
+    let rendered = render_projects(&app, 84, 8);
+    assert!(rendered.contains("quota"), "{rendered}");
+    assert!(!rendered.contains("$0.00"), "{rendered}");
+}
+
+#[test]
+fn a_burn_window_of_only_quota_work_reports_no_rate_rather_than_zero() {
+    // "$0.00/hr" reads as "this is costing you nothing", which is false.
+    let now = crate::utils::now();
+    let mut app = test_app((0..10).map(|i| quota_usage(50_000, now - i * 60)).collect());
+    app.recompute();
+
+    let rendered = render_burn(&app, 84, 10);
+    assert!(rendered.contains("on quota"), "{rendered}");
+    assert!(!rendered.contains("$0.00/hr"), "{rendered}");
+}
+
+#[test]
+fn the_header_discloses_quota_volume_rather_than_dropping_it() {
+    // "all priced" while thousands of requests sit outside the ratio is true and unhelpful.
+    use ratatui::{backend::TestBackend, Terminal};
+    let now = crate::utils::now();
+    let mut usages = vec![usage(None, None, Some(1.0), 100)];
+    usages.extend((0..3).map(|i| quota_usage(100, now - i)));
+    let mut app = test_app(usages);
+    app.recompute();
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 3)).expect("backend");
+    terminal
+        .draw(|frame| crate::ui::panels::header::draw_header(frame, frame.area(), &app))
+        .expect("draw");
+    let rendered: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+
+    assert!(rendered.contains("all priced"), "{rendered}");
+    assert!(
+        rendered.contains("on quota"),
+        "the denominator the percentage was taken over must stay visible:\n{rendered}"
+    );
+}
+
+#[test]
+fn escalating_onto_a_quota_billed_model_reports_no_unpriced_spend() {
+    // The call site farthest from the fix. Before it, the escalation block reported quota work
+    // as spend it had failed to price, and rendered the total as a floor.
+    let now = crate::utils::now();
+    let mut opener = usage(None, Some("s1"), Some(0.01), 100);
+    opener.model = "claude-haiku-4-5".into();
+    opener.created = now;
+    let mut escalated = quota_usage(100, now + 10);
+    escalated.session_id = Some("s1".into());
+
+    let engine = crate::pricing::PricingEngine::bundled();
+    let derived = crate::escalation::derive(&[opener, escalated], |m| engine.input_rate(m));
+    assert_eq!(
+        derived.transitions.len(),
+        1,
+        "a cloud model with a table entry can still be ranked"
+    );
+    assert_eq!(
+        derived.transitions[0].unpriced_after, 0,
+        "quota-billed spend is not spend we failed to price"
     );
 }

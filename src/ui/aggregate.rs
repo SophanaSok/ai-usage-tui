@@ -71,12 +71,12 @@ pub fn project_totals(usages: &[Usage]) -> Vec<ProjectTotals> {
         });
         acc.totals.requests += usage.requests;
         acc.totals.tokens += usage.total_tokens();
-        if usage.cost_status.needs_price() {
-            match usage.cost.filter(|_| usage.cost_status.is_billable()) {
-                Some(cost) => acc.totals.cost += cost,
-                None => acc.totals.unpriced_requests += usage.requests,
-            }
-        }
+        accrue(
+            usage,
+            &mut acc.totals.cost,
+            &mut acc.totals.unpriced_requests,
+            &mut acc.totals.quota_requests,
+        );
         if let Some(session) = &usage.session_id {
             acc.sessions.insert(session.clone());
         }
@@ -101,9 +101,34 @@ pub fn project_totals(usages: &[Usage]) -> Vec<ProjectTotals> {
     rows
 }
 
+/// Fold one usage row into a rollup's cost fields.
+///
+/// Four rollups needed exactly this and carried four copies of it. Adding the quota case to a
+/// copy-pasted block is the shape of change that reliably gets applied to three places out of
+/// four, so there is now one.
+fn accrue(usage: &Usage, cost: &mut f64, unpriced: &mut u64, quota: &mut u64) {
+    if usage.cost_status.is_quota_billed() {
+        *quota += usage.requests;
+        return;
+    }
+    if usage.cost_status.needs_price() {
+        match usage.cost.filter(|_| usage.cost_status.is_billable()) {
+            Some(value) => *cost += value,
+            None => *unpriced += usage.requests,
+        }
+    }
+}
+
 pub fn coverage(usages: &[Usage]) -> Coverage {
     let mut coverage = Coverage::default();
     for usage in usages {
+        // Counted but kept out of both sides of the ratio: quota-billed work has no per-request
+        // price to be missing, so scoring it as a coverage gap reports a deliberate refusal to
+        // invent a number as a failure to produce one. Reported separately so it cannot vanish.
+        if usage.cost_status.is_quota_billed() {
+            coverage.quota_requests += usage.requests;
+            continue;
+        }
         if !usage.cost_status.needs_price() {
             continue;
         }
@@ -134,12 +159,12 @@ pub fn daily_totals(usages: &[Usage]) -> Vec<DayTotals> {
         });
         entry.requests += usage.requests;
         entry.tokens += usage.total_tokens();
-        if usage.cost_status.needs_price() {
-            match usage.cost.filter(|_| usage.cost_status.is_billable()) {
-                Some(cost) => entry.cost += cost,
-                None => entry.unpriced_requests += usage.requests,
-            }
-        }
+        accrue(
+            usage,
+            &mut entry.cost,
+            &mut entry.unpriced_requests,
+            &mut entry.quota_requests,
+        );
     }
 
     let (Some(first), Some(last)) = (by_day.keys().next().copied(), by_day.keys().last().copied())
@@ -196,12 +221,12 @@ pub fn burn_rate(usages: &[Usage], window_secs: i64, now: i64) -> BurnRate {
         }
         burn.requests += usage.requests;
         burn.tokens += usage.total_tokens();
-        if usage.cost_status.needs_price() {
-            match usage.cost.filter(|_| usage.cost_status.is_billable()) {
-                Some(cost) => burn.cost += cost,
-                None => burn.unpriced_requests += usage.requests,
-            }
-        }
+        accrue(
+            usage,
+            &mut burn.cost,
+            &mut burn.unpriced_requests,
+            &mut burn.quota_requests,
+        );
     }
     burn
 }
@@ -264,12 +289,12 @@ pub fn session_totals(usages: &[Usage]) -> Vec<SessionTotals> {
         }
         entry.requests += usage.requests;
         entry.tokens += usage.total_tokens();
-        if usage.cost_status.needs_price() {
-            match usage.cost.filter(|_| usage.cost_status.is_billable()) {
-                Some(cost) => entry.cost += cost,
-                None => entry.unpriced_requests += usage.requests,
-            }
-        }
+        accrue(
+            usage,
+            &mut entry.cost,
+            &mut entry.unpriced_requests,
+            &mut entry.quota_requests,
+        );
         let model = format!("{}/{}", usage.provider, usage.model);
         if !entry.models.contains(&model) {
             entry.models.push(model);

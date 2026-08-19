@@ -170,7 +170,9 @@ pub fn record_ollama(path: &Path) -> Result<()> {
         let category = classify("ollama", &model);
         let cost_status = match category {
             Category::Local => CostStatus::Local,
-            Category::Cloud => CostStatus::Unavailable,
+            // Billed on quota, not per token. This arm was already singled out and then
+            // collapsed into the fallback, which is how the distinction got lost.
+            Category::Cloud => CostStatus::Quota,
             _ => CostStatus::Unavailable,
         };
         let created_at = string(&json, &["created_at"]);

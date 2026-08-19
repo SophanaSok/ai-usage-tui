@@ -7,7 +7,7 @@ timestamp
 provider
 model
 category: local | cloud | free | paid | unknown
-cost_status: provider_reported | calculated | estimated | free | local | unavailable
+cost_status: provider_reported | calculated | estimated | free | local | quota | unavailable
 request_count
 input_tokens
 output_tokens

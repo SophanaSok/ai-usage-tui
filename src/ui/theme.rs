@@ -53,6 +53,10 @@ pub fn cost_display(usage: &Usage) -> String {
             .cost
             .map(|cost| format!("${:.4} estimated", cost))
             .unwrap_or_else(|| "ESTIMATED / NO COST".into()),
+        // Not "$0.00" and not "FREE": this usage costs money, it is simply billed against a
+        // plan rather than per token. Eight characters so it is not truncated by the COST
+        // column's width.
+        CostStatus::Quota => "ON QUOTA".into(),
         CostStatus::Unavailable => "UNKNOWN COST".into(),
     }
 }

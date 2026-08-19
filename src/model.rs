@@ -6,6 +6,9 @@ pub const CYAN: Color = Color::Rgb(69, 211, 255);
 pub const GREEN: Color = Color::Rgb(116, 235, 152);
 pub const YELLOW: Color = Color::Rgb(255, 205, 92);
 pub const RED: Color = Color::Rgb(255, 105, 105);
+/// The CLOUD category's purple, promoted from an inline literal so quota-billed cost cells can
+/// match the category tile a reader sees next to them.
+pub const CLOUD: Color = Color::Rgb(194, 137, 255);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Category {
@@ -24,6 +27,13 @@ pub enum CostStatus {
     Estimated,
     Free,
     Local,
+    /// Billed, but not per token at any rate this tool can know — an account quota, a
+    /// subscription tier, GPU time. Ollama Cloud is the current instance.
+    ///
+    /// Distinct from `Unavailable`, which means "this should carry a price and does not".
+    /// Collapsing the two made a deliberate, correct refusal to invent a number read as a
+    /// failure to produce one, in every panel that reports pricing coverage.
+    Quota,
     #[default]
     Unavailable,
 }
@@ -36,6 +46,7 @@ impl CostStatus {
             Self::Estimated => "estimated",
             Self::Free => "free",
             Self::Local => "local",
+            Self::Quota => "quota",
             Self::Unavailable => "unavailable",
         }
     }
@@ -47,13 +58,25 @@ impl CostStatus {
         )
     }
 
-    /// Whether this usage ought to carry a price.
+    /// Whether this usage ought to carry a price and would be a gap without one.
     ///
     /// Distinct from `is_billable`, which means "has a known cost worth summing" and so
-    /// excludes `Unavailable` — the very case a coverage figure exists to count. `Free` and
-    /// `Local` are genuinely costless and are not missing anything.
+    /// excludes `Unavailable` — the very case a coverage figure exists to count.
+    ///
+    /// `Free` and `Local` are genuinely costless. `Quota` is not costless, but no per-request
+    /// price exists to be missing, so counting it as a gap misreports a deliberate refusal as a
+    /// failure. Callers that exclude it here must count it somewhere: a row whose work is
+    /// entirely quota-billed has no unpriced requests and no dollars, and would otherwise render
+    /// as `$0.00`.
     pub fn needs_price(self) -> bool {
-        !matches!(self, Self::Free | Self::Local)
+        !matches!(self, Self::Free | Self::Local | Self::Quota)
+    }
+
+    /// Whether this usage is billed against a plan rather than per token.
+    ///
+    /// Exists so aggregates and panels can count quota volume without naming the variant.
+    pub fn is_quota_billed(self) -> bool {
+        self == Self::Quota
     }
 
     pub fn is_known(self) -> bool {
@@ -76,7 +99,7 @@ impl Category {
             Self::Local => GREEN,
             Self::Free => CYAN,
             Self::Paid => YELLOW,
-            Self::Cloud => Color::Rgb(194, 137, 255),
+            Self::Cloud => CLOUD,
             Self::Unknown => RED,
         }
     }
@@ -127,6 +150,10 @@ pub struct DayTotals {
     /// Requests that should carry a price but do not. A day that is only partly priced must
     /// not render its cost as if it were complete.
     pub unpriced_requests: u64,
+    /// Requests billed against a plan quota rather than per token. They carry real cost that no
+    /// API exposes per request, so they are counted separately: without this, a row whose work is
+    /// entirely quota-billed has no unpriced requests and no dollars, and renders as `$0.00`.
+    pub quota_requests: u64,
 }
 /// Usage rolled up by session.
 ///
@@ -144,6 +171,10 @@ pub struct SessionTotals {
     pub tokens: u64,
     pub cost: f64,
     pub unpriced_requests: u64,
+    /// Requests billed against a plan quota rather than per token. They carry real cost that no
+    /// API exposes per request, so they are counted separately: without this, a row whose work is
+    /// entirely quota-billed has no unpriced requests and no dollars, and renders as `$0.00`.
+    pub quota_requests: u64,
     /// Distinct `provider/model` pairs used.
     pub models: Vec<String>,
 }
@@ -169,6 +200,10 @@ pub struct BurnRate {
     pub cost: f64,
     /// Requests in the window that should carry a price but do not.
     pub unpriced_requests: u64,
+    /// Requests billed against a plan quota rather than per token. They carry real cost that no
+    /// API exposes per request, so they are counted separately: without this, a row whose work is
+    /// entirely quota-billed has no unpriced requests and no dollars, and renders as `$0.00`.
+    pub quota_requests: u64,
 }
 
 impl BurnRate {
@@ -202,6 +237,11 @@ impl BurnRate {
     pub fn is_partial(&self) -> bool {
         self.unpriced_requests > 0
     }
+
+    /// Whether the window contains only quota-billed work, so there is no rate to report.
+    pub fn is_quota_only(&self) -> bool {
+        self.quota_requests > 0 && self.cost == 0.0 && self.unpriced_requests == 0
+    }
 }
 /// Usage rolled up by project, for the per-project cost view.
 #[derive(Debug, Default, Clone)]
@@ -213,6 +253,10 @@ pub struct ProjectTotals {
     /// Requests whose cost is billable but unknown. Rendering `$12.00` next to work that is
     /// only two-thirds priced would misstate the number without saying so.
     pub unpriced_requests: u64,
+    /// Requests billed against a plan quota rather than per token. They carry real cost that no
+    /// API exposes per request, so they are counted separately: without this, a row whose work is
+    /// entirely quota-billed has no unpriced requests and no dollars, and renders as `$0.00`.
+    pub quota_requests: u64,
     pub sessions: usize,
     pub models: usize,
 }
@@ -227,6 +271,10 @@ pub struct Totals {
     pub cache_write: u64,
     pub cost: f64,
     pub unknown_requests: u64,
+    /// Requests billed against a plan quota rather than per token. They carry real cost that no
+    /// API exposes per request, so they are counted separately: without this, a row whose work is
+    /// entirely quota-billed has no unpriced requests and no dollars, and renders as `$0.00`.
+    pub quota_requests: u64,
 }
 
 impl Totals {
@@ -239,6 +287,9 @@ impl Totals {
         self.cache_write += usage.cache_write;
         if !usage.cost_status.is_known() {
             self.unknown_requests += usage.requests;
+        }
+        if usage.cost_status.is_quota_billed() {
+            self.quota_requests += usage.requests;
         }
         if usage.cost_status.is_billable() {
             if let Some(cost) = usage.cost {
@@ -333,6 +384,24 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(u.total_tokens(), 20);
+    }
+
+    #[test]
+    fn quota_billed_usage_never_enters_a_dollar_total() {
+        // It has real cost, but no per-request figure to sum. Adding it to `cost` would invent
+        // one; counting it as unknown would report it as a gap. It gets its own counter.
+        let mut totals = Totals::default();
+        totals.add(&Usage {
+            requests: 3,
+            input: 500,
+            cost: None,
+            cost_status: CostStatus::Quota,
+            ..Default::default()
+        });
+        assert_eq!(totals.cost, 0.0);
+        assert_eq!(totals.unknown_requests, 0, "quota-billed is a known state");
+        assert_eq!(totals.quota_requests, 3);
+        assert_eq!(totals.tokens(), 500, "its tokens still count");
     }
 
     #[test]

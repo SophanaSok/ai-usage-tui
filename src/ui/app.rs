@@ -98,6 +98,10 @@ pub struct DerivedView {
 pub struct Coverage {
     pub priced_requests: u64,
     pub billable_requests: u64,
+    /// Requests billed against a plan quota, kept out of both sides of the ratio because there
+    /// is no per-request price for them to be missing. Reported alongside the percentage so the
+    /// volume cannot silently disappear from the figure.
+    pub quota_requests: u64,
 }
 
 impl Coverage {

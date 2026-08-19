@@ -11,7 +11,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::model::{CYAN, YELLOW};
+use crate::model::{CLOUD, CYAN, YELLOW};
 use crate::ui::aggregate::project_labels;
 use crate::ui::app::App;
 use crate::ui::theme::{panel, MUTED};
@@ -26,6 +26,9 @@ pub fn draw_projects(frame: &mut Frame, area: Rect, app: &App) {
         // never-render-unknown-cost-as-zero invariant applies to partial sums too.
         let cost = if p.unpriced_requests > 0 {
             Span::styled(format!("≥ ${:.2}", p.cost), Style::default().fg(YELLOW))
+        } else if p.cost == 0.0 && p.quota_requests > 0 {
+            // Entirely quota-billed: real cost, no per-request price, never `$0.00`.
+            Span::styled("quota", Style::default().fg(CLOUD))
         } else {
             Span::raw(format!("${:.2}", p.cost))
         };
