@@ -125,6 +125,21 @@ Established while fixing the accounting; breaking these is how the bugs came bac
    `break` on a panic all read as robustness and all render "broken" as "nothing to report".
    Failure must reach the screen or the log.
 
+## Verifying the release path
+
+`release.yml` used to run only on tag push, so its first execution was also its first test, with
+a published release riding on the outcome. It now accepts `workflow_dispatch`:
+
+```sh
+gh workflow run release.yml -f tag=v0.0.0-dryrun
+gh run watch
+```
+
+A dispatch run builds every architecture, asserts each binary's arch with `file`, builds and
+inspects the `.deb`/`.rpm`, generates checksums, renders the packaging manifests and fails on any
+unsubstituted placeholder — then skips only the publish. Run it after any change to the release
+workflow, the packaging templates, or the build matrix.
+
 ## How to verify a change end to end
 
 ```sh
