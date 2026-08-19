@@ -9,13 +9,19 @@
    - `cargo build --release` succeeds
    - Cargo.toml version matches the requested version
 4. Tag and push: `git tag vX.Y.Z && git push origin main && git push origin --tags`.
-5. GitHub Actions (`release.yml`) automatically builds for all platforms:
-   - Linux: `ai-usage-tui-vX.Y.Z-x86_64-linux.tar.gz`
-   - macOS: `ai-usage-tui-vX.Y.Z-x86_64-macos.tar.gz`
-   - Windows: `ai-usage-tui-vX.Y.Z-x86_64-windows.zip`
+5. GitHub Actions (`release.yml`) automatically builds nine artifacts:
+   - Linux: `-x86_64-linux.tar.gz`, `-aarch64-linux.tar.gz`
+   - macOS: `-x86_64-macos.tar.gz`, `-aarch64-macos.tar.gz` (both cross-compiled on
+     `macos-latest` with an explicit `--target`; v0.2.0 shipped an arm64 binary labelled x86_64
+     because the build had no `--target`)
+   - Windows: `-x86_64-windows.zip`
+   - Packages: `-amd64.deb`, `-arm64.deb`, `-amd64.rpm`, `-arm64.rpm`
 6. CI generates `checksums.txt` (SHA256) and creates a GitHub Release with all artifacts.
-7. Update package manager formulas (Homebrew, Scoop, Chocolatey) with the new SHA256 hashes.
-8. Verify installation from a clean environment on each platform.
+7. Packaging manifests (Homebrew, Scoop, Chocolatey) are **rendered by the release job** from the
+   real artifact names and checksums and attached to the release. They are not hand-edited; a
+   missing checksum fails the job rather than shipping a placeholder.
+8. Verify the published artifacts independently: architecture with `file`, checksums, `.deb`/`.rpm`
+   contents with `bsdtar`, and the Homebrew sha256 against the downloaded tarball.
 
 Release artifacts must include the binary, README, and LICENSE. The project should not require Rust to run a published binary.
 

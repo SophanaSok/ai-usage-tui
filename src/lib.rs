@@ -124,7 +124,7 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_pricing_engine_skips_local_and_cloud() {
+    fn test_pricing_engine_marks_cloud_as_quota_and_leaves_local_alone() {
         let engine = PricingEngine::bundled();
         let mut usages = vec![
             Usage {
@@ -145,8 +145,10 @@ mod integration_tests {
 
         apply_estimated_pricing(&mut usages, &engine);
 
+        // Local is skipped, not restamped — its status comes from the collector.
         assert_eq!(usages[0].cost_status, CostStatus::Unavailable);
-        assert_eq!(usages[1].cost_status, CostStatus::Unavailable);
+        assert_eq!(usages[1].cost_status, CostStatus::Quota);
+        assert_eq!(usages[1].cost, None);
     }
 
     #[test]

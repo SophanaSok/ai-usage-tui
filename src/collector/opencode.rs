@@ -125,8 +125,23 @@ pub fn load_opencode_since(
                 Some("calculated") if cost.is_some() => CostStatus::Calculated,
                 Some("estimated") if cost.is_some() => CostStatus::Estimated,
                 _ if category == Category::Paid && cost.is_some() => CostStatus::Calculated,
+                // Only in the fallback, and only when there is no positive figure: if OpenCode
+                // reported real spend for a cloud row, observed data beats the policy rule.
+                _ if category == Category::Cloud
+                    && !cost.map(|value| value > 0.0).unwrap_or(false) =>
+                {
+                    CostStatus::Quota
+                }
                 _ => CostStatus::Unavailable,
             }
+        };
+        // A recorded `0` on a quota-billed row is OpenCode having no cost data for cloud
+        // routes, not an authoritative "this was free". Exporting it as 0 would state the very
+        // thing this status exists to avoid stating.
+        let cost = if cost_status == CostStatus::Quota {
+            None
+        } else {
+            cost
         };
         let usage = Usage {
             event_id: string(info, &["id", "messageID", "message_id"]),
@@ -175,6 +190,58 @@ mod tests {
         assert_eq!(timestamp_seconds(1_700_000_000), 1_700_000_000);
         assert_eq!(timestamp_seconds(1_700_000_000_000), 1_700_000_000);
         assert_eq!(timestamp_seconds(1_700_000_000_000_000), 1_700_000_000);
+    }
+
+    /// Seed one row with an explicit provider/model/cost, for the quota cases below.
+    fn seed_row(path: &std::path::Path, provider: &str, model: &str, cost: &str) {
+        let conn = rusqlite::Connection::open(path).expect("create db");
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS message (data TEXT NOT NULL, time_created INTEGER NOT NULL);",
+        )
+        .expect("create schema");
+        let data = format!(
+            r#"{{"info":{{"id":"r1","role":"assistant","providerID":"{provider}",
+               "modelID":"{model}","cost":{cost},
+               "tokens":{{"input":100,"output":50,"cache":{{"read":0,"write":0}}}}}}}}"#
+        );
+        conn.execute(
+            "INSERT INTO message (data, time_created) VALUES (?1, ?2)",
+            rusqlite::params![data, 1_700_000_000_i64],
+        )
+        .expect("insert message");
+    }
+
+    #[test]
+    fn a_quota_billed_row_carries_no_cost_at_all() {
+        // OpenCode records `0` for cloud routes because it has no figure for them, not because
+        // the call was free. Keeping that zero exported `cost: 0` — "this cost zero dollars" —
+        // which is the exact claim the quota status exists to avoid making.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = dir.path().join("opencode.db");
+        seed_row(&db, "ollama", "glm-5.2:cloud", "0");
+
+        let (usages, _) = load_opencode(Some(&db)).expect("load");
+        assert_eq!(usages[0].cost_status, CostStatus::Quota);
+        assert_eq!(
+            usages[0].cost, None,
+            "a recorded zero on a quota-billed row is absence of data, not a price"
+        );
+    }
+
+    #[test]
+    fn a_cloud_row_with_real_reported_spend_keeps_its_figure() {
+        // The guard on the rule above: observed data beats the "cloud is quota-billed" policy.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = dir.path().join("opencode.db");
+        seed_row(&db, "ollama", "glm-5.2:cloud", "0.42");
+
+        let (usages, _) = load_opencode(Some(&db)).expect("load");
+        assert_ne!(
+            usages[0].cost_status,
+            CostStatus::Quota,
+            "a cloud row with a real cost is not quota-billed"
+        );
+        assert_eq!(usages[0].cost, Some(0.42));
     }
 
     fn seed_db(path: &std::path::Path, rows: &[(&str, i64)]) {

@@ -106,6 +106,10 @@ pub fn cost_status_from_label(label: &str) -> CostStatus {
         "estimated" => CostStatus::Estimated,
         "free" => CostStatus::Free,
         "local" => CostStatus::Local,
+        "quota" => CostStatus::Quota,
+        // An unrecognised label degrades to the pessimistic status rather than a confident one.
+        // This match has no exhaustiveness check, so a new variant added without a case here is
+        // silent — `every_cost_status_round_trips_through_its_label` is the only guard.
         _ => CostStatus::Unavailable,
     }
 }
@@ -113,6 +117,42 @@ pub fn cost_status_from_label(label: &str) -> CostStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every `CostStatus`, so the round-trip test below fails to compile if a variant is added
+    /// without being considered here.
+    const ALL_STATUSES: [CostStatus; 7] = [
+        CostStatus::ProviderReported,
+        CostStatus::Calculated,
+        CostStatus::Estimated,
+        CostStatus::Free,
+        CostStatus::Local,
+        CostStatus::Quota,
+        CostStatus::Unavailable,
+    ];
+
+    #[test]
+    fn every_cost_status_round_trips_through_its_label() {
+        // `cost_status_from_label` has a `_` fallback, so a new variant missing its arm is
+        // silent: the status is written to the journal correctly and read back as Unavailable.
+        // This is the only guard on that match.
+        for status in ALL_STATUSES {
+            assert_eq!(
+                cost_status_from_label(status.label()),
+                status,
+                "{} did not survive a write/read cycle",
+                status.label()
+            );
+        }
+    }
+
+    #[test]
+    fn an_unrecognised_label_degrades_to_the_pessimistic_status() {
+        // An older binary reading a newer journal must not claim a cost state it cannot verify.
+        assert_eq!(
+            cost_status_from_label("some-future-status"),
+            CostStatus::Unavailable
+        );
+    }
 
     #[test]
     fn categories_prioritize_local() {

@@ -2,6 +2,60 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **README screenshots.** `routing.png` showed a panel layout that no longer exists and has been
+  removed rather than left to mislead; the panel table now says what each view answers, which is
+  more use than a list of image links. `scripts/capture-readme-screenshots.sh` captures all seven
+  panels and fails if any capture is empty.
+  It also needed a dataset that can show them: the old fixture is nine rows on one day in 2023
+  with no session ids and no project paths, so projects, sessions, spend-over-time and burn all
+  captured blank. `scripts/make-demo-fixture.py` generates a small, deterministic, deliberately
+  fictional set of Claude Code transcripts with several days of history ending today, more than
+  one project, and sessions that escalate.
+
+### Fixed
+
+- **The footer hid the quit binding on an 80-column terminal.** It was 77 columns at v0.3.0 and
+  fits; the graph, burn and sessions panels added since pushed it to 106, and a `Paragraph`
+  truncates without saying so, so `j/k navigate` and `q quit` were simply gone below 110 columns.
+  The footer is now sized to the terminal, and a **`?` help overlay** carries the full key
+  reference — the permanent answer to having more bindings than fit on one line. No test rendered
+  the whole dashboard at any width, which is why nothing caught this; one now runs at 80, 100 and
+  120 columns.
+
+- **The pricing-coverage figure counted a deliberate refusal as a failure.** The header reported
+  **71.6% priced** against a dataset where **100%** of priceable work was priced. Every "unpriced"
+  request was Ollama Cloud usage, which this tool refuses to price on purpose: it is billed against
+  an account quota and GPU time, and no supported API exposes a per-request rate
+  (`docs/provider-support.md`). Those rows carried `CostStatus::Unavailable` — the same value a
+  paid model with no entry in the pricing table carries — so seven panels read "we declined to
+  invent a number" as "we failed to produce one": the header percentage, project cost as `≥ $X`,
+  timeseries days as `unpriced`, burn rate as `≥ $x/hr`, session cost as a floor, escalated spend as
+  a floor, and the breakdown's `PRICING STATUS: partial / unknown`.
+  Quota-billed usage now has its own `CostStatus`, stamped where pricing already declines to act,
+  which also repairs rows already written to a journal without a migration.
+  The obvious one-line fix would have been worse than the bug: dropping those rows from the
+  unpriced count leaves a cloud-only day, session or project with no unpriced requests and no
+  dollars, so all four cost renderers would have printed **`$0.00`** for usage that genuinely costs
+  money — the project's cardinal invariant broken in four places. Every rollup therefore carries a
+  quota count alongside, each renderer says `quota` rather than a zero, and the header and breakdown
+  disclose the volume so "all priced" is never a percentage taken over a silently shrunken
+  denominator.
+  Quota-billed rows also stop carrying the `0` OpenCode records for cloud routes: that zero is
+  absence of data, not a price, and it was exporting as `cost: 0` — the same claim in the export
+  that the status exists to prevent on screen. A cloud row with genuine reported spend keeps its
+  figure; observed data still beats the policy rule.
+
+### Changed
+
+- **`cost_status` gains a seventh value, `quota`, in `--json` and `--csv`.** Rows that exported
+  `("CLOUD", "unavailable", cost: null)` now export `("CLOUD", "quota", cost: null)`. Nothing is
+  removed or renamed and no column moves. A consumer computing "share missing a price" from
+  `cost_status == "unavailable"` gets a corrected number, which is the point. An older binary
+  reading a newer journal maps the unknown label back to `unavailable`, i.e. exactly its previous
+  behaviour.
+
 ### Added
 
 - **Escalation analytics, derived from usage already collected.** The routing panel could only

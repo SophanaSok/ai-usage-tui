@@ -11,7 +11,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::model::{DayTotals, CYAN, YELLOW};
+use crate::model::{DayTotals, CLOUD, CYAN, YELLOW};
 use crate::ui::app::App;
 use crate::ui::theme::{panel, MUTED};
 use crate::utils::format_count;
@@ -76,6 +76,12 @@ fn day_table(days: &[DayTotals], height: usize) -> Table<'_> {
         // technically true and tells the reader nothing — so it says plainly that it is
         // unpriced.
         let cost = match (day.unpriced_requests, day.cost) {
+            // All of this day's work is billed on a plan, so there is no dollar figure to show.
+            // Rendering the `$0.00` that the arithmetic produces would be the exact failure this
+            // dashboard exists to avoid.
+            (0, cost) if cost == 0.0 && day.quota_requests > 0 => {
+                Cell::from(Span::styled("quota", Style::default().fg(CLOUD)))
+            }
             (0, cost) => Cell::from(format!("${cost:.2}")),
             (_, cost) if cost > 0.0 => Cell::from(Span::styled(
                 format!("≥ ${cost:.2}"),

@@ -527,15 +527,27 @@ pub fn bundled_free_models() -> &'static std::collections::HashSet<String> {
     })
 }
 
+/// Price everything still unpriced, and normalise the status of what deliberately cannot be.
+///
+/// The second job is not decoration. Cloud usage is billed against an account quota or GPU time,
+/// which no supported API exposes per request, so this function must not invent a figure for it
+/// (see `docs/provider-support.md`). It used to leave those rows `Unavailable` — the same status
+/// a paid model with no entry in the pricing table carries — and every panel that reports pricing
+/// coverage then read a correct refusal as a failure. Stamping `Quota` here rather than only in
+/// the collectors also repairs rows already sitting in a journal, so no migration is needed.
 pub fn apply_estimated_pricing(usages: &mut [Usage], engine: &PricingEngine) {
     for usage in usages.iter_mut() {
         if usage.cost_status != CostStatus::Unavailable {
             continue;
         }
-        if usage.category == Category::Local
-            || usage.category == Category::Free
-            || usage.category == Category::Cloud
-        {
+        if usage.category == Category::Cloud {
+            // Only when nothing else supplied a figure: an observed cost beats a policy rule.
+            if usage.cost.is_none() {
+                usage.cost_status = CostStatus::Quota;
+            }
+            continue;
+        }
+        if usage.category == Category::Local || usage.category == Category::Free {
             continue;
         }
         if let Some((cost, status)) = engine.estimate_cost(usage) {
@@ -652,7 +664,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_estimated_pricing_skips_local_and_cloud() {
+    fn cloud_is_marked_quota_billed_and_local_stays_unpriced() {
         let engine = PricingEngine::bundled();
         let mut usages = vec![
             Usage {
@@ -673,7 +685,13 @@ mod tests {
             },
         ];
         apply_estimated_pricing(&mut usages, &engine);
-        assert_eq!(usages[0].cost_status, CostStatus::Unavailable);
+        // Cloud is billed on quota, which is a known state — not a price we failed to find.
+        assert_eq!(usages[0].cost_status, CostStatus::Quota);
+        assert_eq!(
+            usages[0].cost, None,
+            "marking a row quota-billed must not invent a dollar figure for it"
+        );
+        // Local is skipped, not restamped — its status comes from the collector.
         assert_eq!(usages[1].cost_status, CostStatus::Unavailable);
     }
 

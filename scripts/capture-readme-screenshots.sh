@@ -2,10 +2,19 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Requires an X11 display plus xfce4-terminal, xdotool and scrot. On Arch:
+#   sudo pacman -S --needed xfce4-terminal xdotool scrot imagemagick
+# On a Wayland session, run it against Xwayland or an Xvfb display (`DISPLAY=:1 Xvfb :1 &`).
+for tool in xfce4-terminal xdotool scrot convert; do
+  command -v "${tool}" >/dev/null || { echo "missing ${tool} — see the note above" >&2; exit 1; }
+done
 OUT_DIR="${ROOT}/docs/assets"
 SHOT_HOME="${SHOT_HOME:-/tmp/readme-shot-home}"
 BIN="${BIN:-${ROOT}/target/release/ai-usage-tui}"
 DB="${DB:-${ROOT}/tests/fixtures/opencode_test.db}"
+# Claude Code transcripts, generated fresh so the day-based panels always end on today.
+CLAUDE_DIR="${CLAUDE_DIR:-${SHOT_HOME}/.claude}"
 JOURNAL="${SHOT_HOME}/.local/share/ai-usage-tui/usage.db"
 CONFIG="${SHOT_HOME}/.config/ai-usage-tui/config.toml"
 DISPLAY="${DISPLAY:-:1}"
@@ -49,6 +58,11 @@ EOF
 
 rm -f "${JOURNAL}"
 
+# The OpenCode fixture alone cannot fill the dashboard: it is nine rows on one day in 2023 with no
+# session ids and no project paths, so projects, sessions, spend-over-time and burn all capture
+# empty. This writes a small invented dataset with the shape those panels exist to show.
+python3 "${ROOT}/scripts/make-demo-fixture.py" "${CLAUDE_DIR}"
+
 record_routing() {
   echo "$1" | HOME="${SHOT_HOME}" "${BIN}" --record-routing --journal "${JOURNAL}" --db "${DB}" >/dev/null
 }
@@ -68,7 +82,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-RUN_CMD="${BIN} --db ${DB} --journal ${JOURNAL} --config ${CONFIG} --all"
+RUN_CMD="${BIN} --db ${DB} --journal ${JOURNAL} --config ${CONFIG} --claude-dir ${CLAUDE_DIR} --all"
 
 HOME="${SHOT_HOME}" DISPLAY="${DISPLAY}" XAUTHORITY="${XAUTHORITY}" xfce4-terminal \
   --title="ai-usage-tui-screenshot" \
@@ -122,5 +136,23 @@ capture "${OUT_DIR}/budgets.png"
 
 send_key t
 capture "${OUT_DIR}/routing.png"
+
+send_key p
+capture "${OUT_DIR}/projects.png"
+
+send_key g
+capture "${OUT_DIR}/timeseries.png"
+
+send_key w
+capture "${OUT_DIR}/burn.png"
+
+send_key s
+capture "${OUT_DIR}/sessions.png"
+
+# Every capture must show its panel populated. An empty panel in the README is worse than none,
+# and the fixture is the only thing standing between us and that.
+for shot in dashboard budgets routing projects timeseries burn sessions; do
+  [[ -s "${OUT_DIR}/${shot}.png" ]] || { echo "capture failed: ${shot}.png" >&2; exit 1; }
+done
 
 echo "Wrote screenshots to ${OUT_DIR}"

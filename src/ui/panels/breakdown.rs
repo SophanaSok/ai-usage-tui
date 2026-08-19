@@ -55,10 +55,12 @@ pub fn draw_breakdown(frame: &mut Frame, area: Rect, app: &App) {
         ])),
         ListItem::new(Line::from(vec![
             Span::styled("PRICING STATUS  ", Style::default().fg(MUTED)),
-            Span::raw(if t.unknown_requests == 0 {
-                "complete"
-            } else {
-                "partial / unknown"
+            // "complete" must not absorb quota-billed work: it is accounted for, but it
+            // contributes no dollars to the total shown above.
+            Span::raw(match (t.unknown_requests, t.quota_requests) {
+                (0, 0) => "complete".to_string(),
+                (0, quota) => format!("complete · {} on quota", crate::utils::format_count(quota)),
+                _ => "partial / unknown".to_string(),
             }),
         ])),
     ];

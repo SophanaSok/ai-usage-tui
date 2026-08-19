@@ -14,6 +14,7 @@ use ratatui::{
 use crate::model::{CYAN, RED, YELLOW};
 use crate::ui::app::App;
 use crate::ui::theme::MUTED;
+use crate::utils::format_count;
 
 pub fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     let title = Paragraph::new(Line::from(vec![
@@ -61,13 +62,25 @@ pub fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
 ///
 /// Below 100% it is yellow, because that is the case worth noticing.
 fn coverage_span<'a>(app: &App) -> Span<'a> {
-    match app.coverage().pct() {
+    let coverage = app.coverage();
+    // "all priced" while thousands of quota-billed requests sit outside the ratio is technically
+    // true and unhelpful. A rate is only readable next to what it was taken over.
+    let quota = match coverage.quota_requests {
+        0 => String::new(),
+        n => format!(" · {} on quota", format_count(n)),
+    };
+    match coverage.pct() {
         Some(pct) if pct >= 99.95 => {
-            Span::styled("all priced".to_string(), Style::default().fg(MUTED))
+            Span::styled(format!("all priced{quota}"), Style::default().fg(MUTED))
         }
         Some(pct) => Span::styled(
-            format!("{pct:.0}% priced"),
+            format!("{pct:.0}% priced{quota}"),
             Style::default().fg(YELLOW).add_modifier(Modifier::BOLD),
+        ),
+        // Nothing billable in range, but there may still be quota work to disclose.
+        None if coverage.quota_requests > 0 => Span::styled(
+            quota.trim_start_matches(" · ").to_string(),
+            Style::default().fg(MUTED),
         ),
         None => Span::raw(""),
     }

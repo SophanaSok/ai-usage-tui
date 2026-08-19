@@ -249,7 +249,13 @@ fn escalation_block<'a>(escalations: &Escalations) -> Paragraph<'a> {
                 ),
                 Style::default().fg(YELLOW),
             ),
-            Span::styled(format!("  {} sessions", transition.sessions), dim),
+            Span::styled(
+                match transition.sessions {
+                    1 => "  1 session".to_string(),
+                    n => format!("  {n} sessions"),
+                },
+                dim,
+            ),
             Span::styled(
                 // A floor, not a total, when part of the spend that followed has no price.
                 match transition.unpriced_after {

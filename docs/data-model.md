@@ -7,7 +7,7 @@ timestamp
 provider
 model
 category: local | cloud | free | paid | unknown
-cost_status: provider_reported | calculated | estimated | free | local | unavailable
+cost_status: provider_reported | calculated | estimated | free | local | quota | unavailable
 request_count
 input_tokens
 output_tokens
@@ -22,7 +22,9 @@ session (populated by the Claude Code and OpenCode collectors)
 source (planned)
 ```
 
-Historical records should retain the pricing snapshot or source used to calculate their cost. This is not yet implemented — costs are currently re-derived from the active pricing table, so a `--refresh-pricing` rewrites historical figures. See [`roadmap.md`](roadmap.md) (finding 1.6). Provider adapters should tolerate missing optional fields and preserve the event with an explicit unknown status.
+Historical events are priced at the rates that were in effect when they happened, not at whatever the table says now. `pricing/zen.toml` carries effective-dated `[[model."x".period]]` blocks with a `through` date, and `estimate_cost` selects the period covering the event's date before falling back to current rates. A `--refresh-pricing` therefore no longer rewrites historical figures, provided the rate change is recorded as a new period rather than an overwrite.
+
+Provider adapters should tolerate missing optional fields and preserve the event with an explicit unknown status.
 
 The local journal currently stores usage metadata in `usage_event`. It intentionally excludes prompt and completion content.
 
