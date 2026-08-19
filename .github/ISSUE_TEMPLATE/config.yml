@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/SophanaSok/ai-usage-tui/security/advisories/new
+    about: Report privately. Never include credentials, prompts, or database contents.
+  - name: Contributing guide
+    url: https://github.com/SophanaSok/ai-usage-tui/blob/main/CONTRIBUTING.md
+    about: Where things live, how to add a collector or a panel, and the invariants.

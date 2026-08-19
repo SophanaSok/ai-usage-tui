@@ -1,0 +1,22 @@
+name: Feature request
+description: A panel, a view, or a capability that does not exist yet.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        [`docs/roadmap.md`](https://github.com/SophanaSok/ai-usage-tui/blob/main/docs/roadmap.md)
+        lists what is already planned and why — worth a look first, in case this is on it.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to find out
+      description: Describe the question you want answered, not just the widget you want.
+      placeholder: "Whether I'm on track to blow my monthly budget, without doing the arithmetic."
+    validations:
+      required: true
+  - type: textarea
+    id: shape
+    attributes:
+      label: What would it look like
+      description: Optional. A sketch, a panel description, or a comparable tool.

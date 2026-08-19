@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Contributor onboarding.** `CONTRIBUTING.md` was 31 lines of commands and rules with no map
+  of the codebase and no route in. It now covers where things live, the three most likely
+  contributions (a collector, a panel, a pricing correction) with concrete steps, and the
+  invariants *with the reason each exists* — every one of them is there because breaking it
+  produced a wrong number that looked right.
+- **Issue and PR templates.** Shaped around this project rather than generic: bug reports steer
+  people to reproduce against the committed fixture instead of pasting real session data, and
+  the collector request asks for the field *shape* with an explicit redaction reminder. Session
+  logs contain source code and secrets, so an issue tracker is the last place they should land.
+
 ### Changed
 
 - **`src/ui.rs` split into `src/ui/`.** It was 1,196 lines in one file — the single largest
