@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **The release workflow's tag variable was silently ignored.** The dry-run plumbing passed the
+  tag as a step-level `GITHUB_REF_NAME`, but variables starting with `GITHUB_` are reserved: the
+  override is displayed in the run log and then discarded, so the step saw the runner's value —
+  `main` on a dispatch — and looked for artifacts named after the branch. Renamed to
+  `RELEASE_TAG`. This affected dispatch runs only; a real tag push was unaffected, because there
+  the runner's value *is* the tag.
+
 - **The manifest-rendering step could fail with no output at all.** A dry run failed there in
   9ms with nothing logged — no error, no partial output — because `! grep … || { …; exit 1; }`
   swallows any failure earlier in the step. It is an explicit `if` now, each resolved checksum
