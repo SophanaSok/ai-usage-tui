@@ -1,12 +1,12 @@
 # Roadmap and Outstanding Findings
 
-Working state for continuing the audit-driven work started 2026-08-18, last updated 2026-08-19.
+Working state for continuing the audit-driven work started 2026-08-18, last updated 2026-08-20.
 Shipped items are in `CHANGELOG.md` under `[Unreleased]`; this file is the *remaining* work, with
 enough evidence attached that each item can be picked up cold.
 
 ## Where things stand
 
-204 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
+212 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
 macOS / Windows with an MSRV job (1.88) and `cargo-deny` — six checks, all green on every branch
 since PR #5.
 
