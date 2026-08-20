@@ -67,6 +67,29 @@ Remaining:
 - **Derived escalations are not exported.** `--json` and `--csv` carry usage rows only, so the
   block is TUI-only.
 
+### Found verifying the v0.4.0 artifacts
+
+Both predate v0.4.0 — v0.3.0 shipped the same way — so neither is a regression, and neither is
+worth re-cutting a release for on its own. Fix in `.github/workflows/release.yml` and they land
+with v0.4.1.
+
+- **`checksums.txt` cannot be checked as published.** Every entry carries the CI artifact-directory
+  prefix — `ai-usage-tui-v0.4.0-x86_64-linux/ai-usage-tui-v0.4.0-x86_64-linux.tar.gz` — but the
+  release assets are flat, so `sha256sum -c checksums.txt` fails on all nine with "No such file or
+  directory". The hashes themselves are correct; verified by stripping the directory component,
+  all nine OK. The fix is to `cd` into each artifact directory when hashing, or to strip the
+  prefix before concatenating.
+- **The tarballs and the zip contain only the binary.** No README, no LICENSE.
+  `docs/release-process.md` requires all three ("Release artifacts must include the binary, README,
+  and LICENSE"), and MIT asks that the licence text accompany copies. The `.deb` and `.rpm` are
+  correct — both carry `/usr/share/doc/ai-usage-tui/README.md` and the licence — so this is the
+  archive-packaging step only.
+
+Everything else checked out: all nine SHA256s match, all five binaries match their advertised
+architecture (including both macOS targets, the v0.2.0 failure), the Homebrew, Scoop and
+Chocolatey manifests carry the real checksums, every download URL returns 200, and the x86_64
+Linux binary reports `ai-usage-tui 0.4.0`.
+
 ### P3 — Polish
 
 - Migrate to `clap` derive with subcommands (`daily`, `monthly`, `session`, `blocks`, `live`) and
