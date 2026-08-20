@@ -1,6 +1,60 @@
 # Changelog
 
-## [Unreleased]
+## 0.4.0 - 2026-08-20
+
+### Added
+
+- **Escalation analytics, derived from usage already collected.** The routing panel could only
+  say anything if you had instrumented `--record-routing` by hand, so for most users it said
+  nothing. One part of the same question is directly observable in data already on disk: how
+  often a session reached for a model pricier than the one it opened with, and what that cost.
+  It appears as its own block above the recorded table, labelled as derived. The two are never
+  merged — an inferred transition and a measured pass rate would be indistinguishable in one
+  table, which is the failure `CostStatus` exists to prevent one level up. Nothing infers a test
+  result, and nothing should.
+  Counting is per session, not per model switch. Checked against real collected usage first: a
+  session there switched models 20 times, 10 of them upward, and per-switch counting reported
+  **$233 of escalated spend for a $29 session** by summing the same tail ten times. Each session
+  is now characterised once, so the reported figure cannot exceed what the sessions cost.
+
+- **Sessions panel** (`s`). Individual sessions, most recently active first. A session id is a
+  bare UUID and tells a reader nothing, so every column exists to make the row identifiable
+  without it: when it started, how long it ran, which project, which model — or `N models` when
+  it used several. Data that had been collected since the Claude Code collector landed and never
+  shown.
+
+- **Burn-rate panel** (`w`). Tokens/min and spend/hour over a trailing hour, and — the part that
+  matters — **how long until each configured budget is exhausted at the current rate**. A rate on
+  its own is trivia; a rate measured against a limit you set is an answer, and it is only
+  possible because the budget engine and the collectors run in the same process.
+  Two refusals are deliberate: a window with fewer than five requests says *too little activity
+  to project* rather than extrapolating from noise, and a window containing unpriced usage shows
+  `≥ $x/hr` rather than presenting a floor as a rate. Both are the same discipline as never
+  rendering unknown cost as `$0.00`.
+
+- **Spend-over-time panel** (`g`). Daily tokens and cost, as a sparkline of the whole visible
+  range plus a table of the days that fit. Days with no usage are kept as zero bars — dropping
+  them compresses a quiet week to the width of a busy one and reads as steady activity. Bars use
+  eighth-block characters so a day below a twelfth of the peak still renders; whole-cell bars
+  would make a chart of mostly-small days look empty. The sparkline is drawn right-to-left from
+  the newest day, so time runs left to right and truncation drops the oldest days rather than
+  the most recent. A partly-priced day shows `≥ $x`; a day with no priced usage says `unpriced`
+  rather than the technically-true and useless `≥ $0.00`.
+
+- **The project's first TUI rendering tests**, via ratatui's `TestBackend`. The audit noted
+  nothing verified rendering; a panel that computes correct numbers and draws nothing was
+  previously indistinguishable from a working one.
+
+- **Contributor onboarding.** `CONTRIBUTING.md` was 31 lines of commands and rules with no map
+  of the codebase and no route in. It now covers where things live, the three most likely
+  contributions (a collector, a panel, a pricing correction) with concrete steps, and the
+  invariants *with the reason each exists* — every one of them is there because breaking it
+  produced a wrong number that looked right.
+
+- **Issue and PR templates.** Shaped around this project rather than generic: bug reports steer
+  people to reproduce against the committed fixture instead of pasting real session data, and
+  the collector request asks for the field *shape* with an explicit redaction reminder. Session
+  logs contain source code and secrets, so an issue tracker is the last place they should land.
 
 ### Changed
 
@@ -24,6 +78,38 @@
   today, three projects, sessions that escalate, and local, free and quota-billed routes. The
   renderer refuses to start unless every source is passed explicitly, because unset they fall
   back to this machine's real usage data.
+
+- **`cost_status` gains a seventh value, `quota`, in `--json` and `--csv`.** Rows that exported
+  `("CLOUD", "unavailable", cost: null)` now export `("CLOUD", "quota", cost: null)`. Nothing is
+  removed or renamed and no column moves. A consumer computing "share missing a price" from
+  `cost_status == "unavailable"` gets a corrected number, which is the point. An older binary
+  reading a newer journal maps the unknown label back to `unavailable`, i.e. exactly its previous
+  behaviour.
+
+- **Routing analytics now leads with the question it answers.** The panel is titled *cost per
+  delivered result* and sorts by exactly that — dollars spent per passing test, cheapest model
+  first — instead of listing agents in arbitrary order and leaving the arithmetic to the reader.
+  This is the one view no comparable tool has, and it read like a debug dump.
+  An agent that never reported a test result shows `—`, not `0%`: never having been measured is
+  not the same as failing everything, and the older rendering made an uninstrumented agent look
+  like the worst one on the board. A genuinely free model reads `free` rather than `$0.0000`.
+  When there is nothing recorded, the panel explains what it would show and how to record it,
+  rather than showing an empty table.
+
+- **Pricing coverage moved to the header**, where it is visible on every panel, and reads
+  `all priced` when nothing is missing. It previously appeared only in the project panel's
+  title, so a reader could take any other panel's total at face value without learning it
+  covered two thirds of the requests. Below 100% it is highlighted — that is the case worth
+  noticing. Cost provenance is the thing this project does that the alternatives do not, and it
+  had been living in an internal enum.
+
+- **`src/ui.rs` split into `src/ui/`.** It was 1,196 lines in one file — the single largest
+  barrier to finding anything, and a merge-conflict magnet for concurrent work. Now `app.rs`
+  (state), `aggregate.rs` (pure functions over usage), `theme.rs` (palette and shared widgets),
+  and one module per panel under `panels/`. Largest file is 306 lines. Adding a panel is now:
+  write `panels/yours.rs`, add a `Panel` variant, a key binding, and a match arm — which is
+  also the on-ramp for the dashboard work on the roadmap. Pure refactor: `--json` output is
+  byte-identical before and after.
 
 ### Fixed
 
@@ -58,106 +144,9 @@
   that the status exists to prevent on screen. A cloud row with genuine reported spend keeps its
   figure; observed data still beats the policy rule.
 
-### Changed
-
-- **`cost_status` gains a seventh value, `quota`, in `--json` and `--csv`.** Rows that exported
-  `("CLOUD", "unavailable", cost: null)` now export `("CLOUD", "quota", cost: null)`. Nothing is
-  removed or renamed and no column moves. A consumer computing "share missing a price" from
-  `cost_status == "unavailable"` gets a corrected number, which is the point. An older binary
-  reading a newer journal maps the unknown label back to `unavailable`, i.e. exactly its previous
-  behaviour.
-
-### Added
-
-- **Escalation analytics, derived from usage already collected.** The routing panel could only
-  say anything if you had instrumented `--record-routing` by hand, so for most users it said
-  nothing. One part of the same question is directly observable in data already on disk: how
-  often a session reached for a model pricier than the one it opened with, and what that cost.
-  It appears as its own block above the recorded table, labelled as derived. The two are never
-  merged — an inferred transition and a measured pass rate would be indistinguishable in one
-  table, which is the failure `CostStatus` exists to prevent one level up. Nothing infers a test
-  result, and nothing should.
-  Counting is per session, not per model switch. Checked against real collected usage first: a
-  session there switched models 20 times, 10 of them upward, and per-switch counting reported
-  **$233 of escalated spend for a $29 session** by summing the same tail ten times. Each session
-  is now characterised once, so the reported figure cannot exceed what the sessions cost.
-
-### Changed
-
-- **Routing analytics now leads with the question it answers.** The panel is titled *cost per
-  delivered result* and sorts by exactly that — dollars spent per passing test, cheapest model
-  first — instead of listing agents in arbitrary order and leaving the arithmetic to the reader.
-  This is the one view no comparable tool has, and it read like a debug dump.
-  An agent that never reported a test result shows `—`, not `0%`: never having been measured is
-  not the same as failing everything, and the older rendering made an uninstrumented agent look
-  like the worst one on the board. A genuinely free model reads `free` rather than `$0.0000`.
-  When there is nothing recorded, the panel explains what it would show and how to record it,
-  rather than showing an empty table.
-
-- **Pricing coverage moved to the header**, where it is visible on every panel, and reads
-  `all priced` when nothing is missing. It previously appeared only in the project panel's
-  title, so a reader could take any other panel's total at face value without learning it
-  covered two thirds of the requests. Below 100% it is highlighted — that is the case worth
-  noticing. Cost provenance is the thing this project does that the alternatives do not, and it
-  had been living in an internal enum.
-
-### Added
-
-- **Sessions panel** (`s`). Individual sessions, most recently active first. A session id is a
-  bare UUID and tells a reader nothing, so every column exists to make the row identifiable
-  without it: when it started, how long it ran, which project, which model — or `N models` when
-  it used several. Data that had been collected since the Claude Code collector landed and never
-  shown.
-
-### Fixed
-
 - **The selection clamped to the model table on every panel.** `j`/`k` bounded themselves by the
   model row count regardless of which table was visible, so on any other panel the selection
   either stopped short of the last row or ran past the end. It now follows the visible panel.
-
-### Added
-
-- **Burn-rate panel** (`w`). Tokens/min and spend/hour over a trailing hour, and — the part that
-  matters — **how long until each configured budget is exhausted at the current rate**. A rate on
-  its own is trivia; a rate measured against a limit you set is an answer, and it is only
-  possible because the budget engine and the collectors run in the same process.
-  Two refusals are deliberate: a window with fewer than five requests says *too little activity
-  to project* rather than extrapolating from noise, and a window containing unpriced usage shows
-  `≥ $x/hr` rather than presenting a floor as a rate. Both are the same discipline as never
-  rendering unknown cost as `$0.00`.
-
-### Added
-
-- **Spend-over-time panel** (`g`). Daily tokens and cost, as a sparkline of the whole visible
-  range plus a table of the days that fit. Days with no usage are kept as zero bars — dropping
-  them compresses a quiet week to the width of a busy one and reads as steady activity. Bars use
-  eighth-block characters so a day below a twelfth of the peak still renders; whole-cell bars
-  would make a chart of mostly-small days look empty. The sparkline is drawn right-to-left from
-  the newest day, so time runs left to right and truncation drops the oldest days rather than
-  the most recent. A partly-priced day shows `≥ $x`; a day with no priced usage says `unpriced`
-  rather than the technically-true and useless `≥ $0.00`.
-- **The project's first TUI rendering tests**, via ratatui's `TestBackend`. The audit noted
-  nothing verified rendering; a panel that computes correct numbers and draws nothing was
-  previously indistinguishable from a working one.
-- **Contributor onboarding.** `CONTRIBUTING.md` was 31 lines of commands and rules with no map
-  of the codebase and no route in. It now covers where things live, the three most likely
-  contributions (a collector, a panel, a pricing correction) with concrete steps, and the
-  invariants *with the reason each exists* — every one of them is there because breaking it
-  produced a wrong number that looked right.
-- **Issue and PR templates.** Shaped around this project rather than generic: bug reports steer
-  people to reproduce against the committed fixture instead of pasting real session data, and
-  the collector request asks for the field *shape* with an explicit redaction reminder. Session
-  logs contain source code and secrets, so an issue tracker is the last place they should land.
-
-### Changed
-
-- **`src/ui.rs` split into `src/ui/`.** It was 1,196 lines in one file — the single largest
-  barrier to finding anything, and a merge-conflict magnet for concurrent work. Now `app.rs`
-  (state), `aggregate.rs` (pure functions over usage), `theme.rs` (palette and shared widgets),
-  and one module per panel under `panels/`. Largest file is 306 lines. Adding a panel is now:
-  write `panels/yours.rs`, add a `Panel` variant, a key binding, and a match arm — which is
-  also the on-ramp for the dashboard work on the roadmap. Pure refactor: `--json` output is
-  byte-identical before and after.
 
 ## 0.3.0 - 2026-08-19
 
