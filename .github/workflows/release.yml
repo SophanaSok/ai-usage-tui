@@ -90,13 +90,24 @@ jobs:
         if: runner.os != 'Windows' && matrix.apt == ''
         run: strip "target/${{ matrix.target }}/release/ai-usage-tui"
 
+      # release-process.md requires the binary, README and LICENSE in every artifact, and the
+      # MIT terms ask that the licence accompany copies. Through v0.4.0 the archives held the
+      # binary alone -- the .deb and .rpm were the only artifacts getting this right.
       - name: Package (unix)
         if: runner.os != 'Windows'
-        run: tar czf "$ARTIFACT.tar.gz" -C "target/${{ matrix.target }}/release" ai-usage-tui
+        run: |
+          set -euo pipefail
+          STAGE="$(mktemp -d)"
+          cp "target/${{ matrix.target }}/release/ai-usage-tui" README.md LICENSE "$STAGE/"
+          tar czf "$ARTIFACT.tar.gz" -C "$STAGE" ai-usage-tui README.md LICENSE
 
       - name: Package (windows)
         if: runner.os == 'Windows'
-        run: 7z a "$env:ARTIFACT.zip" "./target/${{ matrix.target }}/release/ai-usage-tui.exe"
+        run: |
+          New-Item -ItemType Directory -Force -Path stage | Out-Null
+          Copy-Item "./target/${{ matrix.target }}/release/ai-usage-tui.exe" stage/
+          Copy-Item README.md, LICENSE stage/
+          7z a "$env:ARTIFACT.zip" "./stage/*"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -179,11 +190,24 @@ jobs:
         with:
           path: artifacts
 
+      # Hashed by basename, not by the path inside the download directory. `sha256sum */*`
+      # recorded `<artifact-dir>/<file>`, but the release assets are published flat, so
+      # `sha256sum -c checksums.txt` failed on every line with "No such file or directory" --
+      # the hashes were right and the file was unusable. Verified through v0.4.0.
       - name: Generate checksums
         run: |
+          set -euo pipefail
           cd artifacts
-          sha256sum */* > checksums.txt
+          find . -mindepth 2 -type f -print0 | sort -z |
+            while IFS= read -r -d '' f; do
+              ( cd "$(dirname "$f")" && sha256sum "$(basename "$f")" )
+            done > checksums.txt
           cat checksums.txt
+          # Names must be bare filenames; a slash means the prefix crept back in.
+          if grep -q '/' checksums.txt; then
+            echo "::error::checksums.txt contains path components; it will not verify against the published assets"
+            exit 1
+          fi
 
       # Package manifests referenced ai-usage-tui-0.2.0-... while the workflow publishes
       # ai-usage-tui-v0.2.0-... , so every template URL 404'd. Render them from the real

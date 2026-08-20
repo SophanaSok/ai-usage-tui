@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.1 - 2026-08-20
+
+### Fixed
+
+- **`checksums.txt` could not be checked against the published assets.** Every entry named
+  `<artifact-dir>/<file>`, the path inside the CI download directory, but release assets are
+  published flat — so `sha256sum -c checksums.txt` failed on all nine lines with "No such file or
+  directory". The hashes were correct the whole time; the file was simply unusable for the one
+  thing it exists for. Hashing is now done by basename, and the job fails if a path component
+  reappears rather than shipping another unverifiable file. Affected every release through 0.4.0.
+
+- **The tarballs and the Windows zip contained only the binary.** No README, no LICENSE, though
+  `docs/release-process.md` requires all three and the MIT terms ask that the licence accompany
+  copies. The `.deb` and `.rpm` were already correct, which is why this went unnoticed: the
+  packages a distribution would audit were fine and the archives most people actually download
+  were not. Affected every release through 0.4.0.
+
 ## 0.4.0 - 2026-08-20
 
 ### Added
