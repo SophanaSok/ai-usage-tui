@@ -15,7 +15,8 @@ tokens, cost provenance, budgets, and opt-in model-routing events.
 
 ![Dashboard showing token totals, model activity, and cost provenance](docs/assets/dashboard.png)
 
-*Fixture-backed demo data from `tests/fixtures/opencode_test.db`.*
+*Invented demo data, rendered off-screen by `scripts/render-readme-screenshots.sh`. No
+real account, project, or spend appears in any image here.*
 
 ## Contents
 
@@ -283,6 +284,37 @@ key.
 | Burn rate | `w` | At this rate, when do I hit my budget |
 | Sessions | `s` | Which individual runs cost the most |
 
+<details>
+<summary>Screenshots of each panel</summary>
+
+**Budgets** (`b`) — spend against every configured limit, and which one has gone over.
+
+![The budgets panel](docs/assets/budgets.png)
+
+**Routing** (`t`) — cost per delivered result per agent, above escalations derived from the
+sessions themselves.
+
+![The routing panel](docs/assets/routing.png)
+
+**Projects** (`p`) — spend attributed to the working directory it came from. Usage with no
+project, and no per-token price, is shown as `quota` rather than as `$0.00`.
+
+![The project cost panel](docs/assets/projects.png)
+
+**Spend over time** (`g`) — one bar per local calendar day, newest first.
+
+![The spend-over-time panel](docs/assets/timeseries.png)
+
+**Burn rate** (`w`) — the trailing hour, projected against each budget.
+
+![The burn-rate panel](docs/assets/burn.png)
+
+**Sessions** (`s`) — individual runs, ranked by cost, with the models each one used.
+
+![The sessions panel](docs/assets/sessions.png)
+
+</details>
+
 | Key | Action |
 | --- | --- |
 | `1` | Show today (local calendar day) |
@@ -292,6 +324,10 @@ key.
 | `r` | Refresh now |
 | `b` | Toggle the budgets panel |
 | `t` | Toggle routing analytics |
+| `p` | Toggle the project cost panel |
+| `g` | Toggle spend over time |
+| `w` | Toggle the burn-rate panel |
+| `s` | Toggle the sessions panel |
 | `?` | Key reference overlay |
 | `j` / `Down` | Select the next model |
 | `k` / `Up` | Select the previous model |
@@ -539,10 +575,12 @@ cargo test --all-targets
 cargo build --release
 ```
 
-Regenerate README screenshots on a machine with an X11 desktop:
+Regenerate the README images. They are rendered off-screen from invented demo data — no
+terminal is opened and no screen is captured — so this works headlessly and gives the same
+result on every machine:
 
 ```sh
-./scripts/capture-readme-screenshots.sh
+./scripts/render-readme-screenshots.sh   # needs librsvg for rsvg-convert
 ```
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution guidelines.

@@ -67,32 +67,17 @@ Remaining:
 - **Derived escalations are not exported.** `--json` and `--csv` carry usage rows only, so the
   block is TUI-only.
 
-### Blocking the v0.4.0 tag
-
-- **README screenshots are not regenerated.** `docs/assets/dashboard.png` predates the pricing
-  coverage indicator, and the six other panels have no image. Everything needed is in place: the
-  demo fixture (`scripts/make-demo-fixture.py`, verified to fill every panel — 239 requests, 18
-  sessions, 3 projects, 9 days, escalations rendering) and two capture scripts, X11 and Wayland.
-  What is missing is a clean environment to run one in. The X11 script needs `xfce4-terminal`,
-  `xdotool` and `scrot`, which do not work on a native Wayland session. The Wayland script works
-  but `grim` captures a screen region rather than a window, so it aborts if any other window
-  overlaps the target — a first run without that guard produced an image containing unrelated
-  terminal scrollback. Cleanest fix: run the capture under `cage` (a kiosk compositor, packaged
-  but not installed here) so nothing else can be on screen. Otherwise, clear the workspace and run
-  the Wayland script.
-
 ### P3 — Polish
 
 - Migrate to `clap` derive with subcommands (`daily`, `monthly`, `session`, `blocks`, `live`) and
   generated shell completions. The hand-rolled parser already strains under manual
   mutual-exclusion checks.
 - Publish to crates.io with `include`/`exclude` — a publish today would ship an 86KB HTML fixture
-  and 180KB of PNGs — and support `cargo binstall`.
+  and 670KB of PNGs — and support `cargo binstall`.
 - **Resolved.** `MODEL_ROUTING.md` no longer duplicates the agent-to-model table; that mapping
   lives in `~/.config/opencode/opencode.json` and `~/.config/opencode/ROUTING.md`, and the repo doc
   now carries only policy (tiers by role, privacy boundary, escalation, evaluation schema).
-  `docs/phase-status.md` and `scripts/capture-readme-screenshots.sh` were reconciled at the same
-  time.
+  `docs/phase-status.md` and the screenshot tooling were reconciled at the same time.
 
   *One discrepancy is left for you, in your own config rather than this repo:* `ROUTING.md` lists
   `reviewer` as `north-mini-code-free` while `opencode.json` defines it as
