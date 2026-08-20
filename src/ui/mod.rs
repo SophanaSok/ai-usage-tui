@@ -8,6 +8,7 @@
 //! | `aggregate.rs` | pure functions over `Usage` — per-project totals, pricing coverage |
 //! | `theme.rs` | palette and the small shared widgets (`panel`, `metric`, `cost_display`) |
 //! | `panels/` | one module per panel, each exposing a single `draw_*` function |
+//! | `svg.rs` | renders a frame to SVG off-screen, for the README images |
 //! | this file | the event loop and the frame layout that dispatches to those panels |
 //!
 //! **To add a panel:** write `panels/yours.rs` with one `draw_yours(frame, area, app)`, add a
@@ -22,6 +23,7 @@
 pub mod aggregate;
 pub mod app;
 pub mod panels;
+pub mod svg;
 pub mod theme;
 
 #[cfg(test)]
@@ -50,6 +52,7 @@ use crate::utils::journal_path;
 
 pub use aggregate::{coverage, project_labels, project_totals};
 pub use app::{App, Coverage, DerivedView, Panel};
+pub use svg::{buffer_to_svg, render_svg};
 pub use theme::cost_display;
 
 use panels::{

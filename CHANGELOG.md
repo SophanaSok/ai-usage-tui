@@ -4,15 +4,26 @@
 
 ### Changed
 
-- **README screenshots.** `routing.png` showed a panel layout that no longer exists and has been
-  removed rather than left to mislead; the panel table now says what each view answers, which is
-  more use than a list of image links. `scripts/capture-readme-screenshots.sh` captures all seven
-  panels and fails if any capture is empty.
-  It also needed a dataset that can show them: the old fixture is nine rows on one day in 2023
-  with no session ids and no project paths, so projects, sessions, spend-over-time and burn all
-  captured blank. `scripts/make-demo-fixture.py` generates a small, deterministic, deliberately
-  fictional set of Claude Code transcripts with several days of history ending today, more than
-  one project, and sessions that escalate.
+- **README images are now rendered, not photographed.** All seven panels have a current image,
+  and `routing.png` no longer shows a layout that stopped existing three commits after it was
+  taken. The old approach — drive a real terminal with `xdotool`/`wtype` and screenshot it with
+  `scrot`/`grim` — had two defects that could not be engineered away. It captures a screen
+  *region*, so anything drawn over the terminal lands in the file; a repository that promises to
+  read no message content should not ship pictures of its author's desktop, and a first run
+  produced exactly that. And it needs a graphical session, so the images could not be regenerated
+  in CI and went stale without anyone noticing.
+  `src/ui/svg.rs` renders the same `draw` call through ratatui's off-screen backend and turns the
+  cell buffer into SVG; `scripts/render-readme-screenshots.sh` rasterises it. Same code path as
+  the real dashboard, no screen involved, and it runs headlessly, so regenerating them is one
+  command on any machine rather than an errand on a particular desktop. The two capture scripts
+  are removed.
+  It also needed a dataset that can fill the panels: the test fixture is nine rows on one day in
+  2023 with no session ids and no project paths, so projects, sessions, spend-over-time and burn
+  all rendered blank. `scripts/make-demo-fixture.py` generates a deterministic, deliberately
+  fictional set of Claude Code transcripts and a stand-in OpenCode store — several days ending
+  today, three projects, sessions that escalate, and local, free and quota-billed routes. The
+  renderer refuses to start unless every source is passed explicitly, because unset they fall
+  back to this machine's real usage data.
 
 ### Fixed
 

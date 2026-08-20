@@ -69,7 +69,7 @@ Dashboard and analytics work on top of the audit fixes released in v0.3.0. Full 
 - Release workflow builds and verifies per-architecture artifacts; packaging manifests rendered
   at release time
 - CI matrix (Linux/macOS/Windows), MSRV job, `cargo-deny`, Dependabot
-- 204 tests (from 51), clippy clean
+- 212 tests (from 51), clippy clean
 
 **Next steps and outstanding audit findings: [`docs/roadmap.md`](roadmap.md).**
 

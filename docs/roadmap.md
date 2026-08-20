@@ -1,12 +1,12 @@
 # Roadmap and Outstanding Findings
 
-Working state for continuing the audit-driven work started 2026-08-18, last updated 2026-08-19.
+Working state for continuing the audit-driven work started 2026-08-18, last updated 2026-08-20.
 Shipped items are in `CHANGELOG.md` under `[Unreleased]`; this file is the *remaining* work, with
 enough evidence attached that each item can be picked up cold.
 
 ## Where things stand
 
-204 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
+212 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
 macOS / Windows with an MSRV job (1.88) and `cargo-deny` — six checks, all green on every branch
 since PR #5.
 
@@ -73,12 +73,11 @@ Remaining:
   generated shell completions. The hand-rolled parser already strains under manual
   mutual-exclusion checks.
 - Publish to crates.io with `include`/`exclude` — a publish today would ship an 86KB HTML fixture
-  and 180KB of PNGs — and support `cargo binstall`.
+  and 670KB of PNGs — and support `cargo binstall`.
 - **Resolved.** `MODEL_ROUTING.md` no longer duplicates the agent-to-model table; that mapping
   lives in `~/.config/opencode/opencode.json` and `~/.config/opencode/ROUTING.md`, and the repo doc
   now carries only policy (tiers by role, privacy boundary, escalation, evaluation schema).
-  `docs/phase-status.md` and `scripts/capture-readme-screenshots.sh` were reconciled at the same
-  time.
+  `docs/phase-status.md` and the screenshot tooling were reconciled at the same time.
 
   *One discrepancy is left for you, in your own config rather than this repo:* `ROUTING.md` lists
   `reviewer` as `north-mini-code-free` while `opencode.json` defines it as
