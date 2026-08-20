@@ -14,8 +14,9 @@
   in CI and went stale without anyone noticing.
   `src/ui/svg.rs` renders the same `draw` call through ratatui's off-screen backend and turns the
   cell buffer into SVG; `scripts/render-readme-screenshots.sh` rasterises it. Same code path as
-  the real dashboard, no screen involved, identical output on any machine. The two capture
-  scripts are removed.
+  the real dashboard, no screen involved, and it runs headlessly, so regenerating them is one
+  command on any machine rather than an errand on a particular desktop. The two capture scripts
+  are removed.
   It also needed a dataset that can fill the panels: the test fixture is nine rows on one day in
   2023 with no session ids and no project paths, so projects, sessions, spend-over-time and burn
   all rendered blank. `scripts/make-demo-fixture.py` generates a deterministic, deliberately

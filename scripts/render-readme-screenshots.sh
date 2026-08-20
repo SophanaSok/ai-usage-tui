@@ -2,10 +2,13 @@
 # Regenerate the README images.
 #
 # These are rendered, not photographed. The dashboard is drawn through ratatui's off-screen
-# backend into an SVG (see src/ui/svg.rs), then rasterised. Nothing opens a terminal, nothing
-# takes a picture of a screen, and the result is identical on every machine — which means these
-# can be regenerated in CI and can no longer go quietly stale, and no part of the author's
-# desktop can end up in a file this repository publishes.
+# backend into an SVG (see src/ui/svg.rs), then rasterised. Nothing opens a terminal and nothing
+# takes a picture of a screen, so this runs headlessly, gives the same render on any machine, and
+# cannot put any part of the author's desktop into a file this repository publishes.
+#
+# The images are not byte-reproducible across days: the demo dataset is anchored to today, so the
+# burn window and the spend-over-time chart have recent activity to show. What is reproducible is
+# the render — the same data always produces the same picture.
 #
 #   sudo pacman -S --needed librsvg    # Arch; provides rsvg-convert
 #   sudo apt install librsvg2-bin      # Debian/Ubuntu
