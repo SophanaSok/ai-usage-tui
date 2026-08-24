@@ -574,7 +574,7 @@ there are none); each usage row also carries `project` and `session_id`
 ```text
 provider,model,category,cost_status,requests,input_tokens,output_tokens,
 reasoning_tokens,cache_read_tokens,cache_write_tokens,cost,created,project,
-session_id
+session_id,api_equivalent_cost
 ```
 
 ## Configuration
