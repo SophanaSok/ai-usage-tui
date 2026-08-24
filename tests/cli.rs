@@ -37,6 +37,15 @@ fn hermetic(command: &mut Command) -> &mut Command {
             "{}/tests/fixtures/no-such-omarchy-dir",
             env!("CARGO_MANIFEST_DIR")
         ))
+        // The journal too. Without it these tests read whatever journal the developer's own
+        // machine has -- `AI_USAGE_JOURNAL_PATH`, else `$XDG_DATA_HOME/ai-usage-tui/usage.db` --
+        // so a machine with any journaled Ollama usage sees `ollama` rows in a run that is
+        // supposed to be fixture-only. CI never caught it because a fresh runner has no journal.
+        .arg("--journal")
+        .arg(format!(
+            "{}/tests/fixtures/no-such-journal.db",
+            env!("CARGO_MANIFEST_DIR")
+        ))
         .arg("--all")
 }
 
@@ -51,11 +60,6 @@ fn doctor_reports_every_source_and_where_it_looked() {
         env!("CARGO_MANIFEST_DIR")
     );
     let output = hermetic(bin().arg("--doctor"))
-        .arg("--journal")
-        .arg(format!(
-            "{}/tests/fixtures/no-such-journal.db",
-            env!("CARGO_MANIFEST_DIR")
-        ))
         .output()
         .expect("run --doctor");
 
