@@ -15,6 +15,10 @@ use crate::ui::app::Panel;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Quit,
+    /// Scope the sessions view to the project under the cursor.
+    DrillIn,
+    /// Leave a drilldown. Falls through to `Quit` when there is nothing to leave.
+    Back,
     ToggleHelp,
     Refresh,
     /// Show this panel, or return to the model list if it is already showing.
@@ -138,6 +142,20 @@ pub const BINDINGS: &[Binding] = &[
         what: "",
     },
     Binding {
+        key: '\n',
+        shown_as: "Enter",
+        alias: None,
+        action: Action::DrillIn,
+        what: "on a project row: show just that project's sessions",
+    },
+    Binding {
+        key: '\u{8}',
+        shown_as: "Backspace",
+        alias: Some("also Esc"),
+        action: Action::Back,
+        what: "leave a project and go back to the list (Esc quits when not inside one)",
+    },
+    Binding {
         key: '?',
         shown_as: "?",
         alias: None,
@@ -147,9 +165,11 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: 'q',
         shown_as: "q",
-        alias: Some("also Esc, Ctrl-C"),
+        alias: Some("also Ctrl-C"),
         action: Action::Quit,
-        what: "quit (also Esc, Ctrl-C)",
+        // Esc is no longer unconditionally quit: inside a project it goes back. Saying "also
+        // Esc" here would be wrong exactly when a reader is most likely to look.
+        what: "quit (also Ctrl-C, and Esc outside a project)",
     },
 ];
 

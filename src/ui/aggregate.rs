@@ -44,6 +44,13 @@ pub fn project_labels(paths: &[String]) -> Vec<String> {
 /// `project` and `session_id` have been populated by the Claude Code collector since it
 /// landed, and nothing rendered them. Sorted by cost, then tokens: the question this view
 /// answers is "where is the money going", and a project can burn tokens cheaply.
+/// Where usage from a source that records no working directory is filed.
+///
+/// It has to go somewhere with a name, or the per-project totals silently disagree with the
+/// headline total. Named because the drilldown has to recognise it: a session with no project
+/// is what this row is made of.
+pub const UNATTRIBUTED: &str = "(unattributed)";
+
 pub fn project_totals(usages: &[Usage]) -> Vec<ProjectTotals> {
     use std::collections::{BTreeMap, HashSet};
 
@@ -60,7 +67,7 @@ pub fn project_totals(usages: &[Usage]) -> Vec<ProjectTotals> {
         let name = usage
             .project
             .clone()
-            .unwrap_or_else(|| "(unattributed)".to_string());
+            .unwrap_or_else(|| UNATTRIBUTED.to_string());
         let acc = grouped.entry(name.clone()).or_insert_with(|| Acc {
             totals: ProjectTotals {
                 project: name,

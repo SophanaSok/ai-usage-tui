@@ -103,3 +103,138 @@ fn a_project_of_only_quota_work_is_not_rendered_as_free() {
     assert!(rendered.contains("quota"), "{rendered}");
     assert!(!rendered.contains("$0.00"), "{rendered}");
 }
+
+/// Enter on a project row scopes the sessions view to that project.
+#[test]
+fn drilling_into_a_project_scopes_the_sessions_view() {
+    let mut app = test_app(vec![
+        usage(Some("/w/api"), Some("s1"), Some(1.0), 100),
+        usage(Some("/w/api"), Some("s2"), Some(2.0), 100),
+        usage(Some("/w/docs"), Some("s3"), Some(10.0), 50),
+    ]);
+    app.recompute();
+    app.toggle_panel(Panel::Projects);
+    // Ranked by cost, so /w/docs is first.
+    assert_eq!(app.projects()[0].project, "/w/docs");
+    assert_eq!(app.sessions().len(), 3, "all sessions before drilling");
+
+    assert!(app.drill_into_selected_project());
+    assert_eq!(app.panel, Panel::Sessions);
+    assert_eq!(app.drilldown_project(), Some("/w/docs"));
+    let sessions = app.sessions();
+    assert_eq!(sessions.len(), 1, "only /w/docs' sessions");
+    assert_eq!(sessions[0].session_id, "s3");
+
+    // And back, to the row we came from.
+    assert!(app.leave_drilldown());
+    assert_eq!(app.panel, Panel::Projects);
+    assert_eq!(app.drilldown_project(), None);
+    assert_eq!(app.sessions().len(), 3, "the full list is restored");
+}
+
+/// Leaving lands on the row the user drilled from, not at the top of the list.
+#[test]
+fn leaving_a_drilldown_returns_to_the_row_it_started_from() {
+    let mut app = test_app(vec![
+        usage(Some("/w/api"), Some("s1"), Some(1.0), 100),
+        usage(Some("/w/docs"), Some("s2"), Some(10.0), 50),
+    ]);
+    app.recompute();
+    app.toggle_panel(Panel::Projects);
+    app.selected = 1; // /w/api, the cheaper one
+    assert!(app.drill_into_selected_project());
+    assert_eq!(app.drilldown_project(), Some("/w/api"));
+    assert_eq!(app.selected, 0, "the session list starts at its own top");
+
+    assert!(app.leave_drilldown());
+    assert_eq!(app.selected, 1, "back where the user left the project list");
+}
+
+/// Usage with no project is filed under one row, and drilling into it must find the sessions
+/// that have none — matching on the label would find nothing at all.
+#[test]
+fn the_unattributed_row_drills_into_the_sessions_with_no_project() {
+    let mut app = test_app(vec![
+        usage(None, Some("s-none"), Some(5.0), 100),
+        usage(Some("/w/api"), Some("s1"), Some(1.0), 100),
+    ]);
+    app.recompute();
+    app.toggle_panel(Panel::Projects);
+    let row = app
+        .projects()
+        .iter()
+        .position(|p| p.project == crate::ui::aggregate::UNATTRIBUTED)
+        .expect("an unattributed row");
+    app.selected = row;
+
+    assert!(app.drill_into_selected_project());
+    let sessions = app.sessions();
+    assert_eq!(sessions.len(), 1, "the session with no project");
+    assert_eq!(sessions[0].session_id, "s-none");
+    assert_eq!(sessions[0].project, None);
+}
+
+/// Enter does nothing outside the Projects panel, and nothing on an empty list.
+#[test]
+fn drilling_is_refused_where_there_is_nothing_to_drill_into() {
+    let mut app = test_app(vec![usage(Some("/w/api"), Some("s1"), Some(1.0), 100)]);
+
+    app.recompute();
+    app.toggle_panel(Panel::Sessions);
+    assert!(!app.drill_into_selected_project(), "not the projects panel");
+    assert_eq!(app.drilldown_project(), None);
+
+    app.toggle_panel(Panel::Projects);
+    app.selected = 99; // past the end
+    assert!(
+        !app.drill_into_selected_project(),
+        "no row under the cursor"
+    );
+    assert_eq!(app.drilldown_project(), None);
+
+    // And leaving when not inside one reports that, so Esc can fall through to quitting.
+    assert!(!app.leave_drilldown());
+}
+
+/// The cursor is bounded by the project list, not the model table.
+///
+/// `visible_rows` returned the model-table length for every panel but Sessions. Harmless while
+/// nothing acted on the row; wrong the moment Enter drills into whatever is under it.
+#[test]
+fn the_cursor_is_bounded_by_the_project_list() {
+    let mut app = test_app(vec![
+        usage(Some("/w/api"), Some("s1"), Some(1.0), 100),
+        usage(Some("/w/docs"), Some("s2"), Some(2.0), 100),
+    ]);
+    app.recompute();
+    app.toggle_panel(Panel::Projects);
+    assert_eq!(app.visible_rows(), app.projects().len());
+    assert_eq!(app.visible_rows(), 2);
+}
+
+/// The cursor is clamped by the panel showing, not by the model table behind it.
+///
+/// `recompute` ended with `selected.min(view.rows.len() - 1)` regardless of panel, so on a
+/// machine with few model groups and many projects the cursor could not reach the later
+/// projects at all. Cosmetic until Enter started acting on the row under it.
+#[test]
+fn the_cursor_is_not_clamped_by_the_model_table() {
+    // One provider/model across four projects: the model table has a single row.
+    let mut app = test_app(vec![
+        usage(Some("/w/a"), Some("s1"), Some(4.0), 100),
+        usage(Some("/w/b"), Some("s2"), Some(3.0), 100),
+        usage(Some("/w/c"), Some("s3"), Some(2.0), 100),
+        usage(Some("/w/d"), Some("s4"), Some(1.0), 100),
+    ]);
+    app.recompute();
+    assert_eq!(app.rows().len(), 1, "one model group behind four projects");
+
+    app.toggle_panel(Panel::Projects);
+    app.selected = 3;
+    app.recompute();
+    assert_eq!(app.selected, 3, "the fourth project must stay reachable");
+
+    // And drilling from it picks that project, not whatever the clamp left behind.
+    assert!(app.drill_into_selected_project());
+    assert_eq!(app.drilldown_project(), Some("/w/d"));
+}

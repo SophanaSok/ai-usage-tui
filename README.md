@@ -477,6 +477,11 @@ key.
 | Sessions | `s` | Which individual runs cost the most |
 | Limits | `l` | Subscription windows from Omarchy's agents panel: % used and reset countdown |
 
+On a project row, **`Enter`** shows just that project's sessions, and
+**`Backspace`** (or `Esc`) goes back to the list where you left it. The sessions
+panel names the project it is scoped to, so the two views cannot be mistaken for
+each other. `Esc` still quits when you are not inside a project.
+
 <details>
 <summary>Screenshots of each panel</summary>
 

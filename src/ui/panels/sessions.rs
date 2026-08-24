@@ -19,16 +19,27 @@ use crate::utils::format_count;
 
 pub fn draw_sessions(frame: &mut Frame, area: Rect, app: &App) {
     let sessions = app.sessions();
-    let block = panel("SESSIONS", CYAN);
+    // The title carries the scope. Two views that render identically and mean different things
+    // is how a reader ends up reading one project's spend as the whole machine's.
+    let title = match app.drilldown_project() {
+        Some(project) => format!("SESSIONS · {project}"),
+        None => "SESSIONS".to_string(),
+    };
+    let block = panel(&title, CYAN);
 
     if sessions.is_empty() {
+        let empty = match app.drilldown_project() {
+            Some(project) => format!(
+                "No sessions for {project} in this range. Backspace goes back to the project list."
+            ),
+            None => "No sessions in this range. Only sources that record one — Claude Code — \
+                     contribute here."
+                .to_string(),
+        };
         frame.render_widget(
-            Paragraph::new(
-                "No sessions in this range. Only sources that record one — Claude Code — \
-                 contribute here.",
-            )
-            .style(Style::default().fg(MUTED))
-            .block(block),
+            Paragraph::new(empty)
+                .style(Style::default().fg(MUTED))
+                .block(block),
             area,
         );
         return;
