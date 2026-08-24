@@ -17,6 +17,8 @@ pub enum Action {
     Quit,
     /// Scope the sessions view to the project under the cursor.
     DrillIn,
+    /// Start typing a row filter.
+    Search,
     /// Leave a drilldown. Falls through to `Quit` when there is nothing to leave.
     Back,
     ToggleHelp,
@@ -142,6 +144,13 @@ pub const BINDINGS: &[Binding] = &[
         what: "",
     },
     Binding {
+        key: '/',
+        shown_as: "/",
+        alias: None,
+        action: Action::Search,
+        what: "filter the rows shown (Enter keeps it, Esc clears it)",
+    },
+    Binding {
         key: '\n',
         shown_as: "Enter",
         alias: None,
@@ -153,7 +162,7 @@ pub const BINDINGS: &[Binding] = &[
         shown_as: "Backspace",
         alias: Some("also Esc"),
         action: Action::Back,
-        what: "leave a project and go back to the list (Esc quits when not inside one)",
+        what: "leave a project and go back to the list",
     },
     Binding {
         key: '?',
@@ -169,7 +178,7 @@ pub const BINDINGS: &[Binding] = &[
         action: Action::Quit,
         // Esc is no longer unconditionally quit: inside a project it goes back. Saying "also
         // Esc" here would be wrong exactly when a reader is most likely to look.
-        what: "quit (also Ctrl-C, and Esc outside a project)",
+        what: "quit (also Ctrl-C; Esc clears a filter or leaves a project first)",
     },
 ];
 

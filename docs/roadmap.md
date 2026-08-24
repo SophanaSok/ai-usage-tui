@@ -130,7 +130,17 @@ Remaining:
   table* whatever panel was showing, so on a machine with few model groups and many projects the
   later projects were unreachable. Cosmetic while nothing acted on the row; wrong the moment
   `Enter` did. Both the clamp and `visible_rows` are panel-aware now, with a regression test.
-- **Interactive depth** — `/` search, sortable columns, mouse support.
+- **Interactive depth** — sortable columns, mouse support. `/` search shipped: it filters what
+  the visible panel lists (model and provider names, project paths, session ids, the models a
+  session used) while deliberately leaving the totals, the coverage figure and the budgets
+  computed from the whole range. The footer carries the query and a "showing N of M", because a
+  list that silently shortened is how a filtered view gets read as a smaller bill.
+
+  Worth knowing before adding more: the footer's key hints in `ui::mod.rs` are a **fifth**
+  hand-written copy of the bindings, which `ui::keys` was meant to end. The dispatch, the `?`
+  overlay and `--help` all read the table; the footer does not, because it abbreviates and
+  reflows by width. Driving it from the table too is a small, contained job for whoever touches
+  it next.
 - **Routing analytics still needs a harness for the half that matters.** Escalations are now
   derived from collected sessions, but pass/fail and retry counts cannot be inferred from usage
   metadata and must not be guessed. A shipped hook or wrapper that emits `--record-routing`

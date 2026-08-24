@@ -480,7 +480,19 @@ key.
 On a project row, **`Enter`** shows just that project's sessions, and
 **`Backspace`** (or `Esc`) goes back to the list where you left it. The sessions
 panel names the project it is scoped to, so the two views cannot be mistaken for
-each other. `Esc` still quits when you are not inside a project.
+each other.
+
+**`/`** filters the rows the current panel lists — model and provider names,
+project paths, session ids and the models a session used. `Enter` keeps the
+filter and hands the keyboard back; `Esc` clears it. The footer shows the query
+and how many rows of how many are showing.
+
+A filter changes **what is listed, never what was spent**: the header totals,
+the pricing-coverage figure and the budgets are computed from the whole range
+regardless. Use `--provider` / `--model` to narrow the data itself.
+
+`Esc` backs out one step at a time — clear a filter, leave a project, then quit.
+`q` and `Ctrl-C` always quit.
 
 <details>
 <summary>Screenshots of each panel</summary>
