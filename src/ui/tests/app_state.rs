@@ -431,7 +431,11 @@ fn reversing_flips_the_order_and_says_so() {
     assert_eq!(app.sort_marker(Panel::Projects, other), "");
 }
 
-/// Unknown cost is not zero, and must not be sorted as if it were.
+/// Unknown cost is not zero, and must not be sorted as if it were -- in either direction.
+///
+/// Reversing the sorted list instead of the comparator satisfies "clusters at one end" while
+/// still being wrong: ascending it led with the unknowns, presenting them as the cheapest rows.
+/// Both directions are asserted because only one of them catches that.
 #[test]
 fn unknown_cost_sorts_to_one_end_rather_than_as_zero() {
     let mut app = test_app(vec![
@@ -440,7 +444,6 @@ fn unknown_cost_sorts_to_one_end_rather_than_as_zero() {
         usage(Some("/w/c"), Some("s3"), Some(1.0), 100),
     ]);
     app.recompute();
-    // Sort the model table by COST, ascending.
     app.toggle_panel(Panel::Models);
     let cost_column = Panel::Models
         .sort_columns()
@@ -450,19 +453,196 @@ fn unknown_cost_sorts_to_one_end_rather_than_as_zero() {
     while app.sort_for(Panel::Models).column != cost_column {
         app.cycle_sort_column(true);
     }
-    if app.sort_for(Panel::Models).descending {
+
+    for _ in 0..2 {
+        let descending = app.sort_for(Panel::Models).descending;
+        let costs: Vec<Option<f64>> = app.rows().iter().map(|r| r.cost).collect();
+        let first_unknown = costs.iter().position(|c| c.is_none());
+        let last_known = costs.iter().rposition(|c| c.is_some());
+        if let (Some(first_unknown), Some(last_known)) = (first_unknown, last_known) {
+            assert!(
+                last_known < first_unknown,
+                "unknown cost must sit after every known one (descending={descending}), \
+                 not lead as the cheapest row: {costs:?}"
+            );
+        }
+        app.reverse_sort();
+    }
+}
+
+/// A quota-billed rollup has a real cost that no API prices. It must not sort as $0.00.
+///
+/// The COST cell for these reads `quota`, never `$0.00` -- so ordering them below a project that
+/// genuinely spent a cent has the cell and the ordering saying different things about one row.
+#[test]
+fn quota_billed_projects_do_not_sort_as_the_cheapest() {
+    let mut app = test_app(vec![
+        usage(Some("/w/priced"), Some("s1"), Some(0.01), 100),
+        quota_project_usage(Some("/w/plan"), Some("s2"), 100),
+    ]);
+    app.recompute();
+    app.toggle_panel(Panel::Projects);
+    let cost_column = Panel::Projects
+        .sort_columns()
+        .iter()
+        .position(|c| *c == "COST")
+        .unwrap();
+    while app.sort_for(Panel::Projects).column != cost_column {
+        app.cycle_sort_column(true);
+    }
+
+    for _ in 0..2 {
+        let descending = app.sort_for(Panel::Projects).descending;
+        let order: Vec<&str> = app.projects().iter().map(|p| p.project.as_str()).collect();
+        assert_eq!(
+            order.last().copied(),
+            Some("/w/plan"),
+            "the quota-billed project has no figure and belongs after the priced one \
+             (descending={descending}), not ranked below it as $0.00"
+        );
+        app.reverse_sort();
+    }
+}
+
+/// The default order must be the one `project_totals` already produced, ties included.
+///
+/// `project_totals` sorts by cost then tokens, both descending. Sorting ascending and reversing
+/// the vector reproduces the cost order and inverts the tokens tiebreak, because Rust's sorts are
+/// stable. Equal costs are the only thing that shows it, so the two projects here share one.
+#[test]
+fn the_default_project_order_keeps_the_aggregator_tiebreak() {
+    let mut app = test_app(vec![
+        usage(Some("/w/small"), Some("s1"), Some(1.0), 100),
+        usage(Some("/w/large"), Some("s2"), Some(1.0), 900),
+    ]);
+    app.recompute();
+
+    let order: Vec<&str> = app.projects().iter().map(|p| p.project.as_str()).collect();
+    assert_eq!(
+        order,
+        vec!["/w/large", "/w/small"],
+        "equal-cost projects are ordered by tokens descending, and the default sort must not \
+         invert that"
+    );
+}
+
+/// On a subscription the tiebreak is not an edge case: it orders the entire panel.
+///
+/// `accrue` returns before touching `cost` for quota-billed usage, so every project is `0.0` and
+/// the whole list is one tie group. Reversing the vector inverted all of it at once.
+#[test]
+fn an_all_quota_projects_panel_is_still_ordered_by_tokens() {
+    let mut app = test_app(vec![
+        quota_project_usage(Some("/w/small"), Some("s1"), 100),
+        quota_project_usage(Some("/w/large"), Some("s2"), 900),
+        quota_project_usage(Some("/w/medium"), Some("s3"), 500),
+    ]);
+    app.recompute();
+
+    let order: Vec<&str> = app.projects().iter().map(|p| p.project.as_str()).collect();
+    assert_eq!(
+        order,
+        vec!["/w/large", "/w/medium", "/w/small"],
+        "every project is quota-billed and costless, so tokens is the only thing ordering them"
+    );
+}
+
+/// The sort key for a COST cell must stand for what that cell actually shows.
+///
+/// `cost_display` ignores `usage.cost` entirely for `Quota` and `Unavailable` -- it prints
+/// `ON QUOTA` and `UNKNOWN COST` whatever number is sitting in the field. A sort key read
+/// straight off `cost` therefore orders those rows by a figure no reader ever sees.
+#[test]
+fn the_cost_sort_key_stands_for_what_the_cell_shows() {
+    use crate::ui::theme::cost_sort_key;
+    let row = |cost_status, cost| Usage {
+        cost_status,
+        cost,
+        ..Default::default()
+    };
+
+    // Genuinely costless. The cell says so in words and zero is the honest position.
+    assert_eq!(cost_sort_key(&row(CostStatus::Free, None)), Some(0.0));
+    assert_eq!(cost_sort_key(&row(CostStatus::Local, None)), Some(0.0));
+
+    // Real cost, no per-token rate anywhere. `ON QUOTA` is not `$0.00` in the cell, so it must
+    // not become `$0.00` in the ordering -- including when a stray figure rides along.
+    assert_eq!(cost_sort_key(&row(CostStatus::Quota, Some(0.0))), None);
+    assert_eq!(cost_sort_key(&row(CostStatus::Quota, Some(4.0))), None);
+    assert_eq!(
+        cost_sort_key(&row(CostStatus::Unavailable, Some(4.0))),
+        None
+    );
+
+    // Priced statuses carry whatever the engine worked out, including nothing.
+    assert_eq!(
+        cost_sort_key(&row(CostStatus::Calculated, Some(4.0))),
+        Some(4.0)
+    );
+    assert_eq!(cost_sort_key(&row(CostStatus::Calculated, None)), None);
+}
+
+/// The same rule, through the panel: a quota row must not lead a COST sort as the cheapest.
+#[test]
+fn a_quota_model_row_does_not_sort_as_the_cheapest() {
+    let mut app = test_app(vec![
+        usage(Some("/w/a"), Some("s1"), Some(0.01), 100),
+        quota_project_usage(Some("/w/b"), Some("s2"), 100),
+    ]);
+    app.recompute();
+    app.toggle_panel(Panel::Models);
+    let cost_column = Panel::Models
+        .sort_columns()
+        .iter()
+        .position(|c| *c == "COST")
+        .unwrap();
+    while app.sort_for(Panel::Models).column != cost_column {
+        app.cycle_sort_column(true);
+    }
+
+    for _ in 0..2 {
+        let descending = app.sort_for(Panel::Models).descending;
+        let last = app.rows().last().expect("two rows");
+        assert_eq!(
+            last.cost_status,
+            CostStatus::Quota,
+            "the quota row has no figure and belongs at the end (descending={descending})"
+        );
+        app.reverse_sort();
+    }
+}
+
+/// Ties must survive a descending sort on an ordinary column too, not only on COST.
+///
+/// Equal-token projects arrive from `project_totals` in cost-descending order. Sorting the panel
+/// by TOKENS descending has nothing to distinguish them, so that incoming order is the whole
+/// answer -- and reversing the vector rather than the comparator threw it away.
+#[test]
+fn a_descending_sort_on_a_plain_column_keeps_the_incoming_tie_order() {
+    let mut app = test_app(vec![
+        usage(Some("/w/rich"), Some("s1"), Some(5.0), 100),
+        usage(Some("/w/poor"), Some("s2"), Some(1.0), 100),
+    ]);
+    app.recompute();
+    app.toggle_panel(Panel::Projects);
+    let tokens_column = Panel::Projects
+        .sort_columns()
+        .iter()
+        .position(|c| *c == "TOKENS")
+        .unwrap();
+    while app.sort_for(Panel::Projects).column != tokens_column {
+        app.cycle_sort_column(true);
+    }
+    if !app.sort_for(Panel::Projects).descending {
         app.reverse_sort();
     }
 
-    let costs: Vec<Option<f64>> = app.rows().iter().map(|r| r.cost).collect();
-    let first_known = costs.iter().position(|c| c.is_some());
-    let last_unknown = costs.iter().rposition(|c| c.is_none());
-    if let (Some(first_known), Some(last_unknown)) = (first_known, last_unknown) {
-        assert!(
-            last_unknown < first_known,
-            "unknown cost must cluster at one end, not interleave as $0.00: {costs:?}"
-        );
-    }
+    let order: Vec<&str> = app.projects().iter().map(|p| p.project.as_str()).collect();
+    assert_eq!(
+        order,
+        vec!["/w/rich", "/w/poor"],
+        "equal token counts leave the aggregator's cost ordering as the only tiebreak"
+    );
 }
 
 /// A panel with nothing to sort ignores the keys rather than storing an unusable column.

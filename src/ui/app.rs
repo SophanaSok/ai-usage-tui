@@ -97,16 +97,72 @@ pub enum Panel {
 
 /// Order two costs, where `None` means "not known" rather than zero.
 ///
-/// Unknown sorts below every known cost, so ascending puts the priced rows first and descending
-/// puts the most expensive first — either way the unknowns cluster at one end instead of being
-/// interleaved as if they were $0.00, which is the one thing this project never does with them.
-fn cost_order(a: Option<f64>, b: Option<f64>) -> std::cmp::Ordering {
+/// The direction is applied *here* rather than by reversing the sorted list, because an unknown
+/// is not a point on the scale and reversing must not move it. Let it move and ascending presents
+/// the unknowns as the cheapest rows while descending presents them as the most expensive; the
+/// data supports neither claim. They cluster at the end of whichever order is in force instead,
+/// which is what keeps "unknown cost stays unknown" true of the ordering and not just of the cell.
+fn cost_order(a: Option<f64>, b: Option<f64>, descending: bool) -> std::cmp::Ordering {
     match (a, b) {
-        (Some(a), Some(b)) => a.total_cmp(&b),
-        (Some(_), None) => std::cmp::Ordering::Greater,
-        (None, Some(_)) => std::cmp::Ordering::Less,
+        (Some(a), Some(b)) => {
+            let order = a.total_cmp(&b);
+            if descending {
+                order.reverse()
+            } else {
+                order
+            }
+        }
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
         (None, None) => std::cmp::Ordering::Equal,
     }
+}
+
+/// The cost a project or session rollup sorts by, or `None` where its panel shows no figure.
+///
+/// Dollars survive partial coverage: the cell reads `≥ $x.xx` and that floor is a real number,
+/// incomplete but not invented. A rollup with no dollars *and* quota- or unpriced-billed requests
+/// behind it renders as `quota` or `unpriced`, and sorting it as `0.0` would file it below every
+/// genuinely free row while its own cell said the cost was unknown.
+///
+/// This is not a corner case. `accrue` returns before touching `cost` for quota-billed usage, so
+/// on a subscription every project can be `0.0` at once — a plain numeric sort makes the whole
+/// panel a single tie group and orders it by nothing at all.
+fn rollup_cost(cost: f64, unpriced_requests: u64, quota_requests: u64) -> Option<f64> {
+    if cost == 0.0 && (unpriced_requests > 0 || quota_requests > 0) {
+        None
+    } else {
+        Some(cost)
+    }
+}
+
+/// Sort by `order`, applying the direction inside the comparator.
+///
+/// Deliberately not `sort_by(..)` followed by `reverse()`. Rust's sorts are stable, so reversing
+/// the sorted vector also reverses every group of equal rows, which silently inverts whatever
+/// tiebreak the aggregator already applied. `project_totals` documents "sorted by cost, then
+/// tokens"; reversing turned equal-cost projects into tokens-ascending, and on a subscription —
+/// where every project's cost is `0.0` — that inverted the entire panel rather than a stray pair.
+fn sort_rows<T, F>(rows: &mut [T], descending: bool, mut order: F)
+where
+    F: FnMut(&T, &T) -> std::cmp::Ordering,
+{
+    if descending {
+        rows.sort_by(|a, b| order(a, b).reverse());
+    } else {
+        rows.sort_by(|a, b| order(a, b));
+    }
+}
+
+/// Sort by a cost key, which `cost_order` places itself.
+///
+/// Takes a key rather than a comparator so that a caller cannot route a cost column through
+/// `sort_rows` and reverse the direction twice, undoing the placement `cost_order` exists to make.
+fn sort_rows_by_cost<T, F>(rows: &mut [T], descending: bool, mut key: F)
+where
+    F: FnMut(&T) -> Option<f64>,
+{
+    rows.sort_by(|a, b| cost_order(key(a), key(b), descending));
 }
 
 /// Which column a panel is sorted by, and which way.
@@ -493,78 +549,97 @@ impl App {
         let sort = self.sort_for(Panel::Models);
         let rows = &mut self.view.rows;
         match sort.column {
-            0 => rows.sort_by(|a, b| {
+            0 => sort_rows(rows, sort.descending, |a, b| {
                 (a.provider.to_lowercase(), a.model.to_lowercase())
                     .cmp(&(b.provider.to_lowercase(), b.model.to_lowercase()))
             }),
-            1 => rows.sort_by(|a, b| a.category.label().cmp(b.category.label())),
-            3 => rows.sort_by(|a, b| cost_order(a.cost, b.cost)),
-            4 => rows.sort_by_key(|u| u.requests),
-            _ => rows.sort_by_key(|u| u.total_tokens()),
-        }
-        if sort.descending {
-            rows.reverse();
+            1 => sort_rows(rows, sort.descending, |a, b| {
+                a.category.label().cmp(b.category.label())
+            }),
+            // By what the COST cell shows, not by `cost`: a quota-billed row reads `ON QUOTA`
+            // whatever number happens to sit in the field beside it.
+            3 => sort_rows_by_cost(rows, sort.descending, crate::ui::theme::cost_sort_key),
+            4 => sort_rows(rows, sort.descending, |a, b| a.requests.cmp(&b.requests)),
+            _ => sort_rows(rows, sort.descending, |a, b| {
+                a.total_tokens().cmp(&b.total_tokens())
+            }),
         }
 
         let sort = self.sort_for(Panel::Projects);
         let projects = &mut self.view.projects;
         match sort.column {
-            0 => projects.sort_by_key(|p| p.project.to_lowercase()),
-            2 => projects.sort_by(|a, b| a.cost.total_cmp(&b.cost)),
-            3 => projects.sort_by_key(|p| p.requests),
-            4 => projects.sort_by_key(|p| p.sessions),
-            _ => projects.sort_by_key(|p| p.tokens),
-        }
-        if sort.descending {
-            projects.reverse();
+            0 => sort_rows(projects, sort.descending, |a, b| {
+                a.project.to_lowercase().cmp(&b.project.to_lowercase())
+            }),
+            2 => sort_rows_by_cost(projects, sort.descending, |p| {
+                rollup_cost(p.cost, p.unpriced_requests, p.quota_requests)
+            }),
+            3 => sort_rows(projects, sort.descending, |a, b| {
+                a.requests.cmp(&b.requests)
+            }),
+            4 => sort_rows(projects, sort.descending, |a, b| {
+                a.sessions.cmp(&b.sessions)
+            }),
+            _ => sort_rows(projects, sort.descending, |a, b| a.tokens.cmp(&b.tokens)),
         }
 
         let sort = self.sort_for(Panel::Sessions);
         let sessions = &mut self.view.sessions;
         match sort.column {
-            1 => sessions.sort_by_key(|s| s.duration_secs()),
-            2 => sessions.sort_by(|a, b| {
+            1 => sort_rows(sessions, sort.descending, |a, b| {
+                a.duration_secs().cmp(&b.duration_secs())
+            }),
+            2 => sort_rows(sessions, sort.descending, |a, b| {
                 a.project
                     .as_deref()
                     .unwrap_or_default()
                     .to_lowercase()
                     .cmp(&b.project.as_deref().unwrap_or_default().to_lowercase())
             }),
-            3 => sessions.sort_by_key(|s| s.models.len()),
-            4 => sessions.sort_by_key(|s| s.tokens),
-            5 => sessions.sort_by(|a, b| a.cost.total_cmp(&b.cost)),
-            6 => sessions.sort_by_key(|s| s.requests),
+            3 => sort_rows(sessions, sort.descending, |a, b| {
+                a.models.len().cmp(&b.models.len())
+            }),
+            4 => sort_rows(sessions, sort.descending, |a, b| a.tokens.cmp(&b.tokens)),
+            5 => sort_rows_by_cost(sessions, sort.descending, |s| {
+                rollup_cost(s.cost, s.unpriced_requests, s.quota_requests)
+            }),
+            6 => sort_rows(sessions, sort.descending, |a, b| {
+                a.requests.cmp(&b.requests)
+            }),
             // STARTED shows `first_seen`, so that is what sorting by STARTED does. The list
             // previously ordered by `last_seen` while displaying `first_seen`, which meant the
             // column a reader saw was not the column the rows were in. Marking a column and
             // sorting by a different one would have kept that, silently.
-            _ => sessions.sort_by_key(|s| s.first_seen),
-        }
-        if sort.descending {
-            sessions.reverse();
+            _ => sort_rows(sessions, sort.descending, |a, b| {
+                a.first_seen.cmp(&b.first_seen)
+            }),
         }
 
         let sort = self.sort_for(Panel::Routing);
         let routing = &mut self.view.routing;
         match sort.column {
-            0 => routing.sort_by_key(|r| r.agent.to_lowercase()),
-            1 => routing.sort_by_key(|r| r.model.to_lowercase()),
-            // Cheapest per delivered result. Agents with nothing passing have no figure and
-            // sort last rather than appearing free -- which is why this is not `a.cost`.
-            2 => routing.sort_by(|a, b| {
-                crate::routing::cost_per_success(a)
-                    .unwrap_or(f64::INFINITY)
-                    .total_cmp(&crate::routing::cost_per_success(b).unwrap_or(f64::INFINITY))
+            0 => sort_rows(routing, sort.descending, |a, b| {
+                a.agent.to_lowercase().cmp(&b.agent.to_lowercase())
             }),
-            3 => routing.sort_by_key(|r| r.test_passes),
-            4 => routing.sort_by_key(|r| r.retries),
-            5 => routing.sort_by_key(|r| r.escalations),
-            6 => routing.sort_by_key(|r| r.review_defects),
-            8 => routing.sort_by_key(|r| r.tasks),
-            _ => routing.sort_by_key(|r| r.tokens),
-        }
-        if sort.descending {
-            routing.reverse();
+            1 => sort_rows(routing, sort.descending, |a, b| {
+                a.model.to_lowercase().cmp(&b.model.to_lowercase())
+            }),
+            // Cheapest per delivered result. Agents with nothing passing have no figure at all,
+            // and `cost_order` holds them at the end in both directions rather than letting them
+            // appear free -- which is why this is not `a.cost`.
+            2 => sort_rows_by_cost(routing, sort.descending, crate::routing::cost_per_success),
+            3 => sort_rows(routing, sort.descending, |a, b| {
+                a.test_passes.cmp(&b.test_passes)
+            }),
+            4 => sort_rows(routing, sort.descending, |a, b| a.retries.cmp(&b.retries)),
+            5 => sort_rows(routing, sort.descending, |a, b| {
+                a.escalations.cmp(&b.escalations)
+            }),
+            6 => sort_rows(routing, sort.descending, |a, b| {
+                a.review_defects.cmp(&b.review_defects)
+            }),
+            8 => sort_rows(routing, sort.descending, |a, b| a.tasks.cmp(&b.tasks)),
+            _ => sort_rows(routing, sort.descending, |a, b| a.tokens.cmp(&b.tokens)),
         }
     }
 

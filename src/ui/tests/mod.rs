@@ -54,6 +54,16 @@ fn usage(project: Option<&str>, session: Option<&str>, cost: Option<f64>, tokens
     }
 }
 
+/// Usage billed against a plan quota: real cost, no per-token rate, so `cost` stays `None` and
+/// the rollups that carry it report zero dollars over a non-zero `quota_requests`.
+fn quota_project_usage(project: Option<&str>, session: Option<&str>, tokens: u64) -> Usage {
+    Usage {
+        cost_status: CostStatus::Quota,
+        cost: None,
+        ..usage(project, session, None, tokens)
+    }
+}
+
 /// A bare `App` with no collector and no I/O, for testing view logic.
 fn test_app(usages: Vec<Usage>) -> App {
     App {
