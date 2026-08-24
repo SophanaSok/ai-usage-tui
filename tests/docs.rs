@@ -219,6 +219,54 @@ fn parser_long_flags() -> BTreeSet<String> {
     flags
 }
 
+/// The README's panel table and `ui::keys::BINDINGS` must offer the same panel keys.
+///
+/// The bindings lived in four places -- the event loop, the `?` overlay, `--help` and this table
+/// -- with nothing keeping them in step. The first three read one table now; this is what keeps
+/// the fourth honest.
+#[test]
+fn readme_panel_table_matches_the_key_bindings() {
+    let documented = readme_panel_keys();
+    let bound: BTreeSet<char> = ai_usage_tui::ui::keys::panel_keys()
+        .map(|(key, _)| key)
+        .collect();
+
+    let undocumented: Vec<_> = bound.difference(&documented).collect();
+    let phantom: Vec<_> = documented.difference(&bound).collect();
+    assert!(
+        undocumented.is_empty() && phantom.is_empty(),
+        "README panel table and src/ui/keys.rs disagree.\n\
+         bound in keys.rs but missing from the README table: {undocumented:?}\n\
+         in the README table but not bound: {phantom:?}"
+    );
+    assert!(
+        documented.len() >= 5,
+        "only {} panel keys found in the README; the table may have moved",
+        documented.len()
+    );
+}
+
+/// Single-character backtick cells in the README's panel table — `| Budgets | `b` | ... |`.
+fn readme_panel_keys() -> BTreeSet<char> {
+    let mut keys = BTreeSet::new();
+    for line in README.lines().filter(|l| l.starts_with("| ")) {
+        let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+        // A panel row is `| Name | `k` | description |`.
+        if cells.len() >= 4 {
+            let cell = cells[2];
+            if let Some(inner) = cell.strip_prefix('`').and_then(|c| c.strip_suffix('`')) {
+                let mut chars = inner.chars();
+                if let (Some(c), None) = (chars.next(), chars.next()) {
+                    if c.is_ascii_alphabetic() {
+                        keys.insert(c);
+                    }
+                }
+            }
+        }
+    }
+    keys
+}
+
 /// The README's environment-variable table must name every variable the code reads, apart from
 /// the documented exceptions, and nothing the code does not read.
 #[test]
@@ -236,26 +284,30 @@ fn readme_env_table_matches_the_code() {
         .map(str::to_string)
         .collect();
 
+    // Every shape in which this codebase names an environment variable. `utils.rs` reads through
+    // an injected `Env` lookup (so its tests need not mutate the process's environment), which is
+    // why `non_empty(env, "…")` is here alongside the direct `std::env` calls. This guard caught
+    // that refactor: the variables were still read, and the old two-prefix scanner reported every
+    // one of them as documented-but-never-read.
+    const CALL_SHAPES: &[&str] = &["var_os(\"", "var(\"", "non_empty(env, \""];
     let mut read: BTreeSet<String> = BTreeSet::new();
     for source in &env_sources() {
-        let mut rest = source.as_str();
-        while let Some(at) = rest.find("var") {
-            let after = &rest[at..];
-            let literal = after
-                .strip_prefix("var_os(\"")
-                .or_else(|| after.strip_prefix("var(\""));
-            if let Some(literal) = literal {
-                let name: String = literal
+        for shape in CALL_SHAPES {
+            let mut rest = source.as_str();
+            while let Some(at) = rest.find(shape) {
+                let after = &rest[at + shape.len()..];
+                let name: String = after
                     .chars()
                     .take_while(|c| c.is_ascii_uppercase() || *c == '_')
                     .collect();
                 if !name.is_empty() {
                     read.insert(name);
                 }
+                rest = after;
             }
-            rest = &rest[at + 3..];
         }
     }
+
     // The detector names its variables in a list rather than reading them one by one.
     for name in ENV_NOT_IN_TABLE {
         read.remove(*name);

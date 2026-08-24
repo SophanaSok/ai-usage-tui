@@ -22,6 +22,7 @@
 
 pub mod aggregate;
 pub mod app;
+pub mod keys;
 pub mod panels;
 pub mod svg;
 pub mod theme;
@@ -48,7 +49,7 @@ use crate::budget::{Alert, AlertDispatcher, BudgetEngine};
 use crate::cli::Cli;
 use crate::collector::background::CollectorHandle;
 use crate::collector::SourceRoots;
-use crate::model::{Range, CYAN};
+use crate::model::CYAN;
 use crate::utils::journal_path;
 
 pub use aggregate::{coverage, project_labels, project_totals};
@@ -112,29 +113,29 @@ pub fn run(
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break,
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
-                    KeyCode::Char('?') => app.show_help = !app.show_help,
-                    KeyCode::Char('r') => app.refresh(),
-                    KeyCode::Char('b') => app.toggle_panel(Panel::Budgets),
-                    KeyCode::Char('t') => app.toggle_panel(Panel::Routing),
-                    KeyCode::Char('p') => app.toggle_panel(Panel::Projects),
-                    KeyCode::Char('g') => app.toggle_panel(Panel::TimeSeries),
-                    KeyCode::Char('w') => app.toggle_panel(Panel::Burn),
-                    KeyCode::Char('s') => app.toggle_panel(Panel::Sessions),
-                    KeyCode::Char('l') => app.toggle_panel(Panel::Limits),
-                    KeyCode::Char('1') => app.set_range(Range::Today),
-                    KeyCode::Char('2') => app.set_range(Range::Week),
-                    KeyCode::Char('3') => app.set_range(Range::Month),
-                    KeyCode::Char('4') => app.set_range(Range::All),
-                    KeyCode::Down | KeyCode::Char('j') => {
+                // Ctrl-C and the non-character aliases first; everything else comes from the
+                // one binding table in `ui::keys`.
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    break;
+                }
+                let action = match key.code {
+                    KeyCode::Char(c) => keys::action_for(c),
+                    KeyCode::Esc => Some(keys::Action::Quit),
+                    KeyCode::Down => Some(keys::Action::SelectNext),
+                    KeyCode::Up => Some(keys::Action::SelectPrev),
+                    _ => None,
+                };
+                match action {
+                    Some(keys::Action::Quit) => break,
+                    Some(keys::Action::ToggleHelp) => app.show_help = !app.show_help,
+                    Some(keys::Action::Refresh) => app.refresh(),
+                    Some(keys::Action::Panel(panel)) => app.toggle_panel(panel),
+                    Some(keys::Action::Range(range)) => app.set_range(range),
+                    Some(keys::Action::SelectNext) => {
                         app.selected = (app.selected + 1).min(app.visible_rows().saturating_sub(1))
                     }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        app.selected = app.selected.saturating_sub(1)
-                    }
-                    _ => {}
+                    Some(keys::Action::SelectPrev) => app.selected = app.selected.saturating_sub(1),
+                    None => {}
                 }
             }
         }
@@ -246,23 +247,10 @@ pub(super) fn footer<'a>(width: u16) -> Paragraph<'a> {
 /// Exists because there are more bindings than fit on one line, and truncating the line silently
 /// is how `q quit` became invisible on an 80-column terminal.
 fn draw_help(frame: &mut Frame, area: Rect) {
-    const ROWS: &[(&str, &str)] = &[
-        ("1 2 3 4", "range: today, 7 days, 30 days, all time"),
-        ("r", "refresh now"),
-        ("b", "budgets"),
-        ("t", "routing analytics and derived escalations"),
-        ("p", "cost per project"),
-        ("g", "spend over time"),
-        ("w", "burn rate and time to budget"),
-        ("s", "sessions"),
-        ("l", "subscription limits, from Omarchy's agents panel"),
-        ("j / k", "move the selection (also arrow keys)"),
-        ("?", "close this help"),
-        ("q", "quit (also Esc, Ctrl-C)"),
-    ];
+    let rows_source: Vec<(&str, &str)> = keys::rows().collect();
 
     let width = 56.min(area.width.saturating_sub(4));
-    let height = (ROWS.len() as u16 + 2).min(area.height.saturating_sub(2));
+    let height = (rows_source.len() as u16 + 2).min(area.height.saturating_sub(2));
     let popup = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
         y: area.y + (area.height.saturating_sub(height)) / 2,
@@ -270,7 +258,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         height,
     };
 
-    let lines: Vec<Line> = ROWS
+    let lines: Vec<Line> = rows_source
         .iter()
         .map(|(k, what)| {
             Line::from(vec![

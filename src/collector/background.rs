@@ -410,6 +410,22 @@ impl Drop for CollectorHandle {
 mod tests {
     use super::*;
 
+    /// Wait for a condition to hold, up to a generous deadline.
+    ///
+    /// The tests here are about what the supervisor eventually does, not how fast it does it.
+    fn wait_for<T>(mut check: impl FnMut() -> Option<T>) -> Option<T> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(value) = check() {
+                return Some(value);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     struct StubCollector {
         name: String,
         interval_secs: u64,
@@ -453,10 +469,17 @@ mod tests {
             }),
         ];
         let handle = CollectorHandle::spawn(collectors);
-        thread::sleep(Duration::from_millis(200));
-        let snap = handle.snapshot();
+        // Poll for the outcome rather than sleeping a fixed 200ms and hoping. A loaded CI
+        // runner -- this suite runs on three of them -- can miss a flat deadline, and a test
+        // that fails only when the machine is busy is worse than no test. The wait is generous
+        // and only paid in full when something is actually wrong.
+        let snap = wait_for(|| {
+            let snap = handle.snapshot();
+            (snap.len() >= 2).then_some(snap)
+        })
+        .expect("both collectors should have produced a row");
         handle.join();
-        assert!(snap.len() >= 2);
+        assert_eq!(snap.len(), 2);
     }
 
     #[test]

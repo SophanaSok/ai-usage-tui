@@ -4,6 +4,26 @@
 
 ### Changed
 
+- **Key bindings are defined once, in `src/ui/keys.rs`.** They existed in five places — the event
+  loop's `match` arms, the `?` overlay's `ROWS`, the `KEYS` block in `--help`, the README's panel
+  table, and prose in `AGENTS.md` — with nothing keeping them in step, so adding a panel meant
+  remembering five edits. The first three now read one table, `tests/docs.rs` fails the build when
+  the README's table disagrees with it, and a test fails if a `Panel` variant has no key at all
+  (a panel the user cannot open). `AGENTS.md` points at the table instead of restating it.
+
+- **`src/ui/tests.rs` (1837 lines) is now `src/ui/tests/`, one file per area.** It was the only
+  home for the projects, coverage, time-series, burn, sessions, routing, breakdown and limits
+  panels plus the SVG renderer and the key reference, with nothing but reading order separating
+  them. The shared fixtures stay in `mod.rs`; the largest test file is now 218 lines.
+
+- **The path resolvers in `src/utils.rs` take an injected environment.** Their tests called
+  `std::env::set_var`, which mutates state every other test in the process shares — Cargo runs
+  tests as threads, not processes — and which is `unsafe` from edition 2024 onward. They now pass
+  a fixed lookup, mirroring how `collector::billing::Signals` already injects its environment, and
+  gained coverage for the Windows `USERPROFILE`/`HOMEDRIVE` fallbacks and the XDG precedence rules.
+  One behaviour change falls out: a variable that is *set but empty* (`OPENCODE_DB_PATH=`) now
+  falls back to the default instead of resolving to an empty path that opens nothing.
+
 - **CI gained a docs job and its advisory check got faster and more timely.** `cargo doc` with
   warnings denied, plus a relative-link check across every Markdown file — the kind of breakage
   a doc-only PR causes and nothing caught. `cargo-deny` now runs from a prebuilt action instead
@@ -111,6 +131,8 @@
 - **A failed refresh no longer blames OpenCode for the journal.** `App::refresh` reported every
   `load_usage` failure as `OpenCode unavailable`, sending readers to the wrong file when it was
   the journal that could not be read.
+- **A supervisor test asserted after a flat 200ms sleep**, on a three-OS matrix, where a loaded
+  runner could miss the deadline and fail a correct build. It polls for the outcome now.
 - **`scripts/release.sh` printed "All checks passed!" without running two of them.** It skipped
   `cargo fmt --check` and `cargo deny` entirely, and every check in it is path-relative with no
   anchoring, so running it from anywhere but the repository root checked nothing and still

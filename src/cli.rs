@@ -375,22 +375,7 @@ ENVIRONMENT:
                         (omarchy/agents/usage beneath it)
 
 KEYS:
-    1              Today
-    2              Last 7 days
-    3              Last 30 days
-    4              All time
-    r              Refresh data
-    b              Toggle budgets panel
-    t              Toggle routing panel
-    p              Toggle per-project cost panel
-    g              Toggle the spend-over-time graph
-    w              Toggle the burn-rate panel
-    s              Toggle the sessions panel
-    l              Toggle the subscription-limits panel (Omarchy)
-    j / Down       Select next model
-    k / Up         Select previous model
-    ?              Key reference overlay
-    q / Esc        Quit (also Ctrl-C)
+{keys}
 
 CATEGORIES:
     LOCAL          Local provider usage
@@ -402,8 +387,20 @@ CATEGORIES:
 EXAMPLES:
     ai-usage-tui
     OPENCODE_DB_PATH=/path/to/opencode.db ai-usage-tui",
-        env!("CARGO_PKG_VERSION")
+        env!("CARGO_PKG_VERSION"),
+        keys = key_reference()
     );
+}
+
+/// The `KEYS:` block, rendered from `ui::keys::BINDINGS`.
+///
+/// This was a hand-written list, the third of four copies of the same bindings; the `?` overlay
+/// and the event loop now read the same table.
+fn key_reference() -> String {
+    crate::ui::keys::rows()
+        .map(|(keys, what)| format!("    {keys:<14} {what}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
