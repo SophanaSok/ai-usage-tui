@@ -142,8 +142,19 @@ Remaining:
   derived from collected sessions, but pass/fail and retry counts cannot be inferred from usage
   metadata and must not be guessed. A shipped hook or wrapper that emits `--record-routing`
   events from a real agent harness is what would close this, not more derivation.
-- **Derived escalations are not exported.** `--json` and `--csv` carry usage rows only, so the
-  block is TUI-only.
+- **Resolved.** Derived escalations are exported. `--json` carries an `escalations` object —
+  sessions examined and escalated, the rate, unclassified changes, and the transitions with their
+  spend after the move — derived from the same filtered rows the export reports, so a
+  `--provider` filter narrows both and a script cannot disagree with the dashboard about one run.
+
+  Deliberately not added to `--routing-json`, which reads recorded `--record-routing` events from
+  the journal and nothing else: these are *inferred* from usage, the dashboard labels the two as
+  different things, and a test asserts it. Folding one into the other in an export would undo
+  exactly that distinction.
+
+  Deliberately not added to `--csv` either. The usage CSV is one flat table whose columns are
+  appended-never-inserted so a consumer reading by index keeps working; transitions are a
+  different shape and would need their own file. `--json` is the export for them.
 
 ### P3 — Polish
 

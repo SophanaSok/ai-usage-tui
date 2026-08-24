@@ -407,6 +407,174 @@ fn claude_home(root: &std::path::Path) -> std::path::PathBuf {
     projects
 }
 
+/// A Claude Code home whose one session opens on a cheap model and moves to a pricier one.
+///
+/// Two requests in one `sessionId`, which is what `escalation::derive` needs: a session with a
+/// single request cannot show a change, and a row with no session id cannot be placed in a
+/// sequence at all.
+fn escalating_claude_home(root: &std::path::Path) -> std::path::PathBuf {
+    let projects = root.join(".claude").join("projects");
+    let project = projects.join("p");
+    std::fs::create_dir_all(&project).unwrap();
+    let line = |uuid: &str, msg: &str, model: &str, at: &str, out: u64| {
+        format!(
+            "{{\"type\":\"assistant\",\"uuid\":\"{uuid}\",\"requestId\":\"req_{uuid}\",\
+             \"timestamp\":\"{at}\",\"sessionId\":\"s-esc\",\"message\":{{\"id\":\"{msg}\",\
+             \"role\":\"assistant\",\"model\":\"{model}\",\
+             \"usage\":{{\"input_tokens\":1000,\"output_tokens\":{out}}}}}}}\n"
+        )
+    };
+    std::fs::write(
+        project.join("s.jsonl"),
+        format!(
+            "{}{}",
+            line(
+                "u-1",
+                "msg_1",
+                "claude-sonnet-4-5-20250929",
+                "2026-08-18T10:00:00Z",
+                500
+            ),
+            line(
+                "u-2",
+                "msg_2",
+                "claude-opus-4-1-20250805",
+                "2026-08-18T10:05:00Z",
+                900
+            ),
+        ),
+    )
+    .unwrap();
+    projects
+}
+
+/// Derived escalations reach `--json`. They used to be visible only in the dashboard.
+#[test]
+fn derived_escalations_are_exported() {
+    let dir = scratch("escalations");
+    let projects = escalating_claude_home(&dir);
+
+    let output = bin()
+        .arg("--json")
+        .arg("--all")
+        .arg("--claude-dir")
+        .arg(&projects)
+        .arg("--claude-billing")
+        .arg("api")
+        .arg("--db")
+        .arg("/nonexistent/opencode.db")
+        .arg("--codex-dir")
+        .arg("/nonexistent")
+        .arg("--gemini-dir")
+        .arg("/nonexistent")
+        .arg("--omarchy-dir")
+        .arg("/nonexistent")
+        .arg("--journal")
+        .arg("/nonexistent/journal.db")
+        .output()
+        .expect("run --json");
+    assert!(
+        output.status.success(),
+        "exited {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let escalations = &json["escalations"];
+
+    assert_eq!(escalations["sessions_examined"], 1, "{escalations}");
+    assert_eq!(escalations["sessions_escalated"], 1, "{escalations}");
+    assert_eq!(escalations["escalation_rate"], 100.0, "{escalations}");
+
+    let transitions = escalations["transitions"].as_array().expect("transitions");
+    assert_eq!(transitions.len(), 1, "{escalations}");
+    assert_eq!(transitions[0]["from"], "claude-sonnet-4-5-20250929");
+    assert_eq!(transitions[0]["to"], "claude-opus-4-1-20250805");
+    assert_eq!(transitions[0]["sessions"], 1);
+    // Opus output is priced, so the spend after the move is a real figure, not a floor.
+    assert!(
+        transitions[0]["cost_after"].as_f64().unwrap() > 0.0,
+        "{escalations}"
+    );
+    assert_eq!(transitions[0]["unpriced_after"], 0);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Always present, and a rate over zero sessions is null rather than zero.
+///
+/// `limits` is emitted present-and-empty for the same reason: a consumer keys on the field
+/// rather than having to tell "absent" from "nothing to report".
+#[test]
+fn the_escalation_block_is_present_even_with_nothing_to_report() {
+    let output = hermetic(bin().arg("--json")).output().expect("run");
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let escalations = &json["escalations"];
+
+    assert!(escalations.is_object(), "the block must always be there");
+    assert_eq!(escalations["sessions_examined"], 0);
+    assert!(
+        escalations["escalation_rate"].is_null(),
+        "a rate over zero sessions is not a fact about anything: {escalations}"
+    );
+    assert_eq!(escalations["transitions"].as_array().map(Vec::len), Some(0));
+}
+
+/// The block must be derived from the rows the export reports, not from everything collected.
+///
+/// This is what fails if the derivation is handed the unfiltered set: the session is Anthropic,
+/// so filtering to another provider must empty the escalations too, not just the usage rows.
+#[test]
+fn escalations_follow_the_same_filter_as_the_rows() {
+    let dir = scratch("escalations-filter");
+    let projects = escalating_claude_home(&dir);
+    let run = |extra: &[&str]| {
+        let mut command = bin();
+        command
+            .arg("--json")
+            .arg("--all")
+            .arg("--claude-dir")
+            .arg(&projects)
+            .arg("--claude-billing")
+            .arg("api")
+            .arg("--db")
+            .arg("/nonexistent/opencode.db")
+            .arg("--codex-dir")
+            .arg("/nonexistent")
+            .arg("--gemini-dir")
+            .arg("/nonexistent")
+            .arg("--omarchy-dir")
+            .arg("/nonexistent")
+            .arg("--journal")
+            .arg("/nonexistent/journal.db");
+        for arg in extra {
+            command.arg(arg);
+        }
+        let output = command.output().expect("run");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("valid JSON")
+    };
+
+    let unfiltered = run(&[]);
+    assert_eq!(unfiltered["escalations"]["sessions_escalated"], 1);
+
+    // Filter to a provider the session is not on: no rows, and so nothing to escalate.
+    let filtered = run(&["--provider", "openai"]);
+    assert_eq!(filtered["usage"].as_array().map(Vec::len), Some(0));
+    assert_eq!(
+        filtered["escalations"]["sessions_examined"], 0,
+        "escalations were derived from unfiltered usage: {}",
+        filtered["escalations"]
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn anthropic_rows(stdout: &[u8]) -> Vec<serde_json::Value> {
     let json: serde_json::Value = serde_json::from_slice(stdout).expect("valid JSON");
     json["usage"]
