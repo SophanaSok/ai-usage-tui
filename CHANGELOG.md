@@ -103,6 +103,13 @@
 
 ### Documentation
 
+- **The two provider "Billing" essays move to
+  [`docs/provider-support.md`](docs/provider-support.md#billing-detection).** Thirty lines each,
+  on the install-to-first-run path, explaining a detection cascade to a reader who has not yet
+  seen a number. The README keeps the paragraph that matters — what the collector decides, how to
+  override it, and that `--doctor` and the source line show the answer — and points at the rest.
+  The README is 836 lines, down from 911, with the CLI and environment tables untouched where
+  `tests/docs.rs` expects them.
 - **The Omarchy integration moves to [`docs/omarchy.md`](docs/omarchy.md).** It occupied 136
   contiguous lines in the README's primary usage section — enough that a general-audience tool
   read as an add-on for one Arch/Hyprland desktop. A short pointer stays behind. The behaviour is

@@ -288,36 +288,17 @@ printed — including secrets read from a `.env` — and none of that is read or
 retained. Usage is attributed to a session and a project (the working
 directory's last path segment).
 
-**Billing.** Claude Code writes identical transcripts whether it runs on an API
-key or a Pro/Max plan, and nothing on a usage line says which. Priced at list
-rates, a subscription's traffic reads as real spend and trips budgets on money
-that was never charged, so the collector decides how the account pays before
-pricing runs. In order: an explicit `billing` setting; then, if any of
-`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, or
-`CLAUDE_CODE_USE_VERTEX` is set in the environment, per-token; then, if Claude
-Code's own `~/.claude.json` has an `oauthAccount` block, subscription, with the
-plan named from its rate-limit tier (`default_claude_max_20x` → "Max 20x");
-then the plan label in Omarchy's record for the agent, if Omarchy's agents
-panel is present (see [Subscription limits](docs/omarchy.md#subscription-limits)),
-subscription; otherwise per-token, with a visible "billing unknown" hint. Per-token rows are
-priced `estimated` as before. Subscription rows carry `cost_status = quota`,
-`cost = null`, and the list-rate figure as `api_equivalent_cost`.
+**Billing.** Claude Code and Codex write identical transcripts on an API key and on a
+subscription, and nothing on a usage line says which — so a plan's traffic priced at list
+rates would read as real spend and trip budgets on money that was never charged. The
+collector decides how the account pays before pricing runs, from the `billing` setting, the
+environment, the agent's own config document and Omarchy's record, in that order. Override
+it with `--claude-billing` / `--codex-billing` or `[collectors.<id>] billing`. Full rules and
+the exact signals: [`docs/provider-support.md`](docs/provider-support.md#billing-detection).
 
-Force the answer with `[collectors.claude_code] billing = "subscription"` or
-`"api"` (default `"auto"`), or `--claude-billing MODE` on the command line. If
-`~/.claude.json` is not at the default location — it follows `CLAUDE_CONFIG_DIR`,
-and an overridden `claude_dir` derives it from two levels above the session-log
-root — point at it with `config_json`. The decision is printed on the source
-line so a wrong guess is visible: `Claude Code: ~/.claude/projects (N sessions)
-· subscription Max 20x`, `· api billing`, or `· billing unknown — set
-[collectors.claude_code] billing`.
-
-Two caveats. The decision is made once per source, not per request, and it
-applies to every Claude Code row in the window, including history from before
-the plan or key changed. And a plan with *extra usage* enabled is dollar-billed
-at API rates once it passes its limits, and those requests look exactly like
-the ones inside the plan, so `api_equivalent_cost` is a ceiling on what such an
-account was charged, not a spend figure.
+The decision is printed on the source line, and by `--doctor`, so a wrong guess
+is visible rather than silent: `· subscription Max 20x`, `· api billing`, or
+`· billing unknown — set [collectors.claude_code] billing`.
 
 ### Codex CLI
 
@@ -352,22 +333,6 @@ estimates are skipped. A forked thread copies its ancestor's history into the
 new file, timestamps and all, so event identity is content-based
 (`timestamp + call tokens + running total`) and the copy deduplicates against
 the original.
-
-**Billing.** As with Claude Code, a rollout looks the same on an API key and on
-a ChatGPT plan. In order: an explicit `billing` setting; then, if
-`OPENAI_API_KEY` or `CODEX_API_KEY` is set in the environment, per-token;
-then the plan label in Omarchy's record for the agent, if Omarchy's agents
-panel is present, subscription; otherwise per-token, with a visible "billing
-unknown" hint. No Codex config
-document is read — `~/.codex/auth.json` is a credential file and is never
-opened — so `config_json` is rejected under `[collectors.codex]`. Force the
-answer with `[collectors.codex] billing = "subscription"` or `"api"` (default
-`"auto"`), or `--codex-billing MODE`. The decision is printed on the source
-line: `Codex: ~/.codex (N sessions) · api billing` or `· billing unknown — set
-[collectors.codex] billing`. The same line appends `· N token events disagree
-with running totals` when the CLI's cumulative counter did not advance by a
-call's own figure, so a change in what the CLI emits is visible rather than a
-silent under-count.
 
 Rows are `openai` / `PAID` and priced `estimated` from the bundled table, which
 covers the `gpt-5`, `gpt-5.1`, `gpt-5.2`, `gpt-5.3-codex`, `gpt-5.4`, `gpt-5.5`,
