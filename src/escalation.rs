@@ -50,6 +50,9 @@ pub struct Transition {
     /// Requests on the pricier models that should carry a price but do not, making `cost_after`
     /// a floor rather than a total.
     pub unpriced_after: u64,
+    /// Requests on the pricier models billed against a plan. Real cost with no per-request
+    /// figure: without this counter an all-subscription escalation reads as `$0.00 after`.
+    pub quota_after: u64,
 }
 
 /// What could be derived about escalation across the sessions in range.
@@ -124,6 +127,7 @@ pub fn derive(usages: &[Usage], rate_of: impl Fn(&str) -> Option<f64>) -> Escala
         let mut priciest: Option<(&str, f64)> = None;
         let mut cost_after = 0.0;
         let mut unpriced_after = 0;
+        let mut quota_after = 0;
         for row in &rows[1..] {
             if row.model == *opening {
                 continue;
@@ -140,6 +144,8 @@ pub fn derive(usages: &[Usage], rate_of: impl Fn(&str) -> Option<f64>) -> Escala
             }
             if row.cost_status.is_billable() {
                 cost_after += row.cost.unwrap_or(0.0);
+            } else if row.cost_status.is_quota_billed() {
+                quota_after += row.requests;
             } else if row.cost_status.needs_price() {
                 unpriced_after += row.requests;
             }
@@ -158,6 +164,7 @@ pub fn derive(usages: &[Usage], rate_of: impl Fn(&str) -> Option<f64>) -> Escala
         entry.sessions += 1;
         entry.cost_after += cost_after;
         entry.unpriced_after += unpriced_after;
+        entry.quota_after += quota_after;
     }
 
     result.transitions = pairs.into_values().collect();
@@ -388,5 +395,17 @@ mod tests {
         let derived = derive(&rows, rate_of);
         assert_eq!(derived.sessions_examined, 2);
         assert_eq!(derived.rate(), Some(50.0));
+    }
+
+    #[test]
+    fn spend_on_a_plan_after_escalating_is_counted_as_quota_not_unpriced() {
+        let mut on_plan = usage("s1", "opus", 20, None);
+        on_plan.cost_status = CostStatus::Quota;
+        let rows = vec![usage("s1", "haiku", 10, Some(0.01)), on_plan];
+        let derived = derive(&rows, rate_of);
+        let transition = &derived.transitions[0];
+        assert_eq!(transition.quota_after, 1);
+        assert_eq!(transition.unpriced_after, 0, "quota is not a missing price");
+        assert_eq!(transition.cost_after, 0.0);
     }
 }

@@ -42,6 +42,12 @@
 - Pre-flight checks passed (51 tests, clippy clean, release build verified)
 - Security audit passed (cost provenance, privacy, SQL injection, thread safety, no secrets in packaging)
 
+## Unreleased
+
+- `quota` now covers Claude Code on a Pro/Max subscription: billing is detected per source
+  (`src/collector/billing.rs`), subscription rows carry `api_equivalent_cost` instead of `cost`,
+  and `[collectors.claude_code] billing` / `--claude-billing` override the detection
+
 ## Released in v0.4.1 (2026-08-20)
 
 Two packaging fixes, both present in every release through 0.4.0: `checksums.txt` now hashes by

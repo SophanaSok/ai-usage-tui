@@ -64,10 +64,13 @@ provider, `calculated` or `estimated` comes from pricing data, `free` and
 
 `quota` is its own case: the usage is billed, but against an account quota or
 GPU time rather than per token, so no per-request price exists to report. Ollama
-Cloud is the current example. It is deliberately **not** counted as a pricing
-gap — doing so reported a correct refusal to invent a number as a failure to
-produce one — and deliberately not rendered as `$0.00`. The header shows the
-volume alongside the coverage figure so it cannot silently disappear.
+Cloud is one example; Claude Code on a Pro or Max subscription is the other.
+For subscription rows the API-list-rate figure is kept as `api_equivalent_cost`
+and shown as `API-RATE EQUIV.` in the breakdown, but it is never summed into
+cost or budgets. `quota` is deliberately **not** counted as a pricing gap —
+doing so reported a correct refusal to invent a number as a failure to produce
+one — and deliberately not rendered as `$0.00`. The header shows the volume
+alongside the coverage figure so it cannot silently disappear.
 
 ## Prerequisites
 
@@ -211,6 +214,35 @@ transcripts contain prompts, completions, file contents, and anything a tool
 printed — including secrets read from a `.env` — and none of that is read or
 retained. Usage is attributed to a session and a project (the working
 directory's last path segment).
+
+**Billing.** Claude Code writes identical transcripts whether it runs on an API
+key or a Pro/Max plan, and nothing on a usage line says which. Priced at list
+rates, a subscription's traffic reads as real spend and trips budgets on money
+that was never charged, so the collector decides how the account pays before
+pricing runs. In order: an explicit `billing` setting; then, if any of
+`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, or
+`CLAUDE_CODE_USE_VERTEX` is set in the environment, per-token; then, if Claude
+Code's own `~/.claude.json` has an `oauthAccount` block, subscription, with the
+plan named from its rate-limit tier (`default_claude_max_20x` → "Max 20x");
+otherwise per-token, with a visible "billing unknown" hint. Per-token rows are
+priced `estimated` as before. Subscription rows carry `cost_status = quota`,
+`cost = null`, and the list-rate figure as `api_equivalent_cost`.
+
+Force the answer with `[collectors.claude_code] billing = "subscription"` or
+`"api"` (default `"auto"`), or `--claude-billing MODE` on the command line. If
+`~/.claude.json` is not at the default location — it follows `CLAUDE_CONFIG_DIR`,
+and an overridden `claude_dir` derives it from two levels above the session-log
+root — point at it with `config_json`. The decision is printed on the source
+line so a wrong guess is visible: `Claude Code: ~/.claude/projects (N sessions)
+· subscription Max 20x`, `· api billing`, or `· billing unknown — set
+[collectors.claude_code] billing`.
+
+Two caveats. The decision is made once per source, not per request, and it
+applies to every Claude Code row in the window, including history from before
+the plan or key changed. And a plan with *extra usage* enabled is dollar-billed
+at API rates once it passes its limits, and those requests look exactly like
+the ones inside the plan, so `api_equivalent_cost` is a ceiling on what such an
+account was charged, not a spend figure.
 
 ### Ollama
 
@@ -382,6 +414,12 @@ days = 7
 enabled = true
 interval = 30
 
+[collectors.claude_code]
+enabled = true
+interval = 30
+billing = "auto"                        # auto | subscription | api
+# config_json = "/home/user/.claude.json"
+
 [collectors.journal]
 enabled = true
 interval = 60
@@ -409,7 +447,10 @@ warning, critical, or exceeded threshold. It exits with status `0` when all
 budgets are below their warning thresholds or no budgets are configured.
 
 Only usage with a reported, calculated, or estimated cost contributes to
-spend. A daily budget period begins at local midnight — the same boundary the
+spend. Subscription-billed Claude Code usage is `quota` and does not count, so
+a budget scoped to `global`, `provider = "anthropic"`, or a Claude model sees
+none of it; `[collectors.claude_code] billing = "api"` restores the per-token
+accounting. A daily budget period begins at local midnight — the same boundary the
 dashboard's `TODAY` range uses, so those two always agree. A monthly budget
 period begins on the first day of the current local month, which is
 deliberately **not** the dashboard's `3` / `--month` trailing-30-day range, so
@@ -507,6 +548,7 @@ does not load it automatically.
 | `--db PATH` | Override the OpenCode database path |
 | `--journal PATH` | Override the local journal path |
 | `--claude-dir PATH` | Override the Claude Code session-log directory |
+| `--claude-billing MODE` | How Claude Code usage is billed: `auto` (default), `subscription`, or `api`; overrides `[collectors.claude_code] billing` |
 | `--today` | Use today (local calendar day) |
 | `--week` | Use the trailing 7 days (default) |
 | `--month` | Use the trailing 30 days |
@@ -552,6 +594,14 @@ On Windows, `USERPROFILE` (or `HOMEDRIVE` + `HOMEPATH`) stands in for `HOME`,
 - Claude Code session transcripts contain source code and secrets; only the
   `usage` block of each line is parsed. A test plants a fake credential in a
   transcript and fails if it reaches a usage record.
+- `~/.claude.json` is read to decide billing: only whether `oauthAccount` is
+  present and its `userRateLimitTier` / `organizationRateLimitTier` strings.
+  The file also holds the account's email, name, organisation, and per-project
+  prompt history; none of that is retained or logged, and the parsed document
+  is dropped at once. `.credentials.json` and `settings.json` are never read.
+  The environment is checked only for the presence of `ANTHROPIC_API_KEY`,
+  `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, and
+  `CLAUDE_CODE_USE_VERTEX`; their values are not read.
 - Per-project attribution records the **working directory path** of each
   session, so `~/a/build` and `~/b/build` stay separate projects. The dashboard
   shows only the shortest name that distinguishes them, but `--json` and
@@ -566,6 +616,7 @@ Default local storage paths (when the corresponding XDG variable is unset):
 | Data | Path |
 | --- | --- |
 | OpenCode usage, read-only | `~/.local/share/opencode/opencode.db` |
+| Claude Code config document, read-only (billing only) | `~/.claude.json` |
 | Ollama and routing journal | `~/.local/share/ai-usage-tui/usage.db` |
 | Zen pricing cache | `~/.local/share/ai-usage-tui/zen-pricing.toml` |
 | Zen model catalog | `~/.local/share/ai-usage-tui/zen-models.json` |

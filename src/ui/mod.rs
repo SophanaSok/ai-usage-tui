@@ -47,6 +47,7 @@ use ratatui::{
 use crate::budget::{Alert, AlertDispatcher, BudgetEngine};
 use crate::cli::Cli;
 use crate::collector::background::CollectorHandle;
+use crate::collector::SourceRoots;
 use crate::model::{Range, CYAN};
 use crate::utils::journal_path;
 
@@ -93,9 +94,7 @@ pub fn run(
     });
 
     let mut app = App::new(
-        cli.db_path.clone(),
-        journal,
-        cli.claude_dir.clone(),
+        SourceRoots::from_cli(cli, journal),
         cli.range,
         cli.refresh_interval,
         cli.provider_filter.clone(),

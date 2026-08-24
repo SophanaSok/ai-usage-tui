@@ -109,7 +109,9 @@ that looked right.
 ## Testing
 
 - **Tests must be hermetic.** Anything going through `load_usage` or `print_once` needs an
-  explicit `claude_dir`, or it reads the developer's real `~/.claude/projects`.
+  explicit `claude_dir`, or it reads the developer's real `~/.claude/projects` — and their real
+  `~/.claude.json` for the billing decision. The config document is derived from `claude_dir`, so
+  a fixture root resolves to a file that does not exist; pass `claude_json` to plant one.
 - **Tests must discriminate.** A regression test that also passes against the buggy code is
   worse than no test. Restore the bug in a scratch copy and confirm the test fails.
 

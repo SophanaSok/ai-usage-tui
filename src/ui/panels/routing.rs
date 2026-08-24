@@ -257,9 +257,12 @@ fn escalation_block<'a>(escalations: &Escalations) -> Paragraph<'a> {
                 dim,
             ),
             Span::styled(
-                // A floor, not a total, when part of the spend that followed has no price.
-                match transition.unpriced_after {
-                    0 => format!("  ${:.2} after", transition.cost_after),
+                // A floor, not a total, when part of the spend that followed has no price;
+                // and never `$0.00` for work that was billed against a plan.
+                match (transition.unpriced_after, transition.quota_after) {
+                    (0, 0) => format!("  ${:.2} after", transition.cost_after),
+                    (0, _) if transition.cost_after == 0.0 => "  on quota after".to_string(),
+                    (0, _) => format!("  ${:.2} + quota after", transition.cost_after),
                     _ => format!("  ≥ ${:.2} after", transition.cost_after),
                 },
                 Style::default().fg(GREEN),

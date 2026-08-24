@@ -16,6 +16,8 @@ reasoning_tokens
 cache_read_tokens
 cache_write_tokens
 cost
+billing: per_token | subscription (set by the collector; subscription rows become `quota`)
+api_equivalent_cost: float | null (list-rate figure for subscription rows only; never summed into cost; the last, 15th, CSV column)
 latency (planned)
 error_status (planned)
 project (populated by the Claude Code collector from `cwd`)

@@ -48,6 +48,8 @@ pub fn load_journal(path: &Path) -> Result<Vec<Usage>> {
             model: row.get(1)?,
             category: category_from_label(&category),
             cost_status: cost_status_from_label(&cost_status),
+            billing: Default::default(),
+            api_equivalent_cost: None,
             // SQLite integers are signed 64-bit; rusqlite 0.40 removed the `u64` impls
             // rather than keep silently reinterpreting the top bit. Read as `i64` and clamp
             // — a negative token count is corruption, and zero is the honest reading of it.

@@ -156,6 +156,8 @@ pub fn load_opencode_since(
             cache_write: number(cache, &["write", "writeTokens"]),
             cost,
             cost_status,
+            billing: Default::default(),
+            api_equivalent_cost: None,
             created: timestamp_seconds(created),
             session_id: string(info, &["sessionID", "session_id"]),
             project: None,

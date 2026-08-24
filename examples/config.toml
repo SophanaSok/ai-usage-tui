@@ -18,6 +18,8 @@ interval = 30
 [collectors.claude_code]
 enabled = true
 interval = 30
+# billing = "auto"   # auto | subscription | api; auto reads the environment and ~/.claude.json
+# config_json = "/home/user/.claude.json"   # Claude Code's config document, if not at the default
 
 [collectors.journal]
 enabled = true
