@@ -268,12 +268,18 @@ OPTIONS:
 ENVIRONMENT:
     OPENCODE_DB_PATH    Override the OpenCode SQLite database path
     CLAUDE_PROJECTS_DIR Override the Claude Code session-log directory
+    CLAUDE_CONFIG_DIR   Claude Code's own config root; session logs are read
+                        from $CLAUDE_CONFIG_DIR/projects. CLAUDE_PROJECTS_DIR
+                        wins when both are set.
     AI_USAGE_JOURNAL_PATH
                         Override the local usage journal path
     AI_USAGE_LOG        Write diagnostics to a file. Set to 1 for the default
                         location under the data directory, or to a path.
                         Collector errors are invisible on stderr while the
                         dashboard holds the alternate screen.
+    XDG_CONFIG_HOME     Base directory for the default config path
+    XDG_DATA_HOME       Base directory for default database, journal, and
+                        cache paths
 
 KEYS:
     1              Today
@@ -289,7 +295,8 @@ KEYS:
     s              Toggle the sessions panel
     j / Down       Select next model
     k / Up         Select previous model
-    q / Esc        Quit
+    ?              Key reference overlay
+    q / Esc        Quit (also Ctrl-C)
 
 CATEGORIES:
     LOCAL          Local provider usage

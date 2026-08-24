@@ -24,15 +24,15 @@ fi
 
 # 3. Run tests
 echo "==> Running tests..."
-cargo test --all-targets
+cargo test --all-targets --locked
 
 # 4. Run clippy
 echo "==> Running clippy..."
-cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --all-targets --all-features --locked -- -D warnings
 
 # 5. Build release
 echo "==> Building release..."
-cargo build --release
+cargo build --release --locked
 
 # 6. Verify version matches in Cargo.toml
 CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
@@ -42,7 +42,14 @@ if [ "$CARGO_VERSION" != "$VERSION" ]; then
   exit 1
 fi
 
-# 7. Check CHANGELOG.md has the version
+# 7. Verify README.md quick-start pins this version
+if ! grep -qF "VERSION=v${VERSION}" README.md; then
+  echo "ERROR: README.md quick-start still pins a different VERSION="
+  grep -n '^VERSION=v' README.md || true
+  exit 1
+fi
+
+# 8. Check CHANGELOG.md has the version
 if ! grep -q "## $VERSION" CHANGELOG.md 2>/dev/null; then
   echo "WARNING: CHANGELOG.md may not have a '$VERSION' section"
 fi

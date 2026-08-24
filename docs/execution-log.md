@@ -1,5 +1,7 @@
 # Execution Log
 
+Frozen at 2026-07-24. Later history is in `CHANGELOG.md`.
+
 ## 2026-07-24
 
 ### Production Foundation

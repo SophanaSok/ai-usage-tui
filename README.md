@@ -8,9 +8,9 @@
 
 [Quick start](#quick-start) · [Install](#installation) · [Configuration](#configuration) · [Docs](#more-documentation) · [Contributing](CONTRIBUTING.md)
 
-`ai-usage-tui` reads OpenCode's local usage database, can journal completed
-Ollama responses, and presents the combined data in an interactive TUI or as
-JSON, CSV, or plain text. It tracks requests, input/output/reasoning/cache
+`ai-usage-tui` reads OpenCode's local usage database and Claude Code's session
+logs, can journal completed Ollama responses, and presents the combined data in
+an interactive TUI or as JSON, CSV, or plain text. It tracks requests, input/output/reasoning/cache
 tokens, cost provenance, budgets, and opt-in model-routing events.
 
 ![Dashboard showing token totals, model activity, and cost provenance](docs/assets/dashboard.png)
@@ -72,9 +72,10 @@ volume alongside the coverage figure so it cannot silently disappear.
 ## Prerequisites
 
 - **Data:** An OpenCode SQLite database (default:
-  `~/.local/share/opencode/opencode.db`) and/or journaled Ollama usage
+  `~/.local/share/opencode/opencode.db`), Claude Code session logs under
+  `~/.claude/projects`, and/or journaled Ollama usage
 - **Build (optional):** Stable Rust via [rustup](https://rustup.rs/)
-- **Platforms:** Linux, macOS, and Windows x86_64 prebuilts from
+- **Platforms:** Linux and macOS (x86_64 and aarch64) and Windows x86_64 prebuilts from
   [GitHub Releases](https://github.com/SophanaSok/ai-usage-tui/releases)
 
 A missing OpenCode database is not fatal. The dashboard starts with no
@@ -85,7 +86,7 @@ OpenCode rows and can still display journaled Ollama usage.
 Download a prebuilt binary, put it on your `PATH`, and run the dashboard:
 
 ```sh
-VERSION=v0.3.0
+VERSION=v0.4.1
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64)  SLUG=x86_64-linux   ;;
   Linux-aarch64) SLUG=aarch64-linux  ;;
@@ -137,7 +138,7 @@ Checksums are published with each release.
 macOS example (Apple Silicon — use `x86_64-macos` on an Intel Mac):
 
 ```sh
-VERSION=v0.3.0
+VERSION=v0.4.1
 curl -fsSL "https://github.com/SophanaSok/ai-usage-tui/releases/download/${VERSION}/ai-usage-tui-${VERSION}-aarch64-macos.tar.gz" \
   | tar xz
 install -m 755 ai-usage-tui /usr/local/bin/
@@ -146,8 +147,8 @@ install -m 755 ai-usage-tui /usr/local/bin/
 Linux package example:
 
 ```sh
-sudo dpkg -i ai-usage-tui-v0.3.0-amd64.deb      # Debian/Ubuntu
-sudo rpm -i ai-usage-tui-v0.3.0-amd64.rpm       # Fedora/RHEL
+sudo dpkg -i ai-usage-tui-v0.4.1-amd64.deb      # Debian/Ubuntu
+sudo rpm -i ai-usage-tui-v0.4.1-amd64.rpm       # Fedora/RHEL
 ```
 
 On Windows, extract the zip and add the directory containing
@@ -169,7 +170,7 @@ repository, and run one of:
 cargo install --path . --locked
 
 # Or build without installing
-cargo build --release
+cargo build --release --locked
 ./target/release/ai-usage-tui
 ```
 
@@ -267,8 +268,8 @@ ai-usage-tui --days 14 --model qwen3-coder:30b
 ai-usage-tui --refresh-interval 15
 ```
 
-The dashboard refreshes every 30 seconds by default. OpenCode and journal
-collectors run in the background at their configured intervals.
+The dashboard refreshes every 30 seconds by default. OpenCode, Claude Code, and
+journal collectors run in the background at their configured intervals.
 
 The main view combines summary metrics, token-flow breakdown, and per-model
 activity. One other panel occupies the right-hand pane at a time; `?` lists every
@@ -331,7 +332,7 @@ project, and no per-token price, is shown as `quota` rather than as `$0.00`.
 | `?` | Key reference overlay |
 | `j` / `Down` | Select the next model |
 | `k` / `Up` | Select the previous model |
-| `q` / `Esc` | Quit |
+| `q` / `Esc` / `Ctrl-C` | Quit |
 
 ## Non-interactive output
 
@@ -352,11 +353,13 @@ ai-usage-tui --json --all --provider opencode --model gpt-5.6-sol
 ```
 
 `--json` and `--csv` imply `--once`. JSON includes the source description,
-selected range, and usage rows. Usage CSV columns are:
+selected range, and usage rows; each row also carries `project` and
+`session_id` (`null` when unknown). Usage CSV columns are:
 
 ```text
 provider,model,category,cost_status,requests,input_tokens,output_tokens,
-reasoning_tokens,cache_read_tokens,cache_write_tokens,cost,created
+reasoning_tokens,cache_read_tokens,cache_write_tokens,cost,created,project,
+session_id
 ```
 
 ## Configuration
@@ -406,12 +409,26 @@ warning, critical, or exceeded threshold. It exits with status `0` when all
 budgets are below their warning thresholds or no budgets are configured.
 
 Only usage with a reported, calculated, or estimated cost contributes to
-spend. Budget periods begin at local midnight for daily budgets and the first
-day of the current local month for monthly budgets — the same boundaries the
-dashboard's `TODAY` range uses, so the two always agree.
+spend. A daily budget period begins at local midnight — the same boundary the
+dashboard's `TODAY` range uses, so those two always agree. A monthly budget
+period begins on the first day of the current local month, which is
+deliberately **not** the dashboard's `3` / `--month` trailing-30-day range, so
+a monthly budget's spend differs from the `30 DAYS` total.
 
-The CLI accepts `--webhook URL` and config accepts `budgets.webhook`, but the
-current command and TUI do not dispatch webhook requests.
+When `--webhook URL` (or `webhook` in the `[budgets]` table) is set, actionable
+alerts are POSTed as JSON with this shape:
+
+```text
+{tool, timestamp, alerts: [{scope, period, level, spend, limit, pct}]}
+```
+
+`--check-budgets` posts synchronously before exiting `1` and prints
+`warning: budget webhook dispatch failed: …` on stderr if the POST fails. The
+dashboard posts from a background thread on every refresh and logs a failed
+POST when `AI_USAGE_LOG` is set. A repeat alert at the same level for the same
+scope and period is suppressed for one hour, but that suppression is in-memory
+only: a cron-driven `--check-budgets` re-POSTs on every run while a threshold
+is breached, so run it no more often than you want to be notified.
 
 ## Model-routing analytics
 
@@ -517,9 +534,13 @@ Environment variables:
 | `OPENCODE_DB_PATH` | OpenCode SQLite database path |
 | `AI_USAGE_JOURNAL_PATH` | Usage and routing journal path |
 | `CLAUDE_PROJECTS_DIR` | Claude Code session-log directory |
+| `CLAUDE_CONFIG_DIR` | Claude Code config directory; logs are read from `$CLAUDE_CONFIG_DIR/projects` (`CLAUDE_PROJECTS_DIR` wins when both are set) |
 | `AI_USAGE_LOG` | Write diagnostics to a file — `1` for the default location, or a path. Off when unset. |
 | `XDG_CONFIG_HOME` | Base directory for the default config path |
 | `XDG_DATA_HOME` | Base directory for default database, journal, and cache paths |
+
+On Windows, `USERPROFILE` (or `HOMEDRIVE` + `HOMEPATH`) stands in for `HOME`,
+`LOCALAPPDATA` for `XDG_DATA_HOME`, and `APPDATA` for `XDG_CONFIG_HOME`.
 
 ## Privacy and network behavior
 
@@ -570,9 +591,9 @@ Default local storage paths (when the corresponding XDG variable is unset):
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets
-cargo build --release
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --all-targets --locked
+cargo build --release --locked
 ```
 
 Regenerate the README images. They are rendered off-screen from invented demo data — no

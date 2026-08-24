@@ -3,11 +3,12 @@
 The normalized usage event is the contract shared by collectors, aggregation, exports, and the UI.
 
 ```text
+event_id (stable per-event identity from the source, used for dedup; null falls back to shape + timestamp)
 timestamp
 provider
 model
 category: local | cloud | free | paid | unknown
-cost_status: provider_reported | calculated | estimated | free | local | quota | unavailable
+cost_status: reported | calculated | estimated | free | local | quota | unavailable
 request_count
 input_tokens
 output_tokens
@@ -32,11 +33,11 @@ The local journal currently stores usage metadata in `usage_event`. It intention
 
 ```text
 scope: global | provider | model
-period: daily | weekly | monthly
+period: daily | monthly
 limit: float
 ```
 
-Budget alerts fire when spend exceeds the configured threshold and are displayed in the TUI banner. Webhook dispatch is optional and configured under `[budgets.webhook]`.
+Budget alerts fire when spend exceeds the configured threshold and are displayed in the TUI banner. Webhook dispatch is optional and configured via the `webhook` key of the `[budgets]` table (or `--webhook URL`, which overrides it).
 
 ## Routing Event
 

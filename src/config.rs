@@ -169,4 +169,33 @@ mod tests {
         assert_eq!(config.days, Some(14));
         assert_eq!(config.provider.as_deref(), Some("ollama"));
     }
+
+    #[test]
+    fn the_example_config_puts_the_webhook_under_budgets() {
+        // The shipped example once listed `# webhook = …` after `[collectors.zen_pricing]` with
+        // no `[budgets]` header, so uncommenting it as written produced
+        // `collectors.zen_pricing.webhook` — dropped silently, because no struct here uses
+        // `deny_unknown_fields`. The example must parse, and the webhook must land where the
+        // README says it does.
+        let uncommented: String = include_str!("../examples/config.toml")
+            .lines()
+            .map(|line| match line.trim_start().strip_prefix("# webhook") {
+                Some(rest) => format!("webhook{rest}"),
+                None => line.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config: ConfigFile = toml::from_str(&uncommented).expect("examples/config.toml parses");
+        let budgets = config
+            .budgets
+            .expect("the example configures a [budgets] table");
+        assert!(
+            budgets.webhook.is_some(),
+            "uncommenting `# webhook` must set budgets.webhook, not a key under another table"
+        );
+        assert!(
+            !budgets.entry.is_empty(),
+            "the [[budgets.entry]] examples must still parse after the header is added"
+        );
+    }
 }

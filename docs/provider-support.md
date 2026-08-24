@@ -2,9 +2,9 @@
 
 ## OpenCode
 
-Reads assistant usage metadata from the local OpenCode SQLite database. This is the current supported collector.
+Reads assistant usage metadata from the local OpenCode SQLite database.
 
-The OpenCode collector runs as a background task polling every 30 seconds (configurable via `[collectors.opencode.interval]`). It writes normalized usage events to the local journal database.
+The OpenCode collector runs as a background task polling every 30 seconds (configurable via the `interval` key under `[collectors.opencode]`). It merges what it finds into the in-memory snapshot the dashboard reads; it never writes to the journal.
 
 ## Claude Code
 
@@ -31,7 +31,7 @@ content is read or retained.
 
 Ollama response metrics expose prompt and output token counts, but Ollama does not provide a complete historical usage database. `--record-ollama` provides an opt-in local journal for requests made after tracking is enabled.
 
-The journal collector polls every 60 seconds (configurable via `[collectors.journal.interval]`) and aggregates Ollama events into the same normalized shape.
+The journal collector polls every 60 seconds (configurable via the `interval` key under `[collectors.journal]`) and aggregates Ollama events into the same normalized shape.
 
 ## Ollama Cloud
 
@@ -41,7 +41,7 @@ These rows carry `cost_status = quota`, not `unavailable`. The distinction matte
 
 ## OpenCode Zen
 
-Zen usage can be read from OpenCode history. `--refresh-pricing` scrapes the live Zen pricing table from the docs page with retry/backoff and caches it at `~/.local/share/ai-usage-tui/zen-pricing.toml`. The background `ZenPricingCollector` refreshes hourly when enabled via `[collectors.zen_pricing.enabled]`. Pricing snapshots are applied to historical events for cost calculation.
+Zen usage can be read from OpenCode history. `--refresh-pricing` scrapes the live Zen pricing table from the docs page with retry/backoff and caches it at `~/.local/share/ai-usage-tui/zen-pricing.toml`. The background `ZenPricingCollector` refreshes hourly when enabled via the `enabled` key under `[collectors.zen_pricing]`. Pricing snapshots are applied to historical events for cost calculation.
 
 ## Background Collectors
 
@@ -51,8 +51,8 @@ Zen usage can be read from OpenCode history. `--refresh-pricing` scrapes the liv
 - Journal collector: polls journal DB every 60s (configurable)
 - Zen Pricing collector: refreshes hourly when enabled (opt-in)
 
-All collectors write to the journal database; the TUI reads from the journal on its own refresh interval, keeping the UI responsive.
+Collectors never write to the journal database. Each merges into the shared in-memory `CollectorState`, and the dashboard calls `snapshot()` on its own refresh interval (default 30s), keeping the UI responsive. The journal is a source — written by `--record-ollama` / `--record-routing`, read by the journal collector — not a sink.
 
 ## Budgets
 
-Budget limits can be configured per provider, model, or globally with daily or monthly periods. Alerts appear in the TUI banner. Actionable alerts are POSTed to `--webhook URL` (or `budgets.webhook`) when one is configured; the dispatch runs on a background thread so it never blocks rendering, and repeat alerts at the same level are suppressed for an hour. Periods use local calendar boundaries, matching the dashboard's `TODAY` range. Check budgets from CLI with `ai-usage-tui --check-budgets` (exits 1 if thresholds exceeded).
+Budget limits can be configured per provider, model, or globally with daily or monthly periods. Alerts appear in the TUI banner. Actionable alerts are POSTed to `--webhook URL` (or `budgets.webhook`) when one is configured; the dispatch runs on a background thread so it never blocks rendering, and repeat alerts at the same level are suppressed for an hour. That suppression is in-memory (per process), so a cron-driven `--check-budgets` re-POSTs on every run. Periods use local calendar boundaries: daily matches the dashboard's `TODAY` range; monthly is the calendar month, not the dashboard's trailing 30-day range. Check budgets from CLI with `ai-usage-tui --check-budgets` (exits 1 if thresholds exceeded).

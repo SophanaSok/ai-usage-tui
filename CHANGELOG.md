@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **`tests/docs.rs` guards the README against drift.** The quick-start version pins must match
+  `Cargo.toml`, and the CLI table must match what `--help` actually accepts, or the test fails.
+
+### Fixed
+
+- **Webhook dispatch was documented wrongly.** The README described it as `--check-budgets` only;
+  the dashboard also posts on each refresh, and the per-alert suppression that stops it repeating
+  is in-memory, so it resets when the process restarts. The docs now say so.
+- **Docs said collectors write the journal.** They never do — the journal is a source written by
+  `--record-ollama` / `--record-routing` and read by the journal collector, not a sink.
+- **Budget period names were inconsistent across the docs,** and `monthly` was described as a
+  30-day window. It is the calendar month; the 30-day window is the `3` / `--month` range.
+- **The README quick-start pinned a stale release.** It now pins the current one, and
+  `scripts/release.sh` refuses to tag while it does not.
+- **`examples/config.toml` had no `[budgets]` header above `webhook`.** Uncommenting the key put it
+  in `[collectors.zen_pricing]`, where it was dropped without a word. The header is now present.
+- **The dashboard swallowed a failed webhook POST.** It is now logged under `AI_USAGE_LOG` like any
+  other collector error, rather than discarded.
+
 ## 0.4.1 - 2026-08-20
 
 ### Fixed

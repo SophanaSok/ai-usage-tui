@@ -84,7 +84,9 @@ pub fn run(
         let (tx, rx) = mpsc::channel::<Vec<Alert>>();
         std::thread::spawn(move || {
             while let Ok(alerts) = rx.recv() {
-                let _ = dispatcher.dispatch(&alerts);
+                if let Err(error) = dispatcher.dispatch(&alerts) {
+                    crate::logging::error("budget", &format!("webhook dispatch failed: {}", error));
+                }
             }
         });
         tx

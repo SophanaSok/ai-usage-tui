@@ -82,11 +82,13 @@ Routing decisions are recorded through the application's own routing schema, whi
 - Task and phase
 - Agent, model, provider
 - Category — local, free, paid, cloud, or unknown
-- Input, output, reasoning, and cache tokens
+- Request count
+- Total tokens (one `tokens` counter; routing events do not split buckets)
 - Estimated cost and its provenance
 - Retry and escalation counts
 - Test result
 - Review defects found
+- Created timestamp
 
 Capture with `--record-routing`, view with the `t` panel, export with `--routing-json` or
 `--routing-csv`. The dashboard compares models by cost per successful task, token efficiency, retry
