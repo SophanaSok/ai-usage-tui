@@ -55,6 +55,7 @@ what you think it reads, and the first thing to ask a bug reporter for.
 | Path | What's in it |
 | --- | --- |
 | `src/collector/` | One module per data source, plus the supervisor that polls them |
+| `src/collector/registry.rs` | The one list of sources; both read paths iterate it |
 | `src/pricing.rs` | The pricing table, model-id resolution, and cost estimation |
 | `src/classify.rs` | Deciding whether usage is local, free, paid, cloud, or unknown |
 | `src/model.rs` | `Usage`, `CostStatus`, `Category` — the shared vocabulary |
@@ -68,19 +69,40 @@ what you think it reads, and the first thing to ask a bug reporter for.
 
 ### Add support for another tool's usage data
 
-The most valuable contribution. Implement `Collector` in a new `src/collector/yours.rs`:
+The most valuable contribution, and it is two files.
+
+**1. `src/collector/yours.rs`** exposing four things:
 
 ```rust
-pub trait Collector: Send + 'static {
-    fn name(&self) -> &str;
+pub const ID: &str = "yours";           // also the [collectors.yours] table name
+
+// Read everything, for --json / --csv / --check-budgets / --doctor.
+pub(crate) fn read(roots: &SourceRoots) -> registry::SourceRead;
+
+// Poll incrementally, for the dashboard's background collector.
+pub(crate) fn collector(roots: &SourceRoots, interval_secs: u64) -> Box<dyn Collector>;
+
+pub struct YoursCollector { /* whatever `poll` needs to resume */ }
+impl Collector for YoursCollector {
+    fn name(&self) -> &str { ID }
     fn interval(&self) -> Duration;
     fn poll(&mut self) -> Result<Vec<Usage>>;
 }
 ```
 
-Then register it in `main.rs::build_collectors` and add a `[collectors.yours]` section to the
-config. Read `src/collector/claude_code.rs` first — it is the fullest example, including
-incremental tailing and how to parse a file that contains things you must not read.
+**2. One entry in `SOURCES`** in [`src/collector/registry.rs`](src/collector/registry.rs).
+
+That is the whole list. Both the one-shot path and the background collectors iterate that
+registry, so registering once wires both, and `every_source_is_reachable_from_both_paths` fails
+the build if a source is only half wired. `[collectors.yours]` needs no code: the config table is
+keyed off the registry, and an id that is not a source is rejected with the real ones named.
+
+If your source needs a path override, add the field to `SourceRoots` (`src/collector/mod.rs`) and
+a flag in `src/cli.rs`; `tests/docs.rs` will then require a row in the README's CLI reference
+table and, if you read an environment variable, a row in its environment table.
+
+Read `src/collector/claude_code.rs` first — it is the fullest example, including incremental
+tailing and how to parse a file that contains things you must not read.
 
 ### Add a dashboard panel
 
@@ -121,6 +143,10 @@ that looked right.
   `claude_json` to plant one. Codex reads no config document; `--codex-dir /nonexistent` suffices.
   The billing decision also reads Omarchy's records, so pass `--omarchy-dir /nonexistent` too
   (`tests/cli.rs` `hermetic()` does; lib tests set `omarchy_dir`).
+- **`tests/docs.rs` is part of the build.** It fails when the README's CLI or environment tables
+  disagree with `src/cli.rs`, when `--help` and the parser disagree, or when the README pins a
+  release other than `Cargo.toml`'s. A doc-only PR can fail CI on it; the assertion names the
+  flag or variable that drifted.
 - **Tests must discriminate.** A regression test that also passes against the buggy code is
   worse than no test. Restore the bug in a scratch copy and confirm the test fails.
 

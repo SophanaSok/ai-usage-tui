@@ -40,12 +40,20 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::classify::classify;
+use crate::collector::background::Collector;
 use crate::collector::billing::Decision;
+use crate::collector::billing::{detect, resolve_sticky, BillingSetting, Signals};
 use crate::collector::claude_code::{normalize_project_path, session_files};
 use crate::collector::opencode::parse_created_at;
 use crate::helpers::{number, string};
 use crate::model::{CostStatus, Usage};
 use crate::utils::home_dir;
+use std::time::Duration;
+
+/// This source's canonical id: the `Collector::name()` it reports, the
+/// `[collectors.<id>]` table that configures it, and its key in the source registry.
+/// One constant so those can never drift apart.
+pub const ID: &str = "codex";
 
 /// Codex's home, `$CODEX_HOME` or `~/.codex`. Session logs live in `sessions/` and
 /// `archived_sessions/` beneath it.
@@ -298,6 +306,80 @@ fn session_id_from_filename(path: &Path) -> Option<String> {
     let candidate: String = tail.into_iter().rev().collect::<Vec<_>>().join("-");
     let candidate = candidate.split('_').next()?.to_string();
     (candidate.len() == 36).then_some(candidate)
+}
+
+pub struct CodexCollector {
+    pub root: Option<PathBuf>,
+    pub interval_secs: u64,
+    /// Per-file cursors: byte offset plus the model, thread and directory in force there.
+    pub cursors: Cursors,
+    pub billing: BillingSetting,
+    pub omarchy_dir: Option<PathBuf>,
+    pub decision: Option<Decision>,
+}
+
+impl Collector for CodexCollector {
+    fn name(&self) -> &str {
+        ID
+    }
+    fn interval(&self) -> Duration {
+        Duration::from_secs(self.interval_secs)
+    }
+    fn poll(&mut self) -> Result<Vec<Usage>> {
+        let tier = self
+            .omarchy_dir
+            .as_deref()
+            .and_then(|dir| crate::omarchy::tier_label_for(dir, "codex"));
+        let fresh = detect(
+            "codex",
+            self.billing,
+            &Signals {
+                claude_json: None,
+                env_has: &crate::collector::billing::env_has,
+                omarchy_tier: tier.as_deref(),
+            },
+        );
+        let decision = resolve_sticky("codex", self.decision.take(), fresh);
+        self.decision = Some(decision.clone());
+        let (usages, _) = load_codex(self.root.as_deref(), &mut self.cursors, &decision)?;
+        Ok(usages)
+    }
+}
+
+/// One-shot read for the source registry.
+pub(crate) fn read(
+    roots: &crate::collector::SourceRoots,
+) -> crate::collector::registry::SourceRead {
+    let decision = roots.codex_decision();
+    let (usages, status) = load_codex(roots.codex_dir.as_deref(), &mut Cursors::new(), &decision)
+        .unwrap_or_else(|error| (Vec::new(), format!("Codex: unavailable ({})", error)));
+    let path = roots.codex_dir.clone().or_else(codex_home);
+    Ok((
+        crate::collector::SourceReport {
+            id: ID,
+            present: path.as_deref().is_some_and(Path::exists),
+            path,
+            rows: usages.len(),
+            status,
+            detail: Some(decision.describe("collectors.codex")),
+        },
+        usages,
+    ))
+}
+
+/// A background collector for the same source.
+pub(crate) fn collector(
+    roots: &crate::collector::SourceRoots,
+    interval_secs: u64,
+) -> Box<dyn Collector> {
+    Box::new(CodexCollector {
+        root: roots.codex_dir.clone(),
+        interval_secs,
+        cursors: Cursors::new(),
+        billing: roots.codex_billing,
+        omarchy_dir: roots.omarchy_signal_dir(),
+        decision: None,
+    })
 }
 
 #[cfg(test)]

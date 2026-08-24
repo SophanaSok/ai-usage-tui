@@ -253,7 +253,8 @@ cargo build --release --locked
 
 ```text
 OpenCode DB / Claude Code logs / Codex logs / Ollama journal
-        -> background collectors -> TUI or JSON/CSV export
+        -> one source registry -> background collectors -> TUI
+                               \-> one-shot read -> JSON / CSV / budgets
 ```
 
 ### OpenCode

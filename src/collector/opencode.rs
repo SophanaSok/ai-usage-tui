@@ -7,9 +7,16 @@ use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 
 use crate::classify::classify;
+use crate::collector::background::Collector;
 use crate::helpers::{number, string};
 use crate::model::{Category, CostStatus, Usage};
 use crate::utils::db_path;
+use std::path::PathBuf;
+
+/// This source's canonical id: the `Collector::name()` it reports, the
+/// `[collectors.<id>]` table that configures it, and its key in the source registry.
+/// One constant so those can never drift apart.
+pub const ID: &str = "opencode";
 
 /// A resume point for incremental reads: the highest `time_created` already ingested.
 ///
@@ -181,6 +188,58 @@ pub fn parse_created_at(value: &str) -> Option<i64> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|timestamp| timestamp.timestamp())
+}
+
+pub struct OpenCodeCollector {
+    pub db_path: Option<PathBuf>,
+    pub interval_secs: u64,
+    /// Resume point, so each poll reads only what arrived since the last one.
+    pub cursor: Cursor,
+}
+
+impl Collector for OpenCodeCollector {
+    fn name(&self) -> &str {
+        ID
+    }
+    fn interval(&self) -> Duration {
+        Duration::from_secs(self.interval_secs)
+    }
+    fn poll(&mut self) -> Result<Vec<Usage>> {
+        let (usages, _, cursor) = load_opencode_since(self.db_path.as_deref(), self.cursor)?;
+        self.cursor = cursor;
+        Ok(usages)
+    }
+}
+
+/// One-shot read for the source registry.
+pub(crate) fn read(
+    roots: &crate::collector::SourceRoots,
+) -> crate::collector::registry::SourceRead {
+    let path = roots.db_path.clone().or_else(db_path);
+    let (usages, status) = load_opencode(roots.db_path.as_deref())?;
+    Ok((
+        crate::collector::SourceReport {
+            id: ID,
+            present: path.as_deref().is_some_and(Path::exists),
+            path,
+            rows: usages.len(),
+            status,
+            detail: None,
+        },
+        usages,
+    ))
+}
+
+/// A background collector for the same source.
+pub(crate) fn collector(
+    roots: &crate::collector::SourceRoots,
+    interval_secs: u64,
+) -> Box<dyn Collector> {
+    Box::new(OpenCodeCollector {
+        db_path: roots.db_path.clone(),
+        interval_secs,
+        cursor: Cursor::start(),
+    })
 }
 
 #[cfg(test)]

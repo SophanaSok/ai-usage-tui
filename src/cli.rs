@@ -11,6 +11,8 @@ pub struct Cli {
     pub version: bool,
     /// Report what each data source resolved to and exit, without starting the dashboard.
     pub doctor: bool,
+    /// `[collectors.<id>] enabled` overrides, by source id. Absent means the registry default.
+    pub source_enabled: std::collections::BTreeMap<String, bool>,
     pub config_path: Option<PathBuf>,
     pub db_path: Option<PathBuf>,
     pub journal_path: Option<PathBuf>,
@@ -56,6 +58,7 @@ impl Default for Cli {
             help: false,
             version: false,
             doctor: false,
+            source_enabled: Default::default(),
             config_path: None,
             db_path: None,
             journal_path: None,

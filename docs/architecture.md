@@ -1,10 +1,18 @@
 # Architecture
 
-The application is designed around a provider-neutral usage pipeline:
+The application is designed around a provider-neutral usage pipeline, with one registry of
+sources (`src/collector/registry.rs`) and two ways of draining it:
 
 ```text
-background collectors -> shared state (Arc<RwLock>) -> TUI / export
+                         /-> background collectors -> shared state (Arc<RwLock>) -> TUI
+collector::registry::SOURCES
+                         \-> one-shot read (load_usage) -> JSON / CSV / budgets / --doctor
 ```
+
+Both arms iterate the same `SOURCES` list, so a source is either in both or in neither. This
+used to be two hand-maintained wirings: `main::build_collectors` for the dashboard and a
+five-call `load_usage` for everything else. A provider added to one and not the other appeared
+in the dashboard and was silently missing from every export.
 
 Collectors read assistant message records from the OpenCode SQLite database, Claude Code session logs (`~/.claude/projects/**/*.jsonl`), Codex CLI rollouts (`~/.codex/{sessions,archived_sessions}/**/*.jsonl`), and the local Ollama/routing journal. Future collectors follow the same normalized shape.
 

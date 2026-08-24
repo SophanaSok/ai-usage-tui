@@ -5,20 +5,17 @@ pub mod codex;
 pub mod journal;
 pub mod opencode;
 pub mod pricing_refresh;
+pub mod registry;
 pub mod zen;
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Result;
 
 use crate::cli::Cli;
 use crate::collector::billing::{detect, BillingSetting, Decision, Signals};
-use crate::collector::claude_code::{config_json_path, load_claude_code, Offsets};
-use crate::collector::codex::{load_codex, Cursors};
-use crate::collector::journal::load_journal;
-use crate::collector::opencode::load_opencode;
-use crate::collector::zen::zen_cache_path;
+use crate::collector::claude_code::config_json_path;
 use crate::model::Usage;
 use crate::pricing::{apply_estimated_pricing, PricingEngine};
 
@@ -42,6 +39,8 @@ pub struct SourceRoots {
     pub omarchy_dir: Option<PathBuf>,
     /// Whether to read those records at all. On by default: an absent directory is idle.
     pub limits_enabled: bool,
+    /// `[collectors.<id>] enabled` overrides, by source id. Absent means the registry default.
+    pub source_enabled: std::collections::BTreeMap<String, bool>,
 }
 
 impl Default for SourceRoots {
@@ -56,6 +55,7 @@ impl Default for SourceRoots {
             codex_billing: BillingSetting::Auto,
             omarchy_dir: None,
             limits_enabled: true,
+            source_enabled: Default::default(),
         }
     }
 }
@@ -73,6 +73,21 @@ impl SourceRoots {
         self.omarchy_dir
             .clone()
             .or_else(crate::utils::omarchy_usage_dir)
+    }
+
+    /// Whether a source is collected at all, from `[collectors.<id>] enabled`.
+    pub fn is_enabled(&self, spec: &registry::SourceSpec) -> bool {
+        self.source_enabled
+            .get(spec.id)
+            .copied()
+            .unwrap_or(spec.default_enabled)
+    }
+
+    /// Omarchy's records directory *as a billing signal*: the directory in force, unless the
+    /// reader is switched off. `main.rs` and every collector construction used to spell this
+    /// `.omarchy_usage_dir().filter(|_| cli.limits_enabled)` separately.
+    pub fn omarchy_signal_dir(&self) -> Option<PathBuf> {
+        self.omarchy_usage_dir().filter(|_| self.limits_enabled)
     }
 
     /// The plan label Omarchy already derived for an agent, when its record is here.
@@ -95,6 +110,7 @@ impl SourceRoots {
             codex_billing: cli.codex_billing,
             omarchy_dir: cli.omarchy_dir.clone(),
             limits_enabled: cli.limits_enabled,
+            source_enabled: cli.source_enabled.clone(),
         }
     }
 
@@ -159,110 +175,34 @@ pub struct SourceReport {
 
 /// Read every source once, keeping each one's rows and report separate.
 ///
-/// Failure policy is per source and deliberate: OpenCode and the journal propagate, because a
-/// database that exists but cannot be read is a fault worth stopping for; Claude Code and Codex
-/// degrade to zero rows and say so, because one unreadable transcript tree must not take the
-/// whole dashboard down.
+/// One traversal of [`registry::SOURCES`], so the dashboard, the exporters and `--doctor` can
+/// never disagree about which sources exist or where each was looked for.
 fn collect_sources(roots: &SourceRoots) -> Result<Vec<(SourceReport, Vec<Usage>)>> {
-    let mut out = Vec::new();
-
-    let db = roots.db_path.clone().or_else(crate::utils::db_path);
-    let (opencode_usages, opencode_source) = load_opencode(roots.db_path.as_deref())?;
-    out.push((
-        SourceReport {
-            id: "opencode",
-            present: db.as_deref().is_some_and(Path::exists),
-            path: db,
-            rows: opencode_usages.len(),
-            status: opencode_source,
-            detail: None,
-        },
-        opencode_usages,
-    ));
-
-    let decision = roots.claude_decision();
-    let (claude_usages, claude_source) =
-        load_claude_code(roots.claude_dir.as_deref(), &mut Offsets::new(), &decision)
-            .unwrap_or_else(|error| (Vec::new(), format!("Claude Code: unavailable ({})", error)));
-    let claude_root = roots
-        .claude_dir
-        .clone()
-        .or_else(crate::collector::claude_code::projects_dir);
-    out.push((
-        SourceReport {
-            id: "claude_code",
-            present: claude_root.as_deref().is_some_and(Path::exists),
-            path: claude_root,
-            rows: claude_usages.len(),
-            status: claude_source,
-            detail: Some(decision.describe("collectors.claude_code")),
-        },
-        claude_usages,
-    ));
-
-    let codex_decision = roots.codex_decision();
-    let (codex_usages, codex_source) = load_codex(
-        roots.codex_dir.as_deref(),
-        &mut Cursors::new(),
-        &codex_decision,
-    )
-    .unwrap_or_else(|error| (Vec::new(), format!("Codex: unavailable ({})", error)));
-    let codex_root = roots
-        .codex_dir
-        .clone()
-        .or_else(crate::collector::codex::codex_home);
-    out.push((
-        SourceReport {
-            id: "codex",
-            present: codex_root.as_deref().is_some_and(Path::exists),
-            path: codex_root,
-            rows: codex_usages.len(),
-            status: codex_source,
-            detail: Some(codex_decision.describe("collectors.codex")),
-        },
-        codex_usages,
-    ));
-
-    let journal_usages = load_journal(&roots.journal)?;
-    let journal_present = roots.journal.exists();
-    out.push((
-        SourceReport {
-            id: "journal",
-            present: journal_present,
-            path: Some(roots.journal.clone()),
-            rows: journal_usages.len(),
-            status: if journal_present {
-                format!("journal: {}", roots.journal.display())
-            } else {
-                "journal: not initialized".to_string()
-            },
-            detail: None,
-        },
-        journal_usages,
-    ));
-
-    // Not a usage source: the cached catalog only enriches pricing. Reported anyway, because
-    // "why is this row unpriced" is answered by whether this file is there.
-    let zen = zen_cache_path();
-    let zen_present = zen.as_deref().is_some_and(Path::exists);
-    out.push((
-        SourceReport {
-            id: "zen_pricing",
-            present: zen_present,
-            status: match (&zen, zen_present) {
-                (Some(path), true) => {
-                    format!("Zen catalog: cached (informational) at {}", path.display())
-                }
-                _ => "Zen catalog: not cached".to_string(),
-            },
-            path: zen,
-            rows: 0,
-            detail: None,
-        },
-        Vec::new(),
-    ));
-
-    Ok(out)
+    registry::SOURCES
+        .iter()
+        .map(|spec| {
+            // Only a row-producing source can be switched off here; see `contributes_rows`.
+            if spec.contributes_rows && !roots.is_enabled(spec) {
+                // Reported rather than skipped: "disabled" is the answer `--doctor` should give
+                // when a source is configured off, and the header should not silently lose it.
+                return Ok((
+                    SourceReport {
+                        id: spec.id,
+                        path: None,
+                        status: format!("{}: disabled", spec.id),
+                        rows: 0,
+                        present: false,
+                        detail: Some(format!(
+                            "switched off by [collectors.{}] enabled = false",
+                            spec.id
+                        )),
+                    },
+                    Vec::new(),
+                ));
+            }
+            (spec.load)(roots)
+        })
+        .collect()
 }
 
 /// Per-source report without merging, for `--doctor`.

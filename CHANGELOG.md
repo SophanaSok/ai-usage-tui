@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **One source registry, replacing two hand-maintained wirings.** The set of data sources was
+  wired independently in `collector::load_usage` (used by `--json`, `--csv`, `--check-budgets`,
+  `--omarchy-record` and the dashboard's own refresh) and in `main::build_collectors` (background
+  polling). `CONTRIBUTING.md` documented only the second, so a provider added by following it
+  appeared in the dashboard and was silently absent from every export. Both now iterate
+  `collector::registry::SOURCES`, and a test fails the build when a source is reachable from one
+  path and not the other.
+
+  Adding a provider is a module exposing `ID`, `read` and `collector`, plus one registry entry —
+  down from edits in seven files. The five per-source collector adapters move out of
+  `background.rs` (now purely the supervisor) and into the modules they wrap, which is what
+  `CONTRIBUTING.md` always claimed. Each source owns a canonical `ID` constant used by
+  `Collector::name()`, its config table, and the registry, so those can no longer drift.
+
+- **`[collectors.<id>] enabled = false` now switches a source off everywhere.** It governed the
+  dashboard's background collectors and was ignored by `--json`, `--csv` and `--check-budgets`,
+  which still read the source and still counted its spend against budgets — the shipped example
+  config even documented the split. This is a deliberate behaviour change: exports from a
+  configuration that disables a source will now omit its rows, and the source line says
+  `<id>: disabled` rather than dropping silently. `zen_pricing` is unaffected: it contributes no
+  rows, and its flag governs only the background network refresh, so the line reporting whether
+  the pricing cache exists is still always shown.
+
+- **`[collectors.*]` is keyed by source id rather than a fixed struct.** `[collectors.opencodee]`
+  used to parse into a field nobody read; it is now an error that names the real sources.
+
 ### Added
 
 - **`--doctor`.** The answer to "the dashboard is empty and I do not know why". One line per

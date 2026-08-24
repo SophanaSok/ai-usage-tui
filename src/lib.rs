@@ -14,10 +14,12 @@ pub mod routing;
 pub mod ui;
 pub mod utils;
 
-pub use collector::background::{
-    ClaudeCodeCollector, CodexCollector, Collector, CollectorHandle, JournalCollector,
-    OpenCodeCollector, ZenPricingCollector,
-};
+pub use collector::background::{Collector, CollectorHandle};
+pub use collector::claude_code::ClaudeCodeCollector;
+pub use collector::codex::CodexCollector;
+pub use collector::journal::JournalCollector;
+pub use collector::opencode::OpenCodeCollector;
+pub use collector::pricing_refresh::ZenPricingCollector;
 
 #[cfg(test)]
 mod integration_tests {

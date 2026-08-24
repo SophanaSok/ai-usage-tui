@@ -91,6 +91,51 @@ fn doctor_reports_every_source_and_where_it_looked() {
     assert!(text.contains("CONFIG"), "no config section:\n{text}");
 }
 
+/// `[collectors.<id>] enabled = false` governs the exports, not only the dashboard.
+///
+/// The two paths were wired separately: `main::build_collectors` honoured `enabled` and
+/// `collector::load_usage` never saw it, so a source switched off in config still emitted rows
+/// from `--json`, `--csv` and `--check-budgets`. The shipped example config even documented the
+/// split ("Background collectors (TUI mode only)"). Both paths read one registry now.
+#[test]
+fn a_disabled_source_is_disabled_for_the_exports_too() {
+    let dir = std::env::temp_dir().join(format!("ai-usage-tui-disabled-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let config = dir.join("config.toml");
+    std::fs::write(&config, "[collectors.opencode]\nenabled = false\n").expect("write config");
+
+    let with_source = hermetic(bin().arg("--json")).output().expect("run");
+    let text = String::from_utf8(with_source.stdout).expect("utf8");
+    assert!(
+        text.contains("\"provider\""),
+        "the fixture database should produce rows:\n{text}"
+    );
+
+    let without = hermetic(bin().arg("--json"))
+        .arg("--config")
+        .arg(&config)
+        .output()
+        .expect("run");
+    let text = String::from_utf8(without.stdout).expect("utf8");
+    assert!(
+        without.status.success(),
+        "exited {}: {}",
+        without.status,
+        String::from_utf8_lossy(&without.stderr)
+    );
+    assert!(
+        text.contains("opencode: disabled"),
+        "the source line should say the source was switched off:\n{text}"
+    );
+    assert!(
+        !text.contains("\"provider\""),
+        "rows from a disabled source still reached --json:\n{text}"
+    );
+
+    let _ = std::fs::remove_file(&config);
+    let _ = std::fs::remove_dir(&dir);
+}
+
 /// A one-shot action, like every other one-shot action.
 #[test]
 fn doctor_does_not_combine_with_the_other_actions() {
