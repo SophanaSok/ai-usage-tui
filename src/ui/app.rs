@@ -319,8 +319,10 @@ impl App {
                     self.degraded = false;
                 }
                 Err(error) => {
+                    // Not "OpenCode unavailable": `load_usage` also propagates the journal read,
+                    // and labelling every failure with one source sent readers to the wrong file.
                     self.usages.clear();
-                    self.status = format!("OpenCode unavailable: {}", error);
+                    self.status = format!("sources unavailable: {}", error);
                     self.degraded = true;
                 }
             }

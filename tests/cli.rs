@@ -40,6 +40,69 @@ fn hermetic(command: &mut Command) -> &mut Command {
         .arg("--all")
 }
 
+/// `--doctor` is the answer to "the dashboard is empty and I do not know why".
+///
+/// It must name every source, say where each was looked for, and never fail just because
+/// nothing is installed -- an empty machine is the normal first-run state, not an error.
+#[test]
+fn doctor_reports_every_source_and_where_it_looked() {
+    let missing_claude = format!(
+        "{}/tests/fixtures/no-such-claude-dir",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let output = hermetic(bin().arg("--doctor"))
+        .arg("--journal")
+        .arg(format!(
+            "{}/tests/fixtures/no-such-journal.db",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .output()
+        .expect("run --doctor");
+
+    assert!(
+        output.status.success(),
+        "--doctor exited {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8(output.stdout).expect("utf8");
+
+    // Every source the collector actually reads, so a source added to the registry and left out
+    // of the diagnosis shows up here.
+    for id in ["opencode", "claude_code", "codex", "journal", "zen_pricing"] {
+        assert!(text.contains(id), "--doctor never mentions {id}:\n{text}");
+    }
+
+    // The path searched, not just a verdict: "absent" without a path is not actionable.
+    assert!(
+        text.contains(&missing_claude),
+        "--doctor does not say where Claude Code was looked for:\n{text}"
+    );
+    assert!(
+        text.contains("--claude-dir"),
+        "--doctor does not say how to point Claude Code elsewhere:\n{text}"
+    );
+
+    // The fixture database is real and has rows, so this run is not the all-absent case.
+    assert!(
+        text.contains("found"),
+        "no source reported as found:\n{text}"
+    );
+    assert!(text.contains("CONFIG"), "no config section:\n{text}");
+}
+
+/// A one-shot action, like every other one-shot action.
+#[test]
+fn doctor_does_not_combine_with_the_other_actions() {
+    for other in ["--json", "--once", "--check-budgets", "--omarchy-record"] {
+        let output = bin().arg("--doctor").arg(other).output().expect("run");
+        assert!(
+            !output.status.success(),
+            "--doctor {other} was accepted; the actions are mutually exclusive"
+        );
+    }
+}
+
 #[test]
 fn a_reader_that_closes_the_pipe_is_not_a_crash() {
     // `println!` panics when the write fails, and a closed pipe is a write failure, so

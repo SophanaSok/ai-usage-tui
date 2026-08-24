@@ -8,7 +8,7 @@ pub mod pricing_refresh;
 pub mod zen;
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
@@ -135,28 +135,70 @@ impl SourceRoots {
     }
 }
 
-/// One-shot read of every source.
+/// One source's contribution to a collection pass: what it found, and where.
 ///
-/// Production passes the roots resolved from the CLI and config; tests pass explicit paths so
-/// they never read the developer's real transcripts or config.
-pub fn load_usage(roots: &SourceRoots) -> Result<(Vec<Usage>, String)> {
-    let (mut usages, opencode_source) = load_opencode(roots.db_path.as_deref())?;
-    let journal_usages = load_journal(&roots.journal)?;
-    let journal_source = if roots.journal.exists() {
-        format!("journal: {}", roots.journal.display())
-    } else {
-        "journal: not initialized".to_string()
-    };
-    let zen_source = match zen_cache_path() {
-        Some(path) if path.exists() => {
-            format!("Zen catalog: cached (informational) at {}", path.display())
-        }
-        _ => "Zen catalog: not cached".to_string(),
-    };
+/// `load_usage` merges these into one list and one status line; `diagnose` prints them one per
+/// row. Both walk the same traversal, so the dashboard and `--doctor` can never disagree about
+/// which sources exist or where each was looked for.
+#[derive(Clone, Debug)]
+pub struct SourceReport {
+    /// Stable id, matching the `[collectors.<id>]` config table where there is one.
+    pub id: &'static str,
+    /// Where this source was read from, when it resolves to a single path.
+    pub path: Option<PathBuf>,
+    /// The one-line status this source already reports for the dashboard header.
+    pub status: String,
+    /// Rows this source produced, before cross-source deduplication.
+    pub rows: usize,
+    /// Whether anything was there to read at all. A source that is simply absent is a normal
+    /// state on most machines, not a fault.
+    pub present: bool,
+    /// Context a reader needs to interpret the rows -- currently the billing decision.
+    pub detail: Option<String>,
+}
+
+/// Read every source once, keeping each one's rows and report separate.
+///
+/// Failure policy is per source and deliberate: OpenCode and the journal propagate, because a
+/// database that exists but cannot be read is a fault worth stopping for; Claude Code and Codex
+/// degrade to zero rows and say so, because one unreadable transcript tree must not take the
+/// whole dashboard down.
+fn collect_sources(roots: &SourceRoots) -> Result<Vec<(SourceReport, Vec<Usage>)>> {
+    let mut out = Vec::new();
+
+    let db = roots.db_path.clone().or_else(crate::utils::db_path);
+    let (opencode_usages, opencode_source) = load_opencode(roots.db_path.as_deref())?;
+    out.push((
+        SourceReport {
+            id: "opencode",
+            present: db.as_deref().is_some_and(Path::exists),
+            path: db,
+            rows: opencode_usages.len(),
+            status: opencode_source,
+            detail: None,
+        },
+        opencode_usages,
+    ));
+
     let decision = roots.claude_decision();
     let (claude_usages, claude_source) =
         load_claude_code(roots.claude_dir.as_deref(), &mut Offsets::new(), &decision)
             .unwrap_or_else(|error| (Vec::new(), format!("Claude Code: unavailable ({})", error)));
+    let claude_root = roots
+        .claude_dir
+        .clone()
+        .or_else(crate::collector::claude_code::projects_dir);
+    out.push((
+        SourceReport {
+            id: "claude_code",
+            present: claude_root.as_deref().is_some_and(Path::exists),
+            path: claude_root,
+            rows: claude_usages.len(),
+            status: claude_source,
+            detail: Some(decision.describe("collectors.claude_code")),
+        },
+        claude_usages,
+    ));
 
     let codex_decision = roots.codex_decision();
     let (codex_usages, codex_source) = load_codex(
@@ -165,28 +207,104 @@ pub fn load_usage(roots: &SourceRoots) -> Result<(Vec<Usage>, String)> {
         &codex_decision,
     )
     .unwrap_or_else(|error| (Vec::new(), format!("Codex: unavailable ({})", error)));
+    let codex_root = roots
+        .codex_dir
+        .clone()
+        .or_else(crate::collector::codex::codex_home);
+    out.push((
+        SourceReport {
+            id: "codex",
+            present: codex_root.as_deref().is_some_and(Path::exists),
+            path: codex_root,
+            rows: codex_usages.len(),
+            status: codex_source,
+            detail: Some(codex_decision.describe("collectors.codex")),
+        },
+        codex_usages,
+    ));
 
-    let mut seen: HashSet<UsageKey> = usages.iter().map(usage_key).collect();
-    for extra in journal_usages
+    let journal_usages = load_journal(&roots.journal)?;
+    let journal_present = roots.journal.exists();
+    out.push((
+        SourceReport {
+            id: "journal",
+            present: journal_present,
+            path: Some(roots.journal.clone()),
+            rows: journal_usages.len(),
+            status: if journal_present {
+                format!("journal: {}", roots.journal.display())
+            } else {
+                "journal: not initialized".to_string()
+            },
+            detail: None,
+        },
+        journal_usages,
+    ));
+
+    // Not a usage source: the cached catalog only enriches pricing. Reported anyway, because
+    // "why is this row unpriced" is answered by whether this file is there.
+    let zen = zen_cache_path();
+    let zen_present = zen.as_deref().is_some_and(Path::exists);
+    out.push((
+        SourceReport {
+            id: "zen_pricing",
+            present: zen_present,
+            status: match (&zen, zen_present) {
+                (Some(path), true) => {
+                    format!("Zen catalog: cached (informational) at {}", path.display())
+                }
+                _ => "Zen catalog: not cached".to_string(),
+            },
+            path: zen,
+            rows: 0,
+            detail: None,
+        },
+        Vec::new(),
+    ));
+
+    Ok(out)
+}
+
+/// Per-source report without merging, for `--doctor`.
+pub fn diagnose(roots: &SourceRoots) -> Result<Vec<SourceReport>> {
+    Ok(collect_sources(roots)?
         .into_iter()
-        .chain(claude_usages)
-        .chain(codex_usages)
-    {
-        if seen.insert(usage_key(&extra)) {
-            usages.push(extra);
+        .map(|(report, _)| report)
+        .collect())
+}
+
+/// One-shot read of every source.
+///
+/// Production passes the roots resolved from the CLI and config; tests pass explicit paths so
+/// they never read the developer's real transcripts or config.
+pub fn load_usage(roots: &SourceRoots) -> Result<(Vec<Usage>, String)> {
+    let sources = collect_sources(roots)?;
+    let status = sources
+        .iter()
+        .map(|(report, _)| report.status.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ");
+
+    // Deduplication is *cross-source* only. OpenCode is the base list and every one of its rows
+    // is kept: an OpenCode message without an `id` falls back to the shape key, and an agent
+    // loop routinely emits distinct requests with byte-identical counts in the same second --
+    // deduplicating those against each other under-reports real spend (CONTRIBUTING invariant
+    // 3). Later sources are matched against what is already there, in source order.
+    let mut sources = sources.into_iter();
+    let mut usages: Vec<Usage> = sources.next().map(|(_, rows)| rows).unwrap_or_default();
+    let mut seen: HashSet<UsageKey> = usages.iter().map(usage_key).collect();
+    for (_, rows) in sources {
+        for usage in rows {
+            if seen.insert(usage_key(&usage)) {
+                usages.push(usage);
+            }
         }
     }
 
     let engine = PricingEngine::load();
     apply_estimated_pricing(&mut usages, &engine);
 
-    Ok((
-        usages,
-        format!(
-            "{} | {} | {} | {} | {}",
-            opencode_source, claude_source, codex_source, journal_source, zen_source
-        ),
-    ))
+    Ok((usages, status))
 }
 
 /// Identity of a usage event for deduplication.

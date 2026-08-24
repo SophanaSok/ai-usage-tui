@@ -49,7 +49,11 @@ fn dispatch() -> Result<()> {
         print_line(&format!("ai-usage-tui {}", env!("CARGO_PKG_VERSION")))?;
         return Ok(());
     }
-    if parsed_cli.refresh_zen {
+    let (cli, config) = apply_config(parsed_cli)?;
+    // Below `apply_config`, not above it: these two used to run first, which meant `--config`
+    // was parsed, accepted and then ignored for them alone -- a mistyped path was an error for
+    // every other invocation and silently fine for these.
+    if cli.refresh_zen {
         let path = refresh_zen_catalog()?;
         print_line(&format!(
             "Cached OpenCode Zen catalog at {}",
@@ -57,7 +61,7 @@ fn dispatch() -> Result<()> {
         ))?;
         return Ok(());
     }
-    if parsed_cli.refresh_pricing {
+    if cli.refresh_pricing {
         let path = refresh_pricing()?;
         print_line(&format!(
             "Refreshed Zen pricing table at {}",
@@ -65,13 +69,15 @@ fn dispatch() -> Result<()> {
         ))?;
         return Ok(());
     }
-    let (cli, config) = apply_config(parsed_cli)?;
     if let Some(path) = ai_usage_tui::logging::log_path() {
         ai_usage_tui::logging::info(
             "main",
             &format!("ai-usage-tui {} starting", env!("CARGO_PKG_VERSION")),
         );
         eprintln!("logging to {}", path.display());
+    }
+    if cli.doctor {
+        return doctor(&cli, &config);
     }
     if cli.record_ollama {
         let path = cli
@@ -386,6 +392,119 @@ fn write_omarchy_records(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> R
         ))?;
     }
     Ok(())
+}
+
+/// Report what each source resolved to, so "the dashboard is empty" is a question with an answer.
+///
+/// Every line comes from the same traversal the dashboard and the exporters use
+/// (`collector::diagnose`), so this can never describe a set of sources the rest of the tool
+/// does not actually read. It reads exactly what a normal collection reads, and writes nothing.
+fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    let _ = writeln!(out, "ai-usage-tui {}", env!("CARGO_PKG_VERSION"));
+
+    let journal = cli
+        .journal_path
+        .clone()
+        .or_else(ai_usage_tui::utils::journal_path)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "could not determine a home directory; set AI_USAGE_JOURNAL_PATH or pass --journal"
+            )
+        })?;
+    let roots = SourceRoots::from_cli(cli, journal);
+    let reports = ai_usage_tui::collector::diagnose(&roots)?;
+
+    let _ = writeln!(out, "\nSOURCES");
+    let mut found_any = false;
+    for report in &reports {
+        let mark = if report.present { "found " } else { "absent" };
+        let where_ = report
+            .path
+            .as_deref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<no home directory>".to_string());
+        let rows = if report.present {
+            format!("{:>7} rows", report.rows)
+        } else {
+            " ".repeat(12)
+        };
+        found_any |= report.rows > 0;
+        let _ = writeln!(out, "  {:<12} {} {}  {}", report.id, mark, rows, where_);
+        // Only where there is something to bill: on a machine without Codex, "billing unknown"
+        // is noise about a source that is not there.
+        if report.present {
+            if let Some(detail) = &report.detail {
+                let _ = writeln!(out, "  {:<12} {:<19}  {}", "", "", detail);
+            }
+        }
+        if !report.present {
+            if let Some(hint) = absence_hint(report.id) {
+                let _ = writeln!(out, "  {:<12} {:<19}  {}", "", "", hint);
+            }
+        }
+    }
+
+    let _ = writeln!(out, "\nCONFIG");
+    let config_path = cli
+        .config_path
+        .clone()
+        .or_else(ai_usage_tui::config::config_path);
+    match &config_path {
+        Some(path) if path.exists() => {
+            let _ = writeln!(out, "  loaded       {}", path.display());
+        }
+        Some(path) => {
+            let _ = writeln!(out, "  none         {} (not present)", path.display());
+            let _ = writeln!(
+                out,
+                "               copy examples/config.toml there to configure budgets and collectors"
+            );
+        }
+        None => {
+            let _ = writeln!(out, "  none         <no config directory>");
+        }
+    }
+    let budgets = config.budgets.as_ref().map_or(0, |b| b.entry.len());
+    let _ = writeln!(out, "  budgets      {budgets} configured");
+    match ai_usage_tui::logging::log_path() {
+        Some(path) => {
+            let _ = writeln!(out, "  log          {}", path.display());
+        }
+        None => {
+            let _ = writeln!(out, "  log          off (set AI_USAGE_LOG=1 or a path)");
+        }
+    }
+
+    if !found_any {
+        let _ = writeln!(
+            out,
+            "\nNo usage was found in any source. That is the expected result on a machine that has\n\
+             not yet run OpenCode, Claude Code, Codex or a journaled Ollama request -- the paths\n\
+             above are where each one would be read from."
+        );
+    }
+
+    print_line(out.trim_end())?;
+    Ok(())
+}
+
+/// How to point a source somewhere else, printed only when it was not where we looked.
+fn absence_hint(id: &str) -> Option<&'static str> {
+    match id {
+        "opencode" => Some("point elsewhere with --db PATH or OPENCODE_DB_PATH"),
+        "claude_code" => Some("point elsewhere with --claude-dir PATH or CLAUDE_PROJECTS_DIR"),
+        "codex" => Some("point elsewhere with --codex-dir PATH or CODEX_HOME"),
+        "journal" => {
+            Some("written by --record-ollama and --record-routing; nothing to do if unused")
+        }
+        "zen_pricing" => {
+            Some("optional; populate with --refresh-zen (pricing still works without it)")
+        }
+        _ => None,
+    }
 }
 
 /// Budget breach as an error, so the non-zero exit runs destructors like any other failure.

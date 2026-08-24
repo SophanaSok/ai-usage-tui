@@ -812,6 +812,7 @@ does not load it automatically.
 | `--json` | Collect once and print usage JSON |
 | `--csv PATH` | Collect once and write usage CSV |
 | `--config PATH` | Load a specific TOML config file |
+| `--doctor` | Report where each data source was looked for, what was found there, and how billing was decided, then exit |
 | `--db PATH` | Override the OpenCode database path |
 | `--journal PATH` | Override the local journal path |
 | `--claude-dir PATH` | Override the Claude Code session-log directory |
@@ -918,6 +919,19 @@ Default local storage paths (when the corresponding XDG variable is unset):
 | Configuration | `~/.config/ai-usage-tui/config.toml` |
 
 ## Troubleshooting
+
+**Start with `ai-usage-tui --doctor`.** It reports every source, the exact path it was looked
+for at, how many rows it produced, how billing was decided, and — where a source is absent —
+the flag or environment variable that points it elsewhere. It reads what a normal collection
+reads and writes nothing.
+
+```text
+SOURCES
+  opencode     absent               ~/.local/share/opencode/opencode.db
+                                    point elsewhere with --db PATH or OPENCODE_DB_PATH
+  claude_code  found     4087 rows  ~/.claude/projects
+                                    subscription Max 20x
+```
 
 - **No OpenCode rows:** check that the database exists at the displayed source
   path, or pass `--db PATH`.

@@ -9,6 +9,8 @@ use crate::model::Range;
 pub struct Cli {
     pub help: bool,
     pub version: bool,
+    /// Report what each data source resolved to and exit, without starting the dashboard.
+    pub doctor: bool,
     pub config_path: Option<PathBuf>,
     pub db_path: Option<PathBuf>,
     pub journal_path: Option<PathBuf>,
@@ -53,6 +55,7 @@ impl Default for Cli {
         Self {
             help: false,
             version: false,
+            doctor: false,
             config_path: None,
             db_path: None,
             journal_path: None,
@@ -98,6 +101,7 @@ where
         match arg.as_str() {
             "-h" | "--help" => cli.help = true,
             "--version" | "-V" => cli.version = true,
+            "--doctor" => cli.doctor = true,
             "--once" => cli.once = true,
             "--today" => {
                 cli.range = Range::Today;
@@ -257,6 +261,7 @@ where
         cli.routing_json,
         cli.routing_csv_path.is_some(),
         cli.omarchy_record,
+        cli.doctor,
     ]
     .into_iter()
     .filter(|enabled| *enabled)
@@ -267,7 +272,8 @@ where
                 || cli.refresh_zen
                 || cli.check_budgets
                 || cli.record_routing
-                || cli.omarchy_record))
+                || cli.omarchy_record
+                || cli.doctor))
     {
         return Err(anyhow::anyhow!(
             "collection actions and --once/--json/--csv are mutually exclusive"
@@ -296,52 +302,54 @@ USAGE:
     ai-usage-tui [OPTIONS]
 
 OPTIONS:
-    -h, --help    Show this help message
-    -V, --version Show the version
-    --once        Collect once and exit
-    --json        Collect once and print JSON
-    --csv PATH    Collect once and write CSV
-    --config PATH Load configuration from TOML
-    --db PATH     Override the OpenCode SQLite database path
-    --journal PATH
-                  Override the local usage journal path
-    --claude-dir PATH
-                  Override the Claude Code session-log directory
-    --claude-billing MODE               How Claude Code usage is billed: auto (default),
-                                        subscription, or api. Overrides [collectors.claude_code]
-    --codex-dir PATH                    Override the Codex home ($CODEX_HOME, else ~/.codex);
-                                        sessions/ and archived_sessions/ are read beneath it
-    --codex-billing MODE                How Codex usage is billed: auto (default), subscription,
-                                        or api. Overrides [collectors.codex]
-    --omarchy-dir PATH                  Override where Omarchy's agents panel keeps its usage
-                                        records (default $XDG_STATE_HOME/omarchy/agents/usage)
-    --omarchy-record                    Write usage and budgets as a record for Omarchy's agents
-                                        panel ([omarchy] records, default opencode) and exit
-                  (default: ~/.claude/projects)
-    --days N       Show the last N days
-    --today        Show today
-    --week         Show the last 7 days
-    --month        Show the last 30 days
-    --all          Show all available history
-    --provider NAME
-                  Filter by provider
-    --model NAME   Filter by model
-    --record-ollama
-                  Read an Ollama response JSON from stdin and journal it
-    --refresh-zen  Refresh the cached OpenCode Zen model catalog and exit
-    --refresh-pricing
-                  Refresh the Zen pricing table from the docs page and exit
-    --refresh-interval N
-                  Refresh the dashboard every N seconds (default: 30)
-    --check-budgets
-                  Check budget thresholds and print alerts as JSON, exit 1 if any
-    --webhook URL  Override the budget alert webhook URL from config
-    --record-routing
-                  Read a routing event JSON from stdin and journal it
-    --routing-json
-                  Export routing analytics as JSON and exit
-    --routing-csv PATH
-                  Export routing analytics as CSV and exit
+    -h, --help              Show this help message
+    -V, --version           Show the version
+    --config PATH           Load configuration from TOML
+    --doctor                Report where each data source was looked for, what was
+                            found there, and how billing was decided, then exit
+
+  Data sources
+    --db PATH               Override the OpenCode SQLite database path
+    --journal PATH          Override the local usage journal path
+    --claude-dir PATH       Override the Claude Code session-log directory
+                            (default: ~/.claude/projects)
+    --claude-billing MODE   How Claude Code usage is billed: auto (default),
+                            subscription, or api. Overrides [collectors.claude_code]
+    --codex-dir PATH        Override the Codex home ($CODEX_HOME, else ~/.codex);
+                            sessions/ and archived_sessions/ are read beneath it
+    --codex-billing MODE    How Codex usage is billed: auto (default), subscription,
+                            or api. Overrides [collectors.codex]
+    --omarchy-dir PATH      Override where Omarchy's agents panel keeps its usage
+                            records (default $XDG_STATE_HOME/omarchy/agents/usage)
+
+  Range and filters
+    --today                 Show today
+    --week                  Show the last 7 days (default)
+    --month                 Show the last 30 days
+    --days N                Show the last N days
+    --all                   Show all available history
+    --provider NAME         Filter by provider
+    --model NAME            Filter by model
+
+  Dashboard and alerts
+    --refresh-interval N    Refresh the dashboard every N seconds (default: 30)
+    --webhook URL           Override the budget alert webhook URL from config;
+                            applies to the dashboard and to --check-budgets
+
+  One-shot actions (mutually exclusive; each collects once and exits)
+    --once                  Collect once and print plain text
+    --json                  Collect once and print JSON
+    --csv PATH              Collect once and write CSV
+    --check-budgets         Check budget thresholds and print alerts as JSON,
+                            exit 1 if any are actionable
+    --routing-json          Export routing analytics as JSON
+    --routing-csv PATH      Export routing analytics as CSV
+    --record-ollama         Read an Ollama response JSON from stdin and journal it
+    --record-routing        Read a routing event JSON from stdin and journal it
+    --refresh-zen           Refresh the cached OpenCode Zen model catalog
+    --refresh-pricing       Refresh the Zen pricing table from the docs page
+    --omarchy-record        Write usage and budgets as a record for Omarchy's agents
+                            panel ([omarchy] records, default opencode)
 
 ENVIRONMENT:
     OPENCODE_DB_PATH    Override the OpenCode SQLite database path

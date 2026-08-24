@@ -46,6 +46,10 @@ The fixture database has 2023-era timestamps, so `--today` and `--week` show not
 `--all`. Pass `--claude-dir`, `--codex-dir` and `--omarchy-dir` explicitly or you will read
 your own `~/.claude/projects`, `~/.codex` and Omarchy records.
 
+`--doctor` prints what every source resolved to — path searched, rows found, billing decision —
+without starting the dashboard. It is the fastest way to check that a collector change reads
+what you think it reads, and the first thing to ask a bug reporter for.
+
 ## Where things live
 
 | Path | What's in it |

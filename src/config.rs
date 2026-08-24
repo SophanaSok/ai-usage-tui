@@ -8,7 +8,12 @@ use crate::cli::Cli;
 use crate::collector::billing::BillingSetting;
 use crate::model::Range;
 
+/// `deny_unknown_fields` throughout this file, and in `budget.rs`: a key the parser does not
+/// recognise is a typo, and silently dropping it is how `# webhook` under the wrong table
+/// disabled every budget while the dashboard went on looking healthy. `load_config` already
+/// treats a malformed *value* as fatal; an unrecognised *key* now gets the same policy.
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConfigFile {
     pub db: Option<String>,
     pub journal: Option<String>,
@@ -25,6 +30,7 @@ pub struct ConfigFile {
 
 /// Omarchy's agents panel: where its records are, and whether to read them.
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OmarchyConfig {
     pub dir: Option<String>,
     /// Read the rate-limit windows and plan labels. Default true; the directory being absent
@@ -41,6 +47,7 @@ pub struct OmarchyConfig {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CollectorsConfig {
     pub opencode: Option<CollectorConfig>,
     pub claude_code: Option<CollectorConfig>,
@@ -50,6 +57,7 @@ pub struct CollectorsConfig {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CollectorConfig {
     pub enabled: Option<bool>,
     pub interval: Option<u64>,
@@ -346,6 +354,34 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("could not parse"), "{error}");
+    }
+
+    #[test]
+    fn a_misspelled_key_is_an_error_rather_than_a_key_that_does_nothing() {
+        // Every one of these parsed cleanly and did nothing before `deny_unknown_fields`. The
+        // shipped example config carries a comment warning about exactly the `[budgets]` case,
+        // because a `webhook` line under the wrong table once disabled every budget silently.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        for (contents, needle) in [
+            ("dayz = 14\n", "dayz"),
+            ("[budgets]\nwebook = \"https://example.invalid/hook\"\n", "webook"),
+            ("[[budgets.entry]]\nscope = \"global\"\nperiod = \"monthly\"\nlimit = 1.0\nwarnn = 50.0\n", "warnn"),
+            ("[collectors.opencodee]\nenabled = false\n", "opencodee"),
+            ("[collectors.opencode]\nenabledd = false\n", "enabledd"),
+            ("[omarchy]\nlimit = false\n", "limit"),
+        ] {
+            fs::write(&path, contents).unwrap();
+            let error = match load_config(&cli_with_config(&path)) {
+                Ok(_) => panic!("an unknown key parsed silently: {contents:?}"),
+                Err(error) => error.to_string(),
+            };
+            assert!(error.contains("could not parse"), "{error}");
+            assert!(
+                error.contains(needle),
+                "the error should name the offending key {needle:?}: {error}"
+            );
+        }
     }
 
     #[test]

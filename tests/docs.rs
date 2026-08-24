@@ -98,6 +98,63 @@ fn readme_cli_table_matches_the_parser() {
     );
 }
 
+/// `--help` must offer the same long flags the parser accepts and the README documents.
+///
+/// `readme_cli_table_matches_the_parser` compared two of the three lists and left the help text
+/// out, which is how a stray `(default: ~/.claude/projects)` line sat orphaned under
+/// `--omarchy-record` -- inherited from a `--claude-dir` entry three flags above it -- through
+/// several releases. Three lists, one comparison.
+#[test]
+fn help_text_lists_every_flag_the_parser_accepts() {
+    let helped = help_long_flags();
+    let parsed = parser_long_flags();
+
+    let unhelped: Vec<_> = parsed.difference(&helped).collect();
+    let phantom: Vec<_> = helped.difference(&parsed).collect();
+    assert!(
+        unhelped.is_empty() && phantom.is_empty(),
+        "`--help` and src/cli.rs `parse_cli` disagree.\n\
+         parsed by cli.rs but missing from OPTIONS in print_help: {unhelped:?}\n\
+         listed in print_help but not parsed by cli.rs: {phantom:?}"
+    );
+    assert!(
+        helped.len() >= 20,
+        "only {} flags found in the help text; the OPTIONS marker may have moved",
+        helped.len()
+    );
+}
+
+/// Long flags declared in `print_help`'s `OPTIONS:` block.
+///
+/// A flag is only counted where it is *declared* -- the first token of its line -- so a flag
+/// named inside another flag's description is not mistaken for an entry of its own, and the
+/// wrapped continuation lines are skipped.
+fn help_long_flags() -> BTreeSet<String> {
+    let start = CLI_SOURCE
+        .find("OPTIONS:")
+        .expect("print_help has an OPTIONS: block");
+    let section = &CLI_SOURCE[start..];
+    let end = section
+        .find("ENVIRONMENT:")
+        .expect("OPTIONS is followed by ENVIRONMENT");
+    let mut flags = BTreeSet::new();
+    for line in section[..end].lines() {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with('-') {
+            continue;
+        }
+        for token in trimmed.split([' ', ',']) {
+            if let Some(flag) = token.strip_prefix("--") {
+                if !flag.is_empty() {
+                    flags.insert(format!("--{flag}"));
+                }
+                break;
+            }
+        }
+    }
+    flags
+}
+
 /// Backtick-quoted `--flag` tokens inside the "CLI reference" table, up to the environment
 /// variables that follow it. Tolerant of column layout: only the token matters.
 fn readme_cli_flags() -> BTreeSet<String> {

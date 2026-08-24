@@ -4,6 +4,21 @@
 
 ### Added
 
+- **`--doctor`.** The answer to "the dashboard is empty and I do not know why". One line per
+  source: the id, whether anything was there, the exact path searched, how many rows it produced,
+  how billing was decided, and — where a source is absent — the flag or environment variable that
+  points it somewhere else. Then the config file in force, the number of budgets configured, and
+  whether logging is on. It runs the same traversal the dashboard and the exporters use, so it can
+  never describe a set of sources the rest of the tool does not read, and it writes nothing. On a
+  machine with none of the four sources it exits 0 and says so, because that is a normal first run
+  rather than a fault.
+- **Config keys that the parser does not recognise are now errors.** Every config struct carries
+  `deny_unknown_fields`, so `dayz = 14`, `[collectors.opencodee]`, `webook` under `[budgets]` and
+  `warnn` in a budget entry all fail with the offending key named, instead of parsing into nothing.
+  The shipped example config has carried a comment warning about exactly this since the `webhook`
+  key silently disabled every budget; the policy now matches what `load_config` already did for
+  malformed values.
+
 - **`scripts/install.sh`, and the quick start now leads with it.** One line installs the right
   archive for the platform, verifies it against the release's published `checksums.txt`, unpacks
   it into a scratch directory and installs only the binary — then says how to fix `PATH` when the
@@ -29,6 +44,17 @@
 
 ### Fixed
 
+- **`--help` no longer carries an orphaned line, and drift is now caught.** A stray
+  `(default: ~/.claude/projects)` sat under `--omarchy-record`, inherited from a `--claude-dir`
+  entry three flags above it, because `tests/docs.rs` compared the README table against the parser
+  and never looked at the help text. It compares all three lists now, and the OPTIONS block is
+  regrouped into data sources, range and filters, dashboard, and one-shot actions.
+- **`--refresh-zen` and `--refresh-pricing` honour `--config`.** Both ran before the config was
+  loaded, so a mistyped `--config` path was a hard error for every other invocation and silently
+  fine for these two.
+- **A failed refresh no longer blames OpenCode for the journal.** `App::refresh` reported every
+  `load_usage` failure as `OpenCode unavailable`, sending readers to the wrong file when it was
+  the journal that could not be read.
 - **The rendered Chocolatey package could not be packed.** The release job flattened every
   template with `basename`, so `chocolateyinstall.ps1` was published beside the nuspec — whose
   `<file src="tools/**" target="tools/" />` then matched nothing, producing a package that
