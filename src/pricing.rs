@@ -1305,4 +1305,82 @@ mod tests {
         assert_eq!(coverage.pct(), None, "nothing here is a missing price");
         assert_eq!(coverage.quota_requests, 1);
     }
+
+    #[test]
+    fn codex_model_ids_resolve_to_table_entries_and_unknown_ones_stay_unpriced() {
+        let engine = PricingEngine::bundled();
+        for id in [
+            "gpt-5-codex",
+            "gpt-5.1-codex-max",
+            "GPT-5.3-CODEX",
+            "gpt-5.2-codex",
+        ] {
+            let usage = Usage {
+                model: id.into(),
+                input: 1_000,
+                output: 100,
+                ..Default::default()
+            };
+            let (cost, status) = engine
+                .estimate_cost(&usage)
+                .unwrap_or_else(|| panic!("{id} should resolve"));
+            assert_eq!(status, CostStatus::Estimated, "{id}");
+            assert!(cost > 0.0, "{id}");
+        }
+        // Absent from the table: no rate is invented, the row stays a visible gap.
+        let absent = Usage {
+            model: "o4-mini".into(),
+            input: 1_000,
+            ..Default::default()
+        };
+        assert_eq!(engine.estimate_cost(&absent), None);
+    }
+
+    #[test]
+    fn a_codex_call_selects_its_context_tier_from_the_whole_prompt() {
+        // The collector splits cached tokens out of `input`, so the tier must be chosen on
+        // input + cache_read — the prompt the model actually saw — not on the uncached part.
+        let engine = PricingEngine::bundled();
+        let big_cached = Usage {
+            model: "gpt-5.4".into(),
+            input: 50_000,
+            cache_read: 250_000,
+            output: 10,
+            ..Default::default()
+        };
+        let small = Usage {
+            model: "gpt-5.4".into(),
+            input: 50_000,
+            cache_read: 0,
+            output: 10,
+            ..Default::default()
+        };
+        let (big_cost, _) = engine.estimate_cost(&big_cached).unwrap();
+        let (small_cost, _) = engine.estimate_cost(&small).unwrap();
+        // The 272k tier prices input higher; the same 50k uncached tokens must cost more
+        // when the prompt as a whole crossed the tier boundary.
+        let big_input_only = big_cost
+            - engine
+                .estimate_cost(&Usage {
+                    model: "gpt-5.4".into(),
+                    cache_read: 250_000,
+                    output: 10,
+                    ..Default::default()
+                })
+                .unwrap()
+                .0;
+        let small_input_only = small_cost
+            - engine
+                .estimate_cost(&Usage {
+                    model: "gpt-5.4".into(),
+                    output: 10,
+                    ..Default::default()
+                })
+                .unwrap()
+                .0;
+        assert!(
+            big_input_only > small_input_only,
+            "{big_input_only} vs {small_input_only}"
+        );
+    }
 }

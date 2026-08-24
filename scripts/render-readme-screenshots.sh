@@ -85,7 +85,8 @@ record_routing '{"agent":"reviewer","model":"claude-sonnet-5","provider":"anthro
 
 cargo run --release --locked --quiet --manifest-path "${ROOT}/Cargo.toml" \
   --example render-screenshots -- \
-  "${SVG_DIR}" --claude-dir "${CLAUDE_DIR}" --db "${DEMO_DB}" --journal "${JOURNAL}" \
+  "${SVG_DIR}" --claude-dir "${CLAUDE_DIR}" --codex-dir "${CLAUDE_DIR}/no-codex-home" \
+  --db "${DEMO_DB}" --journal "${JOURNAL}" \
   --config "${CONFIG}" >/dev/null
 
 mkdir -p "${OUT_DIR}"

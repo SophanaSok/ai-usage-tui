@@ -4,6 +4,7 @@
 # db = "/home/user/.local/share/opencode/opencode.db"
 # journal = "/home/user/.local/share/ai-usage-tui/usage.db"
 # claude_dir = "/home/user/.claude/projects"
+# codex_dir = "/home/user/.codex"   # $CODEX_HOME, else ~/.codex; sessions/ and archived_sessions/ beneath it
 refresh_interval = 30
 # days = 7
 # provider = "opencode"
@@ -20,6 +21,11 @@ enabled = true
 interval = 30
 # billing = "auto"   # auto | subscription | api; auto reads the environment and ~/.claude.json
 # config_json = "/home/user/.claude.json"   # Claude Code's config document, if not at the default
+
+[collectors.codex]
+enabled = true
+interval = 30
+# billing = "auto"   # auto | subscription | api; auto reads OPENAI_API_KEY / CODEX_API_KEY only
 
 [collectors.journal]
 enabled = true

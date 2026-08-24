@@ -4,6 +4,21 @@
 
 ### Added
 
+- **Codex CLI collector.** Reads Codex's session logs ("rollouts") under `~/.codex/sessions` and
+  `~/.codex/archived_sessions` — `$CODEX_HOME`, or `--codex-dir` / `codex_dir` — tailing each file
+  by a cursor that also remembers the model, thread and directory in force there. Only
+  `session_meta`, `turn_context`, and the `token_count` event's `last_token_usage` are read;
+  prompts, tool output and reasoning summaries in the same file are never parsed. Following the
+  CLI's own arithmetic, cached input is split out of `input_tokens` as cache-read and reasoning
+  out of `output_tokens`, while cache writes stay inside input because OpenAI bills them at the
+  input rate. Re-emitted events with an unchanged running total and post-compaction estimates are
+  skipped, and identity is content-based so a forked thread's copied history dedupes. Billing is
+  decided like Claude Code's — `[collectors.codex] billing` or `--codex-billing`, else
+  `OPENAI_API_KEY` / `CODEX_API_KEY` in the environment, else per-token with a "billing unknown"
+  hint; `auth.json` is never opened and `config_json` is rejected under this table. Rows are
+  `openai`, priced `estimated` from the bundled `gpt-5` family entries, `unavailable` otherwise.
+  Tests and examples pass `--codex-dir` to a nonexistent path to stay hermetic; `.jsonl.zst`
+  files are not read.
 - **`tests/docs.rs` guards the README against drift.** The quick-start version pins must match
   `Cargo.toml`, and the CLI table must match what `--help` actually accepts, or the test fails.
 - **Claude Code billing detection.** Claude Code writes the same transcript on an API key and on

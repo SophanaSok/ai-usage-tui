@@ -14,8 +14,8 @@ use ai_usage_tui::{
     cli::{parse_cli, print_help},
     collector::{
         background::{
-            ClaudeCodeCollector, Collector, CollectorHandle, JournalCollector, OpenCodeCollector,
-            ZenPricingCollector,
+            ClaudeCodeCollector, CodexCollector, Collector, CollectorHandle, JournalCollector,
+            OpenCodeCollector, ZenPricingCollector,
         },
         journal::{record_ollama, record_routing},
         load_usage,
@@ -141,6 +141,19 @@ fn build_collectors(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Option
             offsets: Default::default(),
             billing: cli.claude_billing,
             claude_json: cli.claude_json.clone(),
+            decision: None,
+        }));
+    }
+
+    // Codex CLI rollouts: the OpenAI counterpart of the Claude Code logs, likewise invisible
+    // to the OpenCode collector.
+    let codex_cfg = collector_cfg(collectors_cfg, |c| c.codex.as_ref());
+    if codex_cfg.enabled.unwrap_or(true) {
+        collectors.push(Box::new(CodexCollector {
+            root: cli.codex_dir.clone(),
+            interval_secs: codex_cfg.interval.unwrap_or(30),
+            cursors: Default::default(),
+            billing: cli.codex_billing,
             decision: None,
         }));
     }

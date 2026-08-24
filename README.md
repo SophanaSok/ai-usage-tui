@@ -8,8 +8,9 @@
 
 [Quick start](#quick-start) · [Install](#installation) · [Configuration](#configuration) · [Docs](#more-documentation) · [Contributing](CONTRIBUTING.md)
 
-`ai-usage-tui` reads OpenCode's local usage database and Claude Code's session
-logs, can journal completed Ollama responses, and presents the combined data in
+`ai-usage-tui` reads OpenCode's local usage database, Claude Code's session
+logs, and Codex CLI's session logs, can journal completed Ollama responses, and
+presents the combined data in
 an interactive TUI or as JSON, CSV, or plain text. It tracks requests, input/output/reasoning/cache
 tokens, cost provenance, budgets, and opt-in model-routing events.
 
@@ -39,7 +40,7 @@ real account, project, or spend appears in any image here.*
 
 ## What it shows
 
-- Usage grouped by provider and model, across OpenCode, Claude Code, and Ollama
+- Usage grouped by provider and model, across OpenCode, Claude Code, Codex CLI, and Ollama
 - Input, output, reasoning, cache-read, and cache-write tokens
 - Today (local calendar day), trailing 7-day, trailing 30-day, all-time, or custom-day ranges
 - `LOCAL`, `CLOUD`, `FREE`, `PAID`, and `UNKNOWN` classifications
@@ -76,7 +77,8 @@ alongside the coverage figure so it cannot silently disappear.
 
 - **Data:** An OpenCode SQLite database (default:
   `~/.local/share/opencode/opencode.db`), Claude Code session logs under
-  `~/.claude/projects`, and/or journaled Ollama usage
+  `~/.claude/projects`, Codex CLI session logs under `~/.codex`, and/or
+  journaled Ollama usage
 - **Build (optional):** Stable Rust via [rustup](https://rustup.rs/)
 - **Platforms:** Linux and macOS (x86_64 and aarch64) and Windows x86_64 prebuilts from
   [GitHub Releases](https://github.com/SophanaSok/ai-usage-tui/releases)
@@ -180,7 +182,7 @@ cargo build --release --locked
 ## Data sources
 
 ```text
-OpenCode DB / Claude Code logs / Ollama journal
+OpenCode DB / Claude Code logs / Codex logs / Ollama journal
         -> background collectors -> TUI or JSON/CSV export
 ```
 
@@ -244,6 +246,60 @@ at API rates once it passes its limits, and those requests look exactly like
 the ones inside the plan, so `api_equivalent_cost` is a ceiling on what such an
 account was charged, not a spend figure.
 
+### Codex CLI
+
+Codex collection is automatic. Session logs ("rollouts", one JSONL file per
+thread) are read from both of:
+
+```text
+~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<thread-id>.jsonl
+~/.codex/archived_sessions/...
+```
+
+Select another Codex home with `--codex-dir PATH`, the `codex_dir` config
+setting, or `CODEX_HOME`; `sessions/` and `archived_sessions/` are scanned
+recursively beneath it. Each rollout is tailed by byte offset, so a poll reads
+only what was appended since the last one. Files the CLI has compressed to
+`.jsonl.zst` are skipped.
+
+Only three line kinds are read: `session_meta` (thread id and working
+directory), `turn_context` (the model in force), and the `token_count` event's
+`last_token_usage` block. Rollouts also contain prompts, tool-call arguments
+and outputs, and reasoning summaries — none of that is read or retained.
+Usage is attributed to a session (the thread id) and a project (the working
+directory).
+
+Token conventions follow the CLI's own arithmetic. Codex reports
+`cached_input_tokens` inside `input_tokens`, so the cached part is split out as
+cache-read. It reports `reasoning_output_tokens` inside `output_tokens`, so
+that part is split out as reasoning. Prompt-cache writes stay inside input,
+because OpenAI bills them as ordinary input. Re-emitted events whose running
+total did not move (rate-limit refreshes, resumes) and post-compaction
+estimates are skipped. A forked thread copies its ancestor's history into the
+new file, timestamps and all, so event identity is content-based
+(`timestamp + call tokens + running total`) and the copy deduplicates against
+the original.
+
+**Billing.** As with Claude Code, a rollout looks the same on an API key and on
+a ChatGPT plan. In order: an explicit `billing` setting; then, if
+`OPENAI_API_KEY` or `CODEX_API_KEY` is set in the environment, per-token;
+otherwise per-token, with a visible "billing unknown" hint. No Codex config
+document is read — `~/.codex/auth.json` is a credential file and is never
+opened — so `config_json` is rejected under `[collectors.codex]`. Force the
+answer with `[collectors.codex] billing = "subscription"` or `"api"` (default
+`"auto"`), or `--codex-billing MODE`. The decision is printed on the source
+line: `Codex: ~/.codex (N sessions) · api billing` or `· billing unknown — set
+[collectors.codex] billing`. The same line appends `· N token events disagree
+with running totals` when the CLI's cumulative counter did not advance by a
+call's own figure, so a change in what the CLI emits is visible rather than a
+silent under-count.
+
+Rows are `openai` / `PAID` and priced `estimated` from the bundled table, which
+covers the `gpt-5`, `gpt-5.1`, `gpt-5.2`, `gpt-5.3-codex`, `gpt-5.4`, `gpt-5.5`,
+and `gpt-5.6` families (including their `-codex`, `-mini`, `-nano`, and `-pro`
+variants where published). A model absent from the table stays `unavailable`;
+no rate is invented.
+
 ### Ollama
 
 Ollama usage is opt-in. Pipe a completed response into
@@ -300,8 +356,9 @@ ai-usage-tui --days 14 --model qwen3-coder:30b
 ai-usage-tui --refresh-interval 15
 ```
 
-The dashboard refreshes every 30 seconds by default. OpenCode, Claude Code, and
-journal collectors run in the background at their configured intervals.
+The dashboard refreshes every 30 seconds by default. OpenCode, Claude Code,
+Codex, and journal collectors run in the background at their configured
+intervals.
 
 The main view combines summary metrics, token-flow breakdown, and per-model
 activity. One other panel occupies the right-hand pane at a time; `?` lists every
@@ -409,6 +466,8 @@ values override environment variables and defaults.
 ```toml
 refresh_interval = 30
 days = 7
+# claude_dir = "/home/user/.claude/projects"
+# codex_dir = "/home/user/.codex"
 
 [collectors.opencode]
 enabled = true
@@ -419,6 +478,11 @@ enabled = true
 interval = 30
 billing = "auto"                        # auto | subscription | api
 # config_json = "/home/user/.claude.json"
+
+[collectors.codex]
+enabled = true
+interval = 30
+billing = "auto"                        # auto | subscription | api
 
 [collectors.journal]
 enabled = true
@@ -549,6 +613,8 @@ does not load it automatically.
 | `--journal PATH` | Override the local journal path |
 | `--claude-dir PATH` | Override the Claude Code session-log directory |
 | `--claude-billing MODE` | How Claude Code usage is billed: `auto` (default), `subscription`, or `api`; overrides `[collectors.claude_code] billing` |
+| `--codex-dir PATH` | Override the Codex home (`$CODEX_HOME`, else `~/.codex`); `sessions/` and `archived_sessions/` are read beneath it |
+| `--codex-billing MODE` | How Codex usage is billed: `auto` (default), `subscription`, or `api`; overrides `[collectors.codex] billing` |
 | `--today` | Use today (local calendar day) |
 | `--week` | Use the trailing 7 days (default) |
 | `--month` | Use the trailing 30 days |
@@ -577,6 +643,7 @@ Environment variables:
 | `AI_USAGE_JOURNAL_PATH` | Usage and routing journal path |
 | `CLAUDE_PROJECTS_DIR` | Claude Code session-log directory |
 | `CLAUDE_CONFIG_DIR` | Claude Code config directory; logs are read from `$CLAUDE_CONFIG_DIR/projects` (`CLAUDE_PROJECTS_DIR` wins when both are set) |
+| `CODEX_HOME` | Codex home; session logs are read from `sessions/` and `archived_sessions/` beneath it |
 | `AI_USAGE_LOG` | Write diagnostics to a file — `1` for the default location, or a path. Off when unset. |
 | `XDG_CONFIG_HOME` | Base directory for the default config path |
 | `XDG_DATA_HOME` | Base directory for default database, journal, and cache paths |
@@ -602,6 +669,12 @@ On Windows, `USERPROFILE` (or `HOMEDRIVE` + `HOMEPATH`) stands in for `HOME`,
   The environment is checked only for the presence of `ANTHROPIC_API_KEY`,
   `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, and
   `CLAUDE_CODE_USE_VERTEX`; their values are not read.
+- Codex rollouts contain prompts, tool-call arguments and outputs, and
+  reasoning summaries; only `session_meta`, `turn_context`, and the
+  `token_count` block are parsed, under the same planted-credential test as
+  Claude Code. `~/.codex/auth.json` is a credential file and is never opened;
+  the environment is checked only for the presence of `OPENAI_API_KEY` and
+  `CODEX_API_KEY`.
 - Per-project attribution records the **working directory path** of each
   session, so `~/a/build` and `~/b/build` stay separate projects. The dashboard
   shows only the shortest name that distinguishes them, but `--json` and
@@ -617,6 +690,7 @@ Default local storage paths (when the corresponding XDG variable is unset):
 | --- | --- |
 | OpenCode usage, read-only | `~/.local/share/opencode/opencode.db` |
 | Claude Code config document, read-only (billing only) | `~/.claude.json` |
+| Codex session logs, read-only | `~/.codex/sessions`, `~/.codex/archived_sessions` |
 | Ollama and routing journal | `~/.local/share/ai-usage-tui/usage.db` |
 | Zen pricing cache | `~/.local/share/ai-usage-tui/zen-pricing.toml` |
 | Zen model catalog | `~/.local/share/ai-usage-tui/zen-models.json` |
@@ -634,9 +708,13 @@ Default local storage paths (when the corresponding XDG variable is unset):
 - **Config not applied:** verify TOML syntax and the path shown above. A custom
   `--config PATH` fails immediately when the file does not exist.
 - **`could not determine a home directory`:** set `HOME` (or `USERPROFILE` on
-  Windows), or pass explicit paths with `--db`, `--journal`, and `--claude-dir`.
+  Windows), or pass explicit paths with `--db`, `--journal`, `--claude-dir`, and
+  `--codex-dir`.
 - **No Claude Code rows:** confirm `~/.claude/projects` exists and contains
   `.jsonl` files, or point at the right directory with `--claude-dir PATH`.
+- **No Codex rows:** confirm `codex` has written `~/.codex/sessions` (or
+  `$CODEX_HOME/sessions`), or point at the right home with `--codex-dir PATH`.
+  Compressed `.jsonl.zst` rollouts are not read.
 
 ## Development
 

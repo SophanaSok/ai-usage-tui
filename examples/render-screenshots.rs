@@ -55,6 +55,7 @@ fn main() -> ExitCode {
         };
         match flag.as_str() {
             "--claude-dir" => cli.claude_dir = Some(value),
+            "--codex-dir" => cli.codex_dir = Some(value),
             "--journal" => cli.journal_path = Some(value),
             "--config" => cli.config_path = Some(value),
             "--db" => cli.db_path = Some(value),
@@ -69,13 +70,16 @@ fn main() -> ExitCode {
     // discover the machine's real OpenCode database and Claude Code transcripts, and the images
     // become a picture of the author's own spend — the exact thing the demo fixture exists to
     // prevent. This was not hypothetical: the first run of this renderer did it.
-    let (Some(journal), Some(_), Some(_)) = (
+    let (Some(journal), Some(_), Some(_), Some(_)) = (
         cli.journal_path.clone(),
         cli.claude_dir.as_ref(),
+        cli.codex_dir.as_ref(),
         cli.db_path.as_ref(),
     ) else {
-        eprintln!("--journal, --claude-dir and --db are all required: unset, they fall back to");
-        eprintln!("this machine's real usage data, which must never reach a README image");
+        eprintln!("--journal, --claude-dir, --codex-dir and --db are all required: unset, they");
+        eprintln!(
+            "fall back to this machine's real usage data, which must never reach a README image"
+        );
         return ExitCode::FAILURE;
     };
 

@@ -6,7 +6,7 @@ The application is designed around a provider-neutral usage pipeline:
 background collectors -> shared state (Arc<RwLock>) -> TUI / export
 ```
 
-Collectors read assistant message records from the OpenCode SQLite database, Claude Code session logs (`~/.claude/projects/**/*.jsonl`), and the local Ollama/routing journal. Future collectors follow the same normalized shape.
+Collectors read assistant message records from the OpenCode SQLite database, Claude Code session logs (`~/.claude/projects/**/*.jsonl`), Codex CLI rollouts (`~/.codex/{sessions,archived_sessions}/**/*.jsonl`), and the local Ollama/routing journal. Future collectors follow the same normalized shape.
 
 ## Privacy Boundary
 
@@ -22,9 +22,9 @@ This extends to the pricing table: a rate that is absent is distinct from a rate
 
 ## Background Collectors
 
-Background collectors run in dedicated `std::thread`-based polling loops and merge normalized usage events into the shared in-memory `CollectorState`. They never write to the journal database — the journal is a source (written by `--record-ollama` / `--record-routing`, read by the journal collector), not a sink. The TUI calls `snapshot()` on its own refresh interval (default 30s), keeping the UI responsive regardless of collector latency. Configuration lives in the `[collectors.opencode]`, `[collectors.claude_code]`, `[collectors.journal]`, and `[collectors.zen_pricing]` sections of the config file.
+Background collectors run in dedicated `std::thread`-based polling loops and merge normalized usage events into the shared in-memory `CollectorState`. They never write to the journal database — the journal is a source (written by `--record-ollama` / `--record-routing`, read by the journal collector), not a sink. The TUI calls `snapshot()` on its own refresh interval (default 30s), keeping the UI responsive regardless of collector latency. Configuration lives in the `[collectors.opencode]`, `[collectors.claude_code]`, `[collectors.codex]`, `[collectors.journal]`, and `[collectors.zen_pricing]` sections of the config file.
 
-Ingestion is incremental: the OpenCode collector resumes from a `time_created` high-water mark and the Claude Code collector tails each session log by byte offset, so neither re-reads history on every poll.
+Ingestion is incremental: the OpenCode collector resumes from a `time_created` high-water mark and the Claude Code and Codex collectors tail each session log by byte offset, so none re-reads history on every poll.
 
 See [`background-collectors.md`](background-collectors.md) for the `Collector` trait, `CollectorHandle`, and thread model.
 

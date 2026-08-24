@@ -14,7 +14,7 @@ all green on every branch since PR #5.
 **Every P0 and P1 finding from the original audit has shipped.** What remains is P2 and P3 — depth
 and breadth, not correctness.
 
-Sources read today: OpenCode SQLite, Claude Code JSONL, the local Ollama/routing journal, and the
+Sources read today: OpenCode SQLite, Claude Code JSONL, Codex CLI rollouts, the local Ollama/routing journal, and the
 Zen pricing table. Verified end to end against ~103MB of real Claude Code logs — 5,879 requests
 parsed in 0.27s with **zero unpriced rows**. On a subscription account those rows are `quota`
 rather than priced, and carry the list-rate figure as `api_equivalent_cost` instead of `cost`.
@@ -46,8 +46,8 @@ stealth models; vendor a snapshot via `include_str!` so offline still works.
 
 ### P2 — Coverage
 
-More agent CLIs behind the existing `Collector` trait, which is already the right seam. Highest
-value first: **Codex**, then **Gemini CLI**. The trait needs auto-discovery ("which agent CLIs are
+More agent CLIs behind the existing `Collector` trait, which is already the right seam.
+**Codex** shipped (`src/collector/codex.rs`); **Gemini CLI** is next. The trait needs auto-discovery ("which agent CLIs are
 installed?") and per-source enable/disable, which `CollectorsConfig` already models.
 
 ### P3 — Dashboard
@@ -150,11 +150,11 @@ cargo fmt --all -- --check
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-targets --locked && cargo test --doc --locked
 
-# Against the committed fixture. `--claude-dir` matters: without it this reads your real
-# ~/.claude/projects and stops being a fixture check.
+# Against the committed fixture. `--claude-dir` and `--codex-dir` matter: without them this
+# reads your real ~/.claude/projects and ~/.codex and stops being a fixture check.
 cargo build --release --locked
 ./target/release/ai-usage-tui --json --all \
-  --db tests/fixtures/opencode_test.db --claude-dir /nonexistent
+  --db tests/fixtures/opencode_test.db --claude-dir /nonexistent --codex-dir /nonexistent
 
 # Against real Claude Code logs — the true end-to-end check.
 # Watch the unpriced count: it should be zero. Subscription rows are `quota` with
@@ -168,7 +168,7 @@ cargo build --release --locked
         sum(1 for u in rows if u['cost_status'] == 'quota'), 'on quota')"
 ```
 
-Tests are hermetic — they never read the developer's real `~/.claude/projects` or `~/.claude.json`.
-Keep it that way: pass an explicit `claude_dir` (the config document is derived from it) or
-`claude_json` in any new test that goes through `load_usage` or `print_once`, and in any command
-in this file.
+Tests are hermetic — they never read the developer's real `~/.claude/projects`, `~/.claude.json`,
+or `~/.codex`. Keep it that way: pass an explicit `claude_dir` (the config document is derived from
+it) or `claude_json`, and an explicit `codex_dir` (`--codex-dir /nonexistent`), in any new test that
+goes through `load_usage` or `print_once`, and in any command in this file.

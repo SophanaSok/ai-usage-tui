@@ -20,6 +20,10 @@ pub struct Cli {
     pub claude_billing_set: bool,
     /// Claude Code's `~/.claude.json`, when it is not at the default location.
     pub claude_json: Option<PathBuf>,
+    /// Codex's home; defaults to `$CODEX_HOME` or `~/.codex`.
+    pub codex_dir: Option<PathBuf>,
+    pub codex_billing: BillingSetting,
+    pub codex_billing_set: bool,
     pub range: Range,
     pub range_set: bool,
     pub provider_filter: Option<String>,
@@ -51,6 +55,9 @@ impl Default for Cli {
             claude_billing: BillingSetting::Auto,
             claude_billing_set: false,
             claude_json: None,
+            codex_dir: None,
+            codex_billing: BillingSetting::Auto,
+            codex_billing_set: false,
             range: Range::Week,
             range_set: false,
             provider_filter: None,
@@ -161,17 +168,21 @@ where
                 let value = args
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("--claude-billing requires a mode"))?;
-                cli.claude_billing = match value.as_str() {
-                    "auto" => BillingSetting::Auto,
-                    "subscription" => BillingSetting::Subscription,
-                    "api" => BillingSetting::Api,
-                    other => {
-                        return Err(anyhow::anyhow!(
-                            "invalid --claude-billing mode: {other} (expected auto, subscription, or api)"
-                        ))
-                    }
-                };
+                cli.claude_billing = parse_billing("--claude-billing", &value)?;
                 cli.claude_billing_set = true;
+            }
+            "--codex-dir" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--codex-dir requires a path"))?;
+                cli.codex_dir = Some(PathBuf::from(value));
+            }
+            "--codex-billing" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--codex-billing requires a mode"))?;
+                cli.codex_billing = parse_billing("--codex-billing", &value)?;
+                cli.codex_billing_set = true;
             }
             "--days" => {
                 let value = args
@@ -245,6 +256,17 @@ where
     Ok(cli)
 }
 
+fn parse_billing(flag: &str, value: &str) -> Result<BillingSetting> {
+    match value {
+        "auto" => Ok(BillingSetting::Auto),
+        "subscription" => Ok(BillingSetting::Subscription),
+        "api" => Ok(BillingSetting::Api),
+        other => Err(anyhow::anyhow!(
+            "invalid {flag} mode: {other} (expected auto, subscription, or api)"
+        )),
+    }
+}
+
 pub fn print_help() {
     println!(
         "ai-usage-tui {}
@@ -267,6 +289,10 @@ OPTIONS:
                   Override the Claude Code session-log directory
     --claude-billing MODE               How Claude Code usage is billed: auto (default),
                                         subscription, or api. Overrides [collectors.claude_code]
+    --codex-dir PATH                    Override the Codex home ($CODEX_HOME, else ~/.codex);
+                                        sessions/ and archived_sessions/ are read beneath it
+    --codex-billing MODE                How Codex usage is billed: auto (default), subscription,
+                                        or api. Overrides [collectors.codex]
                   (default: ~/.claude/projects)
     --days N       Show the last N days
     --today        Show today
@@ -299,6 +325,8 @@ ENVIRONMENT:
     CLAUDE_CONFIG_DIR   Claude Code's own config root; session logs are read
                         from $CLAUDE_CONFIG_DIR/projects. CLAUDE_PROJECTS_DIR
                         wins when both are set.
+    CODEX_HOME          Codex's home; session logs are read from sessions/ and
+                        archived_sessions/ beneath it
     AI_USAGE_JOURNAL_PATH
                         Override the local usage journal path
     AI_USAGE_LOG        Write diagnostics to a file. Set to 1 for the default
@@ -397,5 +425,15 @@ mod tests {
         };
         assert!(error.contains("invalid --claude-billing mode"), "{error}");
         assert!(parse_cli(["--claude-billing"]).is_err());
+    }
+
+    #[test]
+    fn codex_flags_parse() {
+        let cli = parse_cli(["--codex-dir", "/x", "--codex-billing", "subscription"]).unwrap();
+        assert_eq!(cli.codex_dir.as_deref(), Some(std::path::Path::new("/x")));
+        assert_eq!(cli.codex_billing, BillingSetting::Subscription);
+        assert!(cli.codex_billing_set);
+        assert!(parse_cli(["--codex-dir"]).is_err());
+        assert!(parse_cli(["--codex-billing", "maybe"]).is_err());
     }
 }

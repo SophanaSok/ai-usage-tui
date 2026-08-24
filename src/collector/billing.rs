@@ -78,6 +78,29 @@ pub struct Signals<'a> {
     pub omarchy_tier: Option<&'a str>,
 }
 
+/// Carry a decision across polls: evidence, once found, outlives a momentary lack of it.
+///
+/// Claude Code rewrites its config document constantly, and a poll that catches it half-written
+/// must not flip the rows it collects to a different status from the rows already merged. An
+/// unknown decision is always replaced, so a later sign-in is picked up.
+pub fn resolve_sticky(agent: &str, previous: Option<Decision>, fresh: Decision) -> Decision {
+    match previous {
+        Some(previous) if previous.is_evidenced() && !fresh.is_evidenced() => previous,
+        Some(previous) if previous == fresh => previous,
+        _ => {
+            crate::logging::info(
+                "billing",
+                &format!(
+                    "{agent}: {} ({})",
+                    fresh.describe(&format!("collectors.{agent}")),
+                    fresh.reason
+                ),
+            );
+            fresh
+        }
+    }
+}
+
 /// Whether an environment variable is set and non-empty. The production `Signals::env_has`.
 pub fn env_has(name: &str) -> bool {
     std::env::var_os(name).is_some_and(|value| !value.is_empty())

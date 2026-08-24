@@ -121,7 +121,7 @@ pub fn load_claude_code(
 }
 
 /// Every `*.jsonl` under `root`, one directory deep per project plus any nested layout.
-fn session_files(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn session_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -242,7 +242,7 @@ pub fn parse_line(line: &str) -> Option<Usage> {
 
 /// The working directory, with a trailing separator removed so `/a/b` and `/a/b/` are one
 /// project rather than two.
-fn normalize_project_path(cwd: &str) -> String {
+pub(crate) fn normalize_project_path(cwd: &str) -> String {
     let trimmed = cwd.trim_end_matches(['/', '\\']);
     if trimmed.is_empty() {
         cwd.to_string()

@@ -6,7 +6,7 @@ readable end to end in an afternoon.
 ## What this project is
 
 A terminal dashboard that reads AI token usage from local sources — OpenCode's SQLite database,
-Claude Code's session logs, a local journal — and reports what it cost. It is a **read-only,
+Claude Code's session logs, Codex CLI's session logs, a local journal — and reports what it cost. It is a **read-only,
 local-first** tool: no server, no telemetry, no account.
 
 Two things make it different from the several similar tools, and both are worth preserving:
@@ -38,11 +38,13 @@ another. CI passes it on every command above, which also makes a dependency PR t
 **Run it without a TTY** — the dashboard needs a real terminal, so for scripted checks use:
 
 ```sh
-cargo run --locked -- --json --db tests/fixtures/opencode_test.db --all --claude-dir /nonexistent
+cargo run --locked -- --json --db tests/fixtures/opencode_test.db --all \
+  --claude-dir /nonexistent --codex-dir /nonexistent
 ```
 
 The fixture database has 2023-era timestamps, so `--today` and `--week` show nothing. Use
-`--all`. Pass `--claude-dir` explicitly or you will read your own `~/.claude/projects`.
+`--all`. Pass `--claude-dir` and `--codex-dir` explicitly or you will read your own
+`~/.claude/projects` and `~/.codex`.
 
 ## Where things live
 
@@ -109,9 +111,10 @@ that looked right.
 ## Testing
 
 - **Tests must be hermetic.** Anything going through `load_usage` or `print_once` needs an
-  explicit `claude_dir`, or it reads the developer's real `~/.claude/projects` — and their real
-  `~/.claude.json` for the billing decision. The config document is derived from `claude_dir`, so
-  a fixture root resolves to a file that does not exist; pass `claude_json` to plant one.
+  explicit `claude_dir` and `codex_dir`, or it reads the developer's real `~/.claude/projects` and
+  `~/.codex` — and their real `~/.claude.json` for the billing decision. The config document is
+  derived from `claude_dir`, so a fixture root resolves to a file that does not exist; pass
+  `claude_json` to plant one. Codex reads no config document; `--codex-dir /nonexistent` suffices.
 - **Tests must discriminate.** A regression test that also passes against the buggy code is
   worse than no test. Restore the bug in a scratch copy and confirm the test fails.
 

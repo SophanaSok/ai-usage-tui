@@ -1,6 +1,7 @@
 pub mod background;
 pub mod billing;
 pub mod claude_code;
+pub mod codex;
 pub mod journal;
 pub mod opencode;
 pub mod pricing_refresh;
@@ -14,6 +15,7 @@ use anyhow::Result;
 use crate::cli::Cli;
 use crate::collector::billing::{detect, BillingSetting, Decision, Signals};
 use crate::collector::claude_code::{config_json_path, load_claude_code, Offsets};
+use crate::collector::codex::{load_codex, Cursors};
 use crate::collector::journal::load_journal;
 use crate::collector::opencode::load_opencode;
 use crate::collector::zen::zen_cache_path;
@@ -33,6 +35,9 @@ pub struct SourceRoots {
     pub claude_billing: BillingSetting,
     /// Claude Code's `~/.claude.json`, when the default location is not the right one.
     pub claude_json: Option<PathBuf>,
+    /// Codex's home; `None` means `$CODEX_HOME` or `~/.codex` (see `codex`).
+    pub codex_dir: Option<PathBuf>,
+    pub codex_billing: BillingSetting,
 }
 
 impl SourceRoots {
@@ -50,6 +55,8 @@ impl SourceRoots {
             claude_dir: cli.claude_dir.clone(),
             claude_billing: cli.claude_billing,
             claude_json: cli.claude_json.clone(),
+            codex_dir: cli.codex_dir.clone(),
+            codex_billing: cli.codex_billing,
         }
     }
 
@@ -57,6 +64,20 @@ impl SourceRoots {
     /// session-log root, so a test that points at a fixture never resolves the developer's own.
     pub fn claude_json_path(&self) -> Option<PathBuf> {
         config_json_path(self.claude_json.as_deref(), self.claude_dir.as_deref())
+    }
+
+    /// Decide Codex's billing. Codex has no config document this tool will read — its
+    /// `auth.json` is a credential file — so the signals are the setting and the environment.
+    pub fn codex_decision(&self) -> Decision {
+        detect(
+            "codex",
+            self.codex_billing,
+            &Signals {
+                claude_json: None,
+                env_has: &crate::collector::billing::env_has,
+                omarchy_tier: None,
+            },
+        )
     }
 
     /// Decide Claude Code's billing from the evidence available right now.
@@ -97,8 +118,20 @@ pub fn load_usage(roots: &SourceRoots) -> Result<(Vec<Usage>, String)> {
         load_claude_code(roots.claude_dir.as_deref(), &mut Offsets::new(), &decision)
             .unwrap_or_else(|error| (Vec::new(), format!("Claude Code: unavailable ({})", error)));
 
+    let codex_decision = roots.codex_decision();
+    let (codex_usages, codex_source) = load_codex(
+        roots.codex_dir.as_deref(),
+        &mut Cursors::new(),
+        &codex_decision,
+    )
+    .unwrap_or_else(|error| (Vec::new(), format!("Codex: unavailable ({})", error)));
+
     let mut seen: HashSet<UsageKey> = usages.iter().map(usage_key).collect();
-    for extra in journal_usages.into_iter().chain(claude_usages) {
+    for extra in journal_usages
+        .into_iter()
+        .chain(claude_usages)
+        .chain(codex_usages)
+    {
         if seen.insert(usage_key(&extra)) {
             usages.push(extra);
         }
@@ -110,8 +143,8 @@ pub fn load_usage(roots: &SourceRoots) -> Result<(Vec<Usage>, String)> {
     Ok((
         usages,
         format!(
-            "{} | {} | {} | {}",
-            opencode_source, claude_source, journal_source, zen_source
+            "{} | {} | {} | {} | {}",
+            opencode_source, claude_source, codex_source, journal_source, zen_source
         ),
     ))
 }
