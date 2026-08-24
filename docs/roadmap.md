@@ -86,42 +86,25 @@ no usage at all unless the user enables its OpenTelemetry log, so the collector 
 `--doctor` has to distinguish "not set up" from "empty". Expect more sources to look like this
 than like Claude Code, whose transcripts are simply always there.
 
-**Open: the Gemini format has not been checked against live output.** It was derived by reading
-`@google/gemini-cli` 0.56.0's own serialization code, not from a capture — producing one needs
-Gemini credentials and a billable call. The parser skips records it does not recognise, so an
-unexpected shape degrades to *no rows* rather than wrong numbers, but nobody has yet seen it read
-a real file. To close this:
+**Resolved: the Gemini format is validated against real output.** It was derived by reading
+`@google/gemini-cli` 0.56.0's serialization code; it is now confirmed against bytes that CLI
+actually wrote. No Gemini account was needed — `GOOGLE_GEMINI_BASE_URL` points the CLI at a local
+stand-in for Google's API, so the real CLI, its real OpenTelemetry SDK and its real
+`FileLogExporter` produce the file with no billable call. `tests/fixtures/gemini_telemetry.json`
+is a redacted capture, and two tests pin the parser to it.
 
-```sh
-GEMINI_TELEMETRY_ENABLED=true GEMINI_TELEMETRY_TARGET=local \
-GEMINI_TELEMETRY_OUTFILE=/tmp/gem.json gemini -p "hello"
+Everything the format notes claimed held: concatenated pretty-printed JSON, `attributes` as a
+top-level sibling of the OTLP wrapper, and the token attribute names. Three things the notes did
+*not* predict, all now covered:
 
-# GEMINI_TELEMETRY_OUTFILE is honoured directly, so --gemini-dir is only a placeholder here.
-ai-usage-tui --json --all --gemini-dir /tmp --db /nonexistent.db \
-  --claude-dir /nonexistent --codex-dir /nonexistent --omarchy-dir /nonexistent \
-  --journal /nonexistent/j.db
-```
-
-Expect one row per API response, `provider: gemini`, and a non-null `cost`. If it reads empty or
-the numbers look wrong, the record shape differs from what `src/collector/gemini.rs` expects —
-commit a redacted capture as `tests/fixtures/gemini_telemetry.json` and fix the parser against it.
-The three things most likely to have drifted are the event name (`gemini_cli.api_response`), the
-token attribute names, and whether `cached_content_token_count` is still a subset of
-`input_token_count`.
-
-This got materially cheaper in v0.6.0. Adding a source used to mean 9-16 edits across 7 files,
-because the set of sources was wired by hand in two independent places — `collector::load_usage`
-for the exports and `main::build_collectors` for the dashboard — and `CONTRIBUTING.md` documented
-only the second. It is now a module in `src/collector/` exposing `ID`, `read` and `collector`,
-plus one entry in `collector::registry::SOURCES`, with
-`every_source_is_reachable_from_both_paths` failing the build if a source is only half wired.
-`[collectors.<id>]` needs no code at all: the config table is keyed off the registry.
-
-Per-source enable/disable is done and genuinely applies everywhere — it previously governed the
-dashboard's background collectors and was ignored by `--json`/`--csv`/`--check-budgets`. What
-remains is **auto-discovery**: "which agent CLIs are installed?", so a first run finds sources
-without being told. `--doctor` already resolves and reports every registered source's path, which
-is most of the machinery.
+- **Metric records have no `attributes` key at all.** A parser indexing `["attributes"]` would
+  have panicked on them. Ours returns `None`, and the fixture contains one.
+- **`resource` carries the host name, home directory paths and the full command line, prompt
+  included.** Only `attributes` is read, which is why none of it reaches a usage record — there
+  is now a test asserting that against the real block rather than a synthetic one.
+- **One prompt produced six `api_response` records sharing a `prompt_id` *and* an identical
+  `total_token_count`.** Only the timestamp separated them. Keying identity on `prompt_id`, or on
+  `prompt_id` plus the total, would have reported one request instead of six.
 
 ### P3 — Dashboard
 

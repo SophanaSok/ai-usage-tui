@@ -1,0 +1,466 @@
+{
+  "hrTime": [
+    1787600177,
+    301000000
+  ],
+  "hrTimeObserved": [
+    1787600177,
+    301000000
+  ],
+  "spanContext": {
+    "traceId": "08d6eeacce0440d467169c4473e247cd",
+    "spanId": "c1e7871ea0e7ff90",
+    "traceFlags": 1
+  },
+  "resource": {
+    "_rawAttributes": [
+      [
+        "host.name",
+        "redacted-host"
+      ],
+      [
+        "host.arch",
+        "amd64"
+      ],
+      [
+        "host.id",
+        null
+      ],
+      [
+        "process.pid",
+        163644
+      ],
+      [
+        "process.executable.name",
+        "/redacted/.local/share/mise/installs/node/26.7.0/bin/node"
+      ],
+      [
+        "process.executable.path",
+        "/redacted/.local/share/mise/installs/node/26.7.0/bin/node"
+      ],
+      [
+        "process.command_args",
+        [
+          "/redacted/.local/share/mise/installs/node/26.7.0/bin/node",
+          "--max-old-space-size=3922",
+          "/redacted/.local/share/mise/installs/gemini/latest/node_modules/.mise/@google+gemini-cli@0.56.0/node_modules/@google/gemini-cli/bundle/gemini.js",
+          "--skip-trust",
+          "-p",
+          "REDACTED-PROMPT"
+        ]
+      ],
+      [
+        "process.runtime.version",
+        "26.7.0"
+      ],
+      [
+        "process.runtime.name",
+        "nodejs"
+      ],
+      [
+        "process.runtime.description",
+        "Node.js"
+      ],
+      [
+        "process.command",
+        "/redacted/.local/share/mise/installs/gemini/latest/node_modules/.mise/@google+gemini-cli@0.56.0/node_modules/@google/gemini-cli/bundle/gemini.js"
+      ],
+      [
+        "process.owner",
+        "sokdev"
+      ],
+      [
+        "service.name",
+        "gemini-cli"
+      ],
+      [
+        "service.version",
+        "v26.7.0"
+      ],
+      [
+        "session.id",
+        "51966244-db62-4e6c-a9ff-5ab996153e78"
+      ]
+    ],
+    "_asyncAttributesPending": false
+  },
+  "instrumentationScope": {
+    "name": "gemini-cli"
+  },
+  "attributes": {
+    "session.id": "a1b2c3d4-0000-4000-8000-000000000002",
+    "installation.id": "a1b2c3d4-0000-4000-8000-000000000003",
+    "interactive": false,
+    "auth_type": "gemini-api-key",
+    "event.name": "gemini_cli.api_response",
+    "event.timestamp": "2026-08-24T19:36:17.297Z",
+    "model": "gemini-2.5-pro",
+    "duration_ms": 50,
+    "input_token_count": 1234,
+    "output_token_count": 567,
+    "cached_content_token_count": 234,
+    "thoughts_token_count": 89,
+    "tool_token_count": 12,
+    "total_token_count": 1890,
+    "prompt_id": "a1b2c3d4-0000-4000-8000-000000000001",
+    "status_code": 200,
+    "finish_reasons": [
+      "stop"
+    ],
+    "role": "utility_router",
+    "response_text": "sk-planted-credential-0123456789abcdef must never be read",
+    "http.status_code": 200
+  },
+  "_body": "API response from gemini-2.5-pro. Status: 200. Duration: 50ms.",
+  "_attributesCount": 20,
+  "_droppedAttributesCount": 0,
+  "_isReadonly": true,
+  "_logRecordLimits": {
+    "attributeCountLimit": 128,
+    "attributeValueLengthLimit": null
+  }
+}
+{
+  "hrTime": [
+    1787600182,
+    646000000
+  ],
+  "hrTimeObserved": [
+    1787600182,
+    646000000
+  ],
+  "spanContext": {
+    "traceId": "1973863087318eb60d7e8abfc5a1fd7f",
+    "spanId": "a39a1cf9e5094837",
+    "traceFlags": 1
+  },
+  "resource": {
+    "_rawAttributes": [
+      [
+        "host.name",
+        "redacted-host"
+      ],
+      [
+        "host.arch",
+        "amd64"
+      ],
+      [
+        "host.id",
+        null
+      ],
+      [
+        "process.pid",
+        163644
+      ],
+      [
+        "process.executable.name",
+        "/redacted/.local/share/mise/installs/node/26.7.0/bin/node"
+      ],
+      [
+        "process.executable.path",
+        "/redacted/.local/share/mise/installs/node/26.7.0/bin/node"
+      ],
+      [
+        "process.command_args",
+        [
+          "/redacted/.local/share/mise/installs/node/26.7.0/bin/node",
+          "--max-old-space-size=3922",
+          "/redacted/.local/share/mise/installs/gemini/latest/node_modules/.mise/@google+gemini-cli@0.56.0/node_modules/@google/gemini-cli/bundle/gemini.js",
+          "--skip-trust",
+          "-p",
+          "REDACTED-PROMPT"
+        ]
+      ],
+      [
+        "process.runtime.version",
+        "26.7.0"
+      ],
+      [
+        "process.runtime.name",
+        "nodejs"
+      ],
+      [
+        "process.runtime.description",
+        "Node.js"
+      ],
+      [
+        "process.command",
+        "/redacted/.local/share/mise/installs/gemini/latest/node_modules/.mise/@google+gemini-cli@0.56.0/node_modules/@google/gemini-cli/bundle/gemini.js"
+      ],
+      [
+        "process.owner",
+        "sokdev"
+      ],
+      [
+        "service.name",
+        "gemini-cli"
+      ],
+      [
+        "service.version",
+        "v26.7.0"
+      ],
+      [
+        "session.id",
+        "51966244-db62-4e6c-a9ff-5ab996153e78"
+      ]
+    ],
+    "_asyncAttributesPending": false
+  },
+  "instrumentationScope": {
+    "name": "gemini-cli"
+  },
+  "attributes": {
+    "session.id": "a1b2c3d4-0000-4000-8000-000000000002",
+    "installation.id": "a1b2c3d4-0000-4000-8000-000000000003",
+    "interactive": false,
+    "auth_type": "gemini-api-key",
+    "event.name": "gemini_cli.api_response",
+    "event.timestamp": "2026-08-24T19:36:22.643Z",
+    "model": "gemini-2.5-pro",
+    "duration_ms": 18,
+    "input_token_count": 1234,
+    "output_token_count": 567,
+    "cached_content_token_count": 234,
+    "thoughts_token_count": 89,
+    "tool_token_count": 12,
+    "total_token_count": 1890,
+    "prompt_id": "a1b2c3d4-0000-4000-8000-000000000001",
+    "status_code": 200,
+    "finish_reasons": [
+      "stop"
+    ],
+    "role": "utility_router",
+    "response_text": "sk-planted-credential-0123456789abcdef must never be read",
+    "http.status_code": 200
+  },
+  "_body": "API response from gemini-2.5-pro. Status: 200. Duration: 18ms.",
+  "_attributesCount": 20,
+  "_droppedAttributesCount": 0,
+  "_isReadonly": true,
+  "_logRecordLimits": {
+    "attributeCountLimit": 128,
+    "attributeValueLengthLimit": null
+  }
+}
+{
+  "hrTime": [
+    1787600177,
+    223000000
+  ],
+  "hrTimeObserved": [
+    1787600177,
+    223000000
+  ],
+  "resource": {
+    "_rawAttributes": [
+      [
+        "host.name",
+        "redacted-host"
+      ],
+      [
+        "host.arch",
+        "amd64"
+      ],
+      [
+        "host.id",
+        null
+      ],
+      [
+        "process.pid",
+        163644
+      ],
+      [
+        "process.executable.name",
+        "/redacted/.local/share/mise/installs/node/26.7.0/bin/node"
+      ],
+      [
+        "process.executable.path",
+        "/redacted/.local/share/mise/installs/node/26.7.0/bin/node"
+      ],
+      [
+        "process.command_args",
+        [
+          "/redacted/.local/share/mise/installs/node/26.7.0/bin/node",
+          "--max-old-space-size=3922",
+          "/redacted/.local/share/mise/installs/gemini/latest/node_modules/.mise/@google+gemini-cli@0.56.0/node_modules/@google/gemini-cli/bundle/gemini.js",
+          "--skip-trust",
+          "-p",
+          "REDACTED-PROMPT"
+        ]
+      ],
+      [
+        "process.runtime.version",
+        "26.7.0"
+      ],
+      [
+        "process.runtime.name",
+        "nodejs"
+      ],
+      [
+        "process.runtime.description",
+        "Node.js"
+      ],
+      [
+        "process.command",
+        "/redacted/.local/share/mise/installs/gemini/latest/node_modules/.mise/@google+gemini-cli@0.56.0/node_modules/@google/gemini-cli/bundle/gemini.js"
+      ],
+      [
+        "process.owner",
+        "sokdev"
+      ],
+      [
+        "service.name",
+        "gemini-cli"
+      ],
+      [
+        "service.version",
+        "v26.7.0"
+      ],
+      [
+        "session.id",
+        "51966244-db62-4e6c-a9ff-5ab996153e78"
+      ]
+    ],
+    "_asyncAttributesPending": false
+  },
+  "instrumentationScope": {
+    "name": "gemini-cli"
+  },
+  "attributes": {
+    "session.id": "a1b2c3d4-0000-4000-8000-000000000002",
+    "installation.id": "a1b2c3d4-0000-4000-8000-000000000003",
+    "interactive": false,
+    "auth_type": "gemini-api-key",
+    "event.name": "gemini_cli.user_prompt",
+    "event.timestamp": "2026-08-24T19:36:17.222Z",
+    "prompt_length": 5,
+    "prompt_id": "a1b2c3d4-0000-4000-8000-000000000001",
+    "prompt": "REDACTED-PROMPT"
+  },
+  "_body": "User prompt. Length: 5.",
+  "_attributesCount": 9,
+  "_droppedAttributesCount": 0,
+  "_isReadonly": true,
+  "_logRecordLimits": {
+    "attributeCountLimit": 128,
+    "attributeValueLengthLimit": null
+  }
+}
+{
+  "resource": {
+    "_rawAttributes": [
+      [
+        "host.name",
+        "redacted-host"
+      ],
+      [
+        "host.arch",
+        "amd64"
+      ],
+      [
+        "host.id",
+        null
+      ],
+      [
+        "process.pid",
+        163644
+      ],
+      [
+        "process.executable.name",
+        "/redacted/.local/share/mise/installs/node/26.7.0/bin/node"
+      ],
+      [
+        "process.executable.path",
+        "/redacted/.local/share/mise/installs/node/26.7.0/bin/node"
+      ],
+      [
+        "process.command_args",
+        [
+          "/redacted/.local/share/mise/installs/node/26.7.0/bin/node",
+          "--max-old-space-size=3922",
+          "/redacted/.local/share/mise/installs/gemini/latest/node_modules/.mise/@google+gemini-cli@0.56.0/node_modules/@google/gemini-cli/bundle/gemini.js",
+          "--skip-trust",
+          "-p",
+          "REDACTED-PROMPT"
+        ]
+      ],
+      [
+        "process.runtime.version",
+        "26.7.0"
+      ],
+      [
+        "process.runtime.name",
+        "nodejs"
+      ],
+      [
+        "process.runtime.description",
+        "Node.js"
+      ],
+      [
+        "process.command",
+        "/redacted/.local/share/mise/installs/gemini/latest/node_modules/.mise/@google+gemini-cli@0.56.0/node_modules/@google/gemini-cli/bundle/gemini.js"
+      ],
+      [
+        "process.owner",
+        "sokdev"
+      ],
+      [
+        "service.name",
+        "gemini-cli"
+      ],
+      [
+        "service.version",
+        "v26.7.0"
+      ],
+      [
+        "session.id",
+        "51966244-db62-4e6c-a9ff-5ab996153e78"
+      ]
+    ],
+    "_asyncAttributesPending": false
+  },
+  "scopeMetrics": [
+    {
+      "scope": {
+        "name": "gemini-cli",
+        "version": ""
+      },
+      "metrics": [
+        {
+          "descriptor": {
+            "name": "gemini_cli.api.request.count",
+            "type": "COUNTER",
+            "description": "Counts API requests, tagged by model and status.",
+            "unit": "",
+            "valueType": 0,
+            "advice": {}
+          },
+          "aggregationTemporality": 1,
+          "dataPointType": 3,
+          "dataPoints": [
+            {
+              "attributes": {
+                "session.id": "51966244-db62-4e6c-a9ff-5ab996153e78",
+                "installation.id": "3f378257-4334-4d79-84cb-f7c182d6ee85",
+                "interactive": false,
+                "auth_type": "gemini-api-key",
+                "model": "gemini-2.5-pro",
+                "status_code": 200
+              },
+              "startTime": [
+                1787600177,
+                302000000
+              ],
+              "endTime": [
+                1787600186,
+                914000000
+              ],
+              "value": 2
+            }
+          ],
+          "isMonotonic": true
+        }
+      ]
+    }
+  ]
+}

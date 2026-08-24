@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Gemini telemetry format is validated against real output, and two things it got wrong are
+  fixed.** The parser was derived by reading `@google/gemini-cli` 0.56.0's serialization code and
+  shipped in 0.7.0 unconfirmed. It is now checked against bytes that CLI actually wrote —
+  `tests/fixtures/gemini_telemetry.json` is a redacted capture, with two tests pinned to it.
+
+  No Gemini account was needed: `GOOGLE_GEMINI_BASE_URL` points the CLI at a local stand-in for
+  Google's API, so the real CLI, its real OpenTelemetry SDK and its real `FileLogExporter` produce
+  the file with nothing leaving the machine and nothing billed. The reproduction is in
+  `docs/provider-support.md`.
+
+  Everything the format notes claimed held — concatenated pretty-printed JSON, `attributes` as a
+  top-level sibling of the OTLP wrapper, the token attribute names, and the cache count sitting
+  inside the prompt count. Three things they did not predict, now covered by the fixture:
+
+  - Metric records carry **no `attributes` key at all**; anything indexing `["attributes"]` would
+    break on them.
+  - `resource` carries the host name, home directory paths and the full command line, prompt
+    included. Only `attributes` is read, and there is now a test asserting that against the real
+    block rather than a synthetic one.
+  - One prompt produced **six `api_response` records sharing a `prompt_id` and an identical
+    `total_token_count`** — only the timestamp separated them. Keying identity on `prompt_id`, or
+    on `prompt_id` plus the total, would have reported one request instead of six.
+
+
 ### Added
 
 - **Derived escalations are exported.** `--json` gains an `escalations` object — sessions
