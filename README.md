@@ -88,7 +88,21 @@ OpenCode rows and can still display journaled Ollama usage.
 
 ## Quick start
 
-Download a prebuilt binary, put it on your `PATH`, and run the dashboard:
+```sh
+curl -fsSL https://raw.githubusercontent.com/SophanaSok/ai-usage-tui/main/scripts/install.sh | sh
+
+ai-usage-tui
+```
+
+[`scripts/install.sh`](scripts/install.sh) picks the archive for your platform,
+**verifies it against the release's published SHA-256 checksums**, and installs
+into `~/.local/bin` — `--dir PATH` to choose somewhere else, `--version vX.Y.Z`
+to pin a release. It refuses to install anything it could not verify, and names
+the source build on a platform with no prebuilt binary.
+
+### Manual download
+
+If you would rather not pipe a script into your shell:
 
 ```sh
 VERSION=v0.5.0
@@ -126,8 +140,8 @@ ai-usage-tui --db /path/to/opencode.db
 OPENCODE_DB_PATH=/path/to/opencode.db ai-usage-tui
 ```
 
-See [Installation](#installation) for macOS and Windows archives, source
-builds, and packaging templates.
+See [Installation](#installation) for macOS and Windows archives, package
+managers, and source builds.
 
 ## Installation
 
@@ -190,16 +204,43 @@ On Windows, extract the zip and add the directory containing
 
 ### Package managers
 
-Release packaging templates for Homebrew, Scoop, and Chocolatey live under
-[`packaging/`](packaging/). Use GitHub Releases until a formula or manifest is
-published to those registries.
+Homebrew and Scoop manifests are rendered at release time from the real artifact
+names and checksums, and pushed to a tap and a bucket:
+
+```sh
+brew install sophanasok/tap/ai-usage-tui        # macOS and Linux
+
+scoop bucket add sophanasok https://github.com/SophanaSok/scoop-bucket
+scoop install ai-usage-tui                      # Windows
+```
+
+> **Not published yet.** The tap and bucket are created by the maintainer as a
+> one-time step (see [`docs/release-process.md`](docs/release-process.md), *First
+> publish*). Until then the rendered `ai-usage-tui.rb` and `ai-usage-tui.json`
+> are attached to each release and can be used directly —
+> `brew install --formula <url>` and `scoop install <url>` — or use
+> [`scripts/install.sh`](scripts/install.sh) above.
 
 ### Build or install from source
 
-Install the stable Rust toolchain with [rustup](https://rustup.rs/), clone this
-repository, and run one of:
+Install the stable Rust toolchain with [rustup](https://rustup.rs/), then:
 
 ```sh
+# From crates.io
+cargo install ai-usage-tui --locked
+
+# Prebuilt binary via crates.io metadata, without compiling
+cargo binstall ai-usage-tui
+```
+
+> **Not published yet.** `ai-usage-tui` is not on crates.io, so both commands
+> above will fail until the maintainer claims the name. Build from a clone in
+> the meantime:
+
+```sh
+git clone https://github.com/SophanaSok/ai-usage-tui
+cd ai-usage-tui
+
 # Install to Cargo's binary directory
 cargo install --path . --locked
 

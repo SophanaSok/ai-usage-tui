@@ -2,7 +2,38 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`scripts/install.sh`, and the quick start now leads with it.** One line installs the right
+  archive for the platform, verifies it against the release's published `checksums.txt`, unpacks
+  it into a scratch directory and installs only the binary — then says how to fix `PATH` when the
+  destination is not on it. It refuses to install a download it could not verify, and on a
+  platform with no prebuilt binary it names the source build instead of 404ing. POSIX `sh`, curl
+  or wget, no other dependencies.
+- **crates.io publication is wired up.** `Cargo.toml` gains `readme`, an `exclude` that keeps the
+  670KB of README screenshots out of the tarball (247KB compressed, 91 files), and
+  `[package.metadata.binstall]` overrides mapping every release target to its archive, so
+  `cargo binstall ai-usage-tui` works the moment the crate exists. A `publish-crate` job publishes
+  on a tag push and refuses to run when the tag and `Cargo.toml` disagree. The test fixtures are
+  deliberately kept in the package: the `#[cfg(test)]` modules under `src/` read
+  `tests/fixtures/` at runtime, so dropping them would ship a crate whose own tests cannot run.
+- **An `update-taps` job pushes the rendered Homebrew formula and Scoop manifest** to
+  `SophanaSok/homebrew-tap` and `SophanaSok/scoop-bucket`, so `brew install
+  sophanasok/tap/ai-usage-tui` becomes real rather than a template attached to a release.
+- **The Homebrew formula offers Linux aarch64.** The `aarch64-linux` tarball has been built and
+  published since v0.2.0, but the formula only had an `on_intel` block under `on_linux`.
+- **`docs/release-process.md` has a "First publish" section** listing the account-level steps —
+  claiming the crates.io name, creating the tap and bucket, the optional AUR package. Every job
+  added here is gated on its secret and prints a notice instead of failing, so the release path is
+  green before and after those steps.
+
 ### Fixed
+
+- **The rendered Chocolatey package could not be packed.** The release job flattened every
+  template with `basename`, so `chocolateyinstall.ps1` was published beside the nuspec — whose
+  `<file src="tools/**" target="tools/" />` then matched nothing, producing a package that
+  installed nothing. Manifests now render under `rendered/<manager>/` preserving each template's
+  layout, and the job asserts the nuspec's glob will resolve before publishing.
 
 - **The documented quick start no longer overwrites the reader's own `README.md` and
   `LICENSE`.** v0.5.0 started packing those two files into every unix tarball for MIT

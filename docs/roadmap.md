@@ -77,8 +77,13 @@ Remaining:
 - Migrate to `clap` derive with subcommands (`daily`, `monthly`, `session`, `blocks`, `live`) and
   generated shell completions. The hand-rolled parser already strains under manual
   mutual-exclusion checks.
-- Publish to crates.io with `include`/`exclude` — a publish today would ship an 86KB HTML fixture
-  and 670KB of PNGs — and support `cargo binstall`.
+- **Resolved.** crates.io publication is wired up: `Cargo.toml` carries `readme`, an `exclude`
+  that drops the 670KB of screenshots (the packaged crate is 247KB compressed, 91 files), and
+  `[package.metadata.binstall]` overrides mapping every target to its release archive. The
+  `publish-crate` job in `release.yml` publishes on a tag once `CARGO_REGISTRY_TOKEN` exists. The
+  fixtures were kept in deliberately: the `#[cfg(test)]` modules under `src/` read
+  `tests/fixtures/` at runtime, so excluding them would ship a crate whose own tests cannot run.
+  What is left is the account step — see `docs/release-process.md`, "First publish".
 - **Resolved.** `MODEL_ROUTING.md` no longer duplicates the agent-to-model table; that mapping
   lives in `~/.config/opencode/opencode.json` and `~/.config/opencode/ROUTING.md`, and the repo doc
   now carries only policy (tiers by role, privacy boundary, escalation, evaluation schema).
