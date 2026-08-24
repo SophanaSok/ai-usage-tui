@@ -2,6 +2,7 @@ pub mod background;
 pub mod billing;
 pub mod claude_code;
 pub mod codex;
+pub mod gemini;
 pub mod journal;
 pub mod opencode;
 pub mod pricing_refresh;
@@ -35,6 +36,9 @@ pub struct SourceRoots {
     /// Codex's home; `None` means `$CODEX_HOME` or `~/.codex` (see `codex`).
     pub codex_dir: Option<PathBuf>,
     pub codex_billing: BillingSetting,
+    /// Gemini CLI's home; `None` means `~/.gemini` (see `gemini`).
+    pub gemini_dir: Option<PathBuf>,
+    pub gemini_billing: BillingSetting,
     /// Omarchy's agents-panel records; `None` means the XDG state location (see `omarchy`).
     pub omarchy_dir: Option<PathBuf>,
     /// Whether to read those records at all. On by default: an absent directory is idle.
@@ -53,6 +57,8 @@ impl Default for SourceRoots {
             claude_json: None,
             codex_dir: None,
             codex_billing: BillingSetting::Auto,
+            gemini_dir: None,
+            gemini_billing: BillingSetting::Auto,
             omarchy_dir: None,
             limits_enabled: true,
             source_enabled: Default::default(),
@@ -108,6 +114,8 @@ impl SourceRoots {
             claude_json: cli.claude_json.clone(),
             codex_dir: cli.codex_dir.clone(),
             codex_billing: cli.codex_billing,
+            gemini_dir: cli.gemini_dir.clone(),
+            gemini_billing: cli.gemini_billing,
             omarchy_dir: cli.omarchy_dir.clone(),
             limits_enabled: cli.limits_enabled,
             source_enabled: cli.source_enabled.clone(),
@@ -127,6 +135,24 @@ impl SourceRoots {
         detect(
             "codex",
             self.codex_billing,
+            &Signals {
+                claude_json: None,
+                env_has: &crate::collector::billing::env_has,
+                omarchy_tier: tier.as_deref(),
+            },
+        )
+    }
+
+    /// Decide Gemini CLI's billing.
+    ///
+    /// The telemetry record carries `auth_type` (`oauth-personal`, `gemini-api-key`, …), which is
+    /// a better signal than anything here — but it is per record, and the billing decision is
+    /// per source, so the environment decides and a record cannot flip rows already merged.
+    pub fn gemini_decision(&self) -> Decision {
+        let tier = self.omarchy_tier(crate::collector::gemini::ID);
+        detect(
+            crate::collector::gemini::ID,
+            self.gemini_billing,
             &Signals {
                 claude_json: None,
                 env_has: &crate::collector::billing::env_has,

@@ -65,8 +65,14 @@ Numbering follows the original audit. Everything not listed here has shipped.
 
 ### P2 — Coverage
 
-More agent CLIs behind the source registry. **Codex** shipped (`src/collector/codex.rs`);
-**Gemini CLI** is next.
+More agent CLIs behind the source registry. **Codex** shipped (`src/collector/codex.rs`), and
+**Gemini CLI** now too (`src/collector/gemini.rs`) — a module plus one registry line, which is
+what the registry was for.
+
+Gemini is worth reading before adding the next one, because it is the awkward case: it persists
+no usage at all unless the user enables its OpenTelemetry log, so the collector is opt-in and
+`--doctor` has to distinguish "not set up" from "empty". Expect more sources to look like this
+than like Claude Code, whose transcripts are simply always there.
 
 This got materially cheaper in v0.6.0. Adding a source used to mean 9-16 edits across 7 files,
 because the set of sources was wired by hand in two independent places — `collector::load_usage`

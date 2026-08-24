@@ -52,6 +52,9 @@ const ENV_NOT_IN_TABLE: &[&str] = &[
     "CLAUDE_CODE_USE_VERTEX",
     "OPENAI_API_KEY",
     "CODEX_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GOOGLE_GENAI_USE_VERTEXAI",
 ];
 
 /// Every `VERSION=vX.Y.Z` and `ai-usage-tui-vX.Y.Z` literal in the README must name the crate

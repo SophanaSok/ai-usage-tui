@@ -88,6 +88,17 @@ pub const SOURCES: &[SourceSpec] = &[
         load: crate::collector::codex::read,
         collector: crate::collector::codex::collector,
     },
+    // Gemini CLI. Idle unless the user has switched its local telemetry on -- it persists no
+    // usage otherwise -- which `--doctor` reports rather than showing an empty source.
+    SourceSpec {
+        id: crate::collector::gemini::ID,
+        contributes_rows: true,
+        supports_billing: true,
+        default_enabled: true,
+        default_interval: 30,
+        load: crate::collector::gemini::read,
+        collector: crate::collector::gemini::collector,
+    },
     SourceSpec {
         id: crate::collector::journal::ID,
         contributes_rows: true,

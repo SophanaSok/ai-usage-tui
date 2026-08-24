@@ -4,6 +4,40 @@
 
 ### Added
 
+- **Gemini CLI collector**, the first source added since the registry landed — a module plus one
+  registry line, as advertised. Reads Gemini's OpenTelemetry log and reports usage per API
+  response, with cost estimated from the bundled tables (`gemini/gemini-2.5-pro` and friends
+  resolve because pricing keys are provider-qualified now).
+
+  **It is opt-in, and the setup is Gemini's, not ours.** Unlike Claude Code and Codex, Gemini CLI
+  persists no usage anywhere by default: session totals live in UI state and are lost on exit, and
+  saved chats hold conversation history with no token counts. The only durable record is its
+  telemetry log, which is off until you add
+  `{"telemetry":{"enabled":true,"target":"local","outfile":"~/.gemini/telemetry.json"}}` to
+  `~/.gemini/settings.json`. `--doctor` prints that line when the file is missing, so the source
+  reads as "not set up" rather than "empty". This tool never edits Gemini's settings.
+
+  Configure with `--gemini-dir`, `--gemini-billing` and `[collectors.gemini]`; Gemini's own
+  `GEMINI_TELEMETRY_OUTFILE` is honoured when set.
+
+  Three details the format forced, all documented in `docs/provider-support.md`:
+
+  - The log is **concatenated pretty-printed JSON**, not JSONL, so it cannot be split on newlines.
+    The reader consumes only complete top-level objects and advances its offset to the end of the
+    last one, because a poll can land mid-record while the CLI is writing.
+  - Google reports cached tokens *inside* the prompt count, unlike Anthropic which reports them
+    alongside input. They are subtracted so a cached token is not billed as fresh input as well,
+    and `toolUsePromptTokenCount` is likewise already inside the prompt count and not added again.
+  - One `prompt_id` covers a whole tool-use loop, so several responses share it. Identity is
+    `prompt_id` + timestamp + total, because keying on `prompt_id` alone would deduplicate real
+    requests away and under-report spend.
+
+  Model output never reaches a usage record: the same telemetry carries `response_text` when
+  `telemetry.logPrompts` is on, and a test plants a credential there and fails if it appears.
+
+
+### Added
+
 - **LiteLLM is now the base pricing source: 60 models priced to 1,491.** `pricing/litellm.tsv`
   ships in the binary — ~3,450 keys across 88 providers, generated from
   [LiteLLM's community table](https://github.com/BerriAI/litellm) by

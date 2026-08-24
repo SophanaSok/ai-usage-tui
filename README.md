@@ -340,6 +340,31 @@ and `gpt-5.6` families (including their `-codex`, `-mini`, `-nano`, and `-pro`
 variants where published). A model absent from the table stays `unavailable`;
 no rate is invented.
 
+### Gemini CLI
+
+**Opt-in, and it needs a setting in Gemini CLI itself.** Unlike Claude Code and
+Codex, Gemini CLI persists no usage anywhere by default — its session totals
+live in memory and its saved chats hold conversation history with no token
+counts. The only durable record is its OpenTelemetry log, which is off until you
+turn it on. Add to `~/.gemini/settings.json`:
+
+```json
+{ "telemetry": { "enabled": true, "target": "local", "outfile": "~/.gemini/telemetry.json" } }
+```
+
+`ai-usage-tui --doctor` prints that line for you when the file is missing. This
+tool never edits Gemini's settings itself.
+
+Point elsewhere with `--gemini-dir PATH` or, if you set Gemini's own
+`GEMINI_TELEMETRY_OUTFILE`, it is read from there. Only the `api_response`
+records are parsed, and only their token counts, model, timestamps and
+identifiers — the same telemetry can carry `response_text` when
+`telemetry.logPrompts` is on, and none of it is read.
+
+Cached tokens are reported by Google *inside* the prompt count, unlike
+Anthropic's, so they are subtracted out to keep the buckets disjoint. Thinking
+tokens map to the reasoning bucket.
+
 ### Ollama
 
 Ollama usage is opt-in. Pipe a completed response into
@@ -674,6 +699,8 @@ does not load it automatically.
 | `--claude-billing MODE` | How Claude Code usage is billed: `auto` (default), `subscription`, or `api`; overrides `[collectors.claude_code] billing` |
 | `--codex-dir PATH` | Override the Codex home (`$CODEX_HOME`, else `~/.codex`); `sessions/` and `archived_sessions/` are read beneath it |
 | `--codex-billing MODE` | How Codex usage is billed: `auto` (default), `subscription`, or `api`; overrides `[collectors.codex] billing` |
+| `--gemini-dir PATH` | Override the Gemini CLI home (default `~/.gemini`); its telemetry log is read from beneath it |
+| `--gemini-billing MODE` | How Gemini CLI usage is billed: `auto` (default), `subscription`, or `api`; overrides `[collectors.gemini] billing` |
 | `--omarchy-dir PATH` | Override where Omarchy's agents panel keeps its usage records (default `$XDG_STATE_HOME/omarchy/agents/usage`) |
 | `--omarchy-record` | Write usage and budgets as a record for Omarchy's agents panel (`[omarchy] records`, default `opencode`) and exit |
 | `--today` | Use today (local calendar day) |
@@ -705,6 +732,7 @@ Environment variables:
 | `CLAUDE_PROJECTS_DIR` | Claude Code session-log directory |
 | `CLAUDE_CONFIG_DIR` | Claude Code config directory; logs are read from `$CLAUDE_CONFIG_DIR/projects` (`CLAUDE_PROJECTS_DIR` wins when both are set) |
 | `CODEX_HOME` | Codex home; session logs are read from `sessions/` and `archived_sessions/` beneath it |
+| `GEMINI_TELEMETRY_OUTFILE` | Gemini CLI's own telemetry output path; when set, it is read from there rather than `~/.gemini/telemetry.json` |
 | `AI_USAGE_LOG` | Write diagnostics to a file — `1` for the default location, or a path. Off when unset. |
 | `XDG_CONFIG_HOME` | Base directory for the default config path |
 | `XDG_DATA_HOME` | Base directory for default database, journal, and cache paths |
