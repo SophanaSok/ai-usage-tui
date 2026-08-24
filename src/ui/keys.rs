@@ -19,6 +19,12 @@ pub enum Action {
     DrillIn,
     /// Start typing a row filter.
     Search,
+    /// Move the sort to the next column of the visible panel.
+    SortNext,
+    /// Move it to the previous column.
+    SortPrev,
+    /// Reverse the visible panel's sort.
+    SortReverse,
     /// Leave a drilldown. Falls through to `Quit` when there is nothing to leave.
     Back,
     ToggleHelp,
@@ -142,6 +148,42 @@ pub const BINDINGS: &[Binding] = &[
         alias: None,
         action: Action::SelectPrev,
         what: "",
+    },
+    Binding {
+        key: '>',
+        shown_as: "< >",
+        alias: Some("also , and ."),
+        action: Action::SortNext,
+        what: "sort by the next / previous column",
+    },
+    Binding {
+        key: '<',
+        shown_as: "",
+        alias: None,
+        action: Action::SortPrev,
+        what: "",
+    },
+    // The unshifted keys in the same place, folded into the row above rather than listed twice.
+    Binding {
+        key: '.',
+        shown_as: "",
+        alias: None,
+        action: Action::SortNext,
+        what: "",
+    },
+    Binding {
+        key: ',',
+        shown_as: "",
+        alias: None,
+        action: Action::SortPrev,
+        what: "",
+    },
+    Binding {
+        key: 'o',
+        shown_as: "o",
+        alias: None,
+        action: Action::SortReverse,
+        what: "reverse the sort order",
     },
     Binding {
         key: '/',

@@ -130,7 +130,18 @@ Remaining:
   table* whatever panel was showing, so on a machine with few model groups and many projects the
   later projects were unreachable. Cosmetic while nothing acted on the row; wrong the moment
   `Enter` did. Both the clamp and `visible_rows` are panel-aware now, with a regression test.
-- **Interactive depth** — sortable columns, mouse support. `/` search shipped: it filters what
+- **Interactive depth** — mouse support. Sortable columns shipped: `<`/`>` move the sort column,
+  `o` reverses, each panel keeps its own, and the sorted column is marked in its header. The
+  defaults reproduce the orders the lists already had, so nothing moves until a key is pressed.
+
+  Two things it turned up. The routing panel **re-sorted inside its draw call**, so it recomputed
+  a ranking on every frame (invariant 4) and would have silently discarded any sort applied
+  upstream; that ordering is now the panel's default sort, computed once per refresh. And the
+  sessions list ordered by `last_seen` while its time column displayed `first_seen`, so the
+  column a reader saw was not the column the rows were in — sorting by STARTED now means what it
+  says, which is a small deliberate change to the default order.
+
+  `/` search shipped: it filters what
   the visible panel lists (model and provider names, project paths, session ids, the models a
   session used) while deliberately leaving the totals, the coverage figure and the budgets
   computed from the whole range. The footer carries the query and a "showing N of M", because a

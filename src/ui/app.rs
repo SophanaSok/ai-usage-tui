@@ -57,6 +57,8 @@ pub struct App {
     pub(super) drilldown: Option<Drilldown>,
     /// The `/` row filter. See [`Search`].
     pub(super) search: Search,
+    /// Sort per panel, defaulting to the order each list has always had.
+    pub(super) sorts: std::collections::HashMap<Panel, Sort>,
     /// Whether the key reference is open. There are more bindings than fit on one footer line,
     /// and a truncated footer hides them without saying so.
     pub show_help: bool,
@@ -80,7 +82,7 @@ pub struct App {
 }
 
 /// The right-hand pane's contents. Exactly one at a time.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Panel {
     #[default]
     Models,
@@ -91,6 +93,98 @@ pub enum Panel {
     Burn,
     Sessions,
     Limits,
+}
+
+/// Order two costs, where `None` means "not known" rather than zero.
+///
+/// Unknown sorts below every known cost, so ascending puts the priced rows first and descending
+/// puts the most expensive first — either way the unknowns cluster at one end instead of being
+/// interleaved as if they were $0.00, which is the one thing this project never does with them.
+fn cost_order(a: Option<f64>, b: Option<f64>) -> std::cmp::Ordering {
+    match (a, b) {
+        (Some(a), Some(b)) => a.total_cmp(&b),
+        (Some(_), None) => std::cmp::Ordering::Greater,
+        (None, Some(_)) => std::cmp::Ordering::Less,
+        (None, None) => std::cmp::Ordering::Equal,
+    }
+}
+
+/// Which column a panel is sorted by, and which way.
+///
+/// Per panel, not global: the four tabular panels have different columns, and carrying a column
+/// index across a panel switch would mean sorting by whatever happened to be at that index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sort {
+    pub column: usize,
+    pub descending: bool,
+}
+
+/// The sortable columns of a panel, in the order they are rendered.
+///
+/// Kept beside the panel's own sort function rather than in one table, because the comparators
+/// operate on four different row types. The names here must match the rendered headers — the
+/// marker that shows which column is sorted is drawn from the same index.
+impl Panel {
+    pub fn sort_columns(self) -> &'static [&'static str] {
+        match self {
+            Panel::Models => &["PROVIDER / MODEL", "CLASS", "TOKENS", "COST", "REQS"],
+            Panel::Projects => &["PROJECT", "TOKENS", "COST", "REQS", "SESS"],
+            Panel::Sessions => &[
+                "STARTED", "RAN", "PROJECT", "MODEL", "TOKENS", "COST", "REQS",
+            ],
+            Panel::Routing => &[
+                "AGENT",
+                "MODEL",
+                "$/SUCCESS",
+                "PASS",
+                "RETRY",
+                "ESC",
+                "DEFECT",
+                "TOKENS",
+                "TASKS",
+            ],
+            // Budgets, the time series, the burn projection and the limits panel are not tables
+            // of comparable rows; there is nothing to sort them by.
+            _ => &[],
+        }
+    }
+
+    /// The column each panel sorts by until the user says otherwise, and its direction.
+    ///
+    /// These reproduce the orders the lists have always had, so nothing moves until a key is
+    /// pressed: models and routing by tokens, projects by cost, sessions by most recent.
+    #[cfg(test)]
+    pub(crate) fn default_sort_for_test(self) -> Sort {
+        self.default_sort()
+    }
+
+    fn default_sort(self) -> Sort {
+        match self {
+            Panel::Models => Sort {
+                column: 2,
+                descending: true,
+            },
+            Panel::Projects => Sort {
+                column: 2,
+                descending: true,
+            },
+            Panel::Sessions => Sort {
+                column: 0,
+                descending: true,
+            },
+            // `$/SUCCESS` ascending: the order the routing panel already showed, which it
+            // produced by re-sorting inside its draw call. That ordering *is* the answer the
+            // panel exists to give, so it is the default rather than the aggregate's token order.
+            Panel::Routing => Sort {
+                column: 2,
+                descending: false,
+            },
+            _ => Sort {
+                column: 0,
+                descending: true,
+            },
+        }
+    }
 }
 
 /// The row filter typed with `/`.
@@ -137,6 +231,11 @@ pub struct Drilldown {
     pub project: String,
     /// The Projects row the user came from, so leaving lands where they left rather than at the
     /// top of a list they have to find their place in again.
+    ///
+    /// A hint, not an address: the row is looked up by project name on the way back and this is
+    /// only the fallback. Sorting, a `/` filter, or a refresh that adds a project can all move a
+    /// project to a different index while the user is inside it, and returning them to whatever
+    /// now sits at the old number would be worse than returning them to the top.
     pub from_row: usize,
 }
 
@@ -212,6 +311,7 @@ impl App {
             budget_engine,
             drilldown: None,
             search: Search::default(),
+            sorts: std::collections::HashMap::new(),
             show_help: false,
             pricing: PricingEngine::load(),
             alerts: Vec::new(),
@@ -326,6 +426,7 @@ impl App {
         self.view.rows = grouped.into_values().collect();
         self.view.rows.sort_by_key(|u| Reverse(u.total_tokens()));
 
+        self.apply_sorts();
         self.apply_search();
 
         // Clamped against the panel that is actually showing, not the model table. This read
@@ -381,6 +482,145 @@ impl App {
         } else {
             panel
         };
+    }
+
+    /// Order each panel's list by its current sort.
+    ///
+    /// Runs before `apply_search`, which uses `retain` and so preserves whatever order this
+    /// produced. Floats are compared with `total_cmp`: a `partial_cmp().unwrap()` panics on a
+    /// NaN, and while no rate should produce one, a dashboard is the wrong place to find out.
+    fn apply_sorts(&mut self) {
+        let sort = self.sort_for(Panel::Models);
+        let rows = &mut self.view.rows;
+        match sort.column {
+            0 => rows.sort_by(|a, b| {
+                (a.provider.to_lowercase(), a.model.to_lowercase())
+                    .cmp(&(b.provider.to_lowercase(), b.model.to_lowercase()))
+            }),
+            1 => rows.sort_by(|a, b| a.category.label().cmp(b.category.label())),
+            3 => rows.sort_by(|a, b| cost_order(a.cost, b.cost)),
+            4 => rows.sort_by_key(|u| u.requests),
+            _ => rows.sort_by_key(|u| u.total_tokens()),
+        }
+        if sort.descending {
+            rows.reverse();
+        }
+
+        let sort = self.sort_for(Panel::Projects);
+        let projects = &mut self.view.projects;
+        match sort.column {
+            0 => projects.sort_by_key(|p| p.project.to_lowercase()),
+            2 => projects.sort_by(|a, b| a.cost.total_cmp(&b.cost)),
+            3 => projects.sort_by_key(|p| p.requests),
+            4 => projects.sort_by_key(|p| p.sessions),
+            _ => projects.sort_by_key(|p| p.tokens),
+        }
+        if sort.descending {
+            projects.reverse();
+        }
+
+        let sort = self.sort_for(Panel::Sessions);
+        let sessions = &mut self.view.sessions;
+        match sort.column {
+            1 => sessions.sort_by_key(|s| s.duration_secs()),
+            2 => sessions.sort_by(|a, b| {
+                a.project
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_lowercase()
+                    .cmp(&b.project.as_deref().unwrap_or_default().to_lowercase())
+            }),
+            3 => sessions.sort_by_key(|s| s.models.len()),
+            4 => sessions.sort_by_key(|s| s.tokens),
+            5 => sessions.sort_by(|a, b| a.cost.total_cmp(&b.cost)),
+            6 => sessions.sort_by_key(|s| s.requests),
+            // STARTED shows `first_seen`, so that is what sorting by STARTED does. The list
+            // previously ordered by `last_seen` while displaying `first_seen`, which meant the
+            // column a reader saw was not the column the rows were in. Marking a column and
+            // sorting by a different one would have kept that, silently.
+            _ => sessions.sort_by_key(|s| s.first_seen),
+        }
+        if sort.descending {
+            sessions.reverse();
+        }
+
+        let sort = self.sort_for(Panel::Routing);
+        let routing = &mut self.view.routing;
+        match sort.column {
+            0 => routing.sort_by_key(|r| r.agent.to_lowercase()),
+            1 => routing.sort_by_key(|r| r.model.to_lowercase()),
+            // Cheapest per delivered result. Agents with nothing passing have no figure and
+            // sort last rather than appearing free -- which is why this is not `a.cost`.
+            2 => routing.sort_by(|a, b| {
+                crate::routing::cost_per_success(a)
+                    .unwrap_or(f64::INFINITY)
+                    .total_cmp(&crate::routing::cost_per_success(b).unwrap_or(f64::INFINITY))
+            }),
+            3 => routing.sort_by_key(|r| r.test_passes),
+            4 => routing.sort_by_key(|r| r.retries),
+            5 => routing.sort_by_key(|r| r.escalations),
+            6 => routing.sort_by_key(|r| r.review_defects),
+            8 => routing.sort_by_key(|r| r.tasks),
+            _ => routing.sort_by_key(|r| r.tokens),
+        }
+        if sort.descending {
+            routing.reverse();
+        }
+    }
+
+    /// The sort in force for a panel, defaulting to the order that list has always had.
+    pub fn sort_for(&self, panel: Panel) -> Sort {
+        self.sorts
+            .get(&panel)
+            .copied()
+            .unwrap_or_else(|| panel.default_sort())
+    }
+
+    /// Move the sort to the next or previous column of the visible panel.
+    ///
+    /// A panel with nothing to sort ignores it rather than storing a column it cannot use.
+    pub fn cycle_sort_column(&mut self, forward: bool) {
+        let columns = self.panel.sort_columns().len();
+        if columns == 0 {
+            return;
+        }
+        let current = self.sort_for(self.panel);
+        let column = if forward {
+            (current.column + 1) % columns
+        } else {
+            (current.column + columns - 1) % columns
+        };
+        self.sorts.insert(self.panel, Sort { column, ..current });
+        self.recompute();
+    }
+
+    /// Reverse the visible panel's sort.
+    pub fn reverse_sort(&mut self) {
+        if self.panel.sort_columns().is_empty() {
+            return;
+        }
+        let current = self.sort_for(self.panel);
+        self.sorts.insert(
+            self.panel,
+            Sort {
+                descending: !current.descending,
+                ..current
+            },
+        );
+        self.recompute();
+    }
+
+    /// The marker drawn beside a column header, when that column is the one being sorted.
+    pub fn sort_marker(&self, panel: Panel, column: usize) -> &'static str {
+        let sort = self.sort_for(panel);
+        if sort.column != column || panel.sort_columns().is_empty() {
+            return "";
+        }
+        if sort.descending {
+            " v"
+        } else {
+            " ^"
+        }
     }
 
     /// Narrow what each panel lists to the `/` query, recording what each had before.
@@ -508,8 +748,16 @@ impl App {
             return false;
         };
         self.panel = Panel::Projects;
-        self.selected = drilldown.from_row;
         self.recompute();
+        // By name first. The index is only right if nothing reordered the list while the user
+        // was inside the project -- and sorting, filtering and a refresh can all do that.
+        self.selected = self
+            .view
+            .projects
+            .iter()
+            .position(|project| project.project == drilldown.project)
+            .unwrap_or(drilldown.from_row)
+            .min(self.visible_rows().saturating_sub(1));
         true
     }
 
@@ -607,9 +855,16 @@ impl App {
     pub fn category_totals(&self) -> &[(Category, Totals)] {
         &self.view.category_totals
     }
+    /// Inject routing aggregates and order them the way a refresh would.
+    ///
+    /// The sort is applied here because it is applied in `recompute`, and this helper exists to
+    /// stand in for one. Without it a test would see the aggregates in whatever order it passed
+    /// them — which is exactly what `routing_leads_with_cost_per_delivered_result` is written to
+    /// catch, and it duly caught it when the ordering moved out of the panel's draw call.
     #[cfg(test)]
     pub(super) fn set_routing_for_test(&mut self, routing: Vec<RoutingAggregates>) {
         self.view.routing = routing;
+        self.apply_sorts();
     }
 
     pub fn escalations(&self) -> &Escalations {

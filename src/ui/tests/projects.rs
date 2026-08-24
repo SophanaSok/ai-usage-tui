@@ -238,3 +238,36 @@ fn the_cursor_is_not_clamped_by_the_model_table() {
     assert!(app.drill_into_selected_project());
     assert_eq!(app.drilldown_project(), Some("/w/d"));
 }
+
+/// Leaving a drilldown finds the project by name, not by the row number it was at.
+///
+/// Sorting, a `/` filter, or a refresh that adds a project can all move a project to a different
+/// index while the user is inside it. Returning them to whatever now sits at the old number
+/// would put the cursor on the wrong project without saying so.
+#[test]
+fn leaving_a_drilldown_finds_the_project_even_if_the_order_changed() {
+    let mut app = test_app(vec![
+        usage(Some("/w/cheap"), Some("s1"), Some(1.0), 100),
+        usage(Some("/w/dear"), Some("s2"), Some(9.0), 100),
+    ]);
+    app.recompute();
+    app.toggle_panel(Panel::Projects);
+    // Dearest first, so /w/cheap is row 1.
+    assert_eq!(app.projects()[1].project, "/w/cheap");
+    app.selected = 1;
+    assert!(app.drill_into_selected_project());
+    assert_eq!(app.drilldown_project(), Some("/w/cheap"));
+
+    // Reverse the projects sort while inside: /w/cheap is now row 0.
+    app.toggle_panel(Panel::Projects);
+    app.reverse_sort();
+    app.toggle_panel(Panel::Sessions);
+
+    assert!(app.leave_drilldown());
+    assert_eq!(
+        app.projects()[app.selected].project,
+        "/w/cheap",
+        "the cursor must land on the project drilled into, not on row 1"
+    );
+    assert_eq!(app.selected, 0, "which is now the first row");
+}

@@ -73,6 +73,7 @@ fn rows_do_not_mix_cost_provenance() {
         panel: Panel::Models,
         drilldown: None,
         search: Default::default(),
+        sorts: Default::default(),
         show_help: false,
         budget_engine: BudgetEngine::empty(),
         // Bundled, not loaded: a refreshed cache on the developer's machine must not change
@@ -260,4 +261,219 @@ fn the_cursor_is_pulled_back_when_the_filter_shortens_the_list() {
     }
     assert_eq!(app.projects().len(), 1);
     assert_eq!(app.selected, 0, "the cursor cannot sit past the last row");
+}
+
+/// The default sorts must reproduce the order each list has always had.
+///
+/// This is the invariant that lets sorting ship without changing what anyone sees until they
+/// press a key. Every existing test that asserts on position — "ranked by cost", "most recently
+/// active first" — is really a test of this.
+#[test]
+fn the_default_sorts_are_the_orders_the_lists_already_had() {
+    let now = crate::utils::now();
+    let mut app = test_app(vec![
+        usage(Some("/w/api"), Some("s1"), Some(1.0), 100),
+        usage(Some("/w/docs"), Some("s2"), Some(9.0), 50),
+    ]);
+    app.recompute();
+
+    // Projects: most expensive first.
+    assert_eq!(app.projects()[0].project, "/w/docs");
+    // Models: most tokens first.
+    let tokens: Vec<u64> = app.rows().iter().map(|r| r.total_tokens()).collect();
+    assert!(tokens.windows(2).all(|w| w[0] >= w[1]), "{tokens:?}");
+    // Routing: cheapest per delivered result, which is what the panel used to produce by
+    // re-sorting inside its draw call.
+    let mut app = test_app(Vec::new());
+    app.set_routing_for_test(vec![
+        routing_agg("junior", "opencode/glm-5.2", 20, 60.00, 5, 15),
+        routing_agg("reviewer", "anthropic/claude-opus-5", 12, 41.20, 12, 0),
+    ]);
+    assert_eq!(app.routing()[0].agent, "reviewer", "$3.43 beats $12.00");
+    let _ = now;
+}
+
+/// Sessions order by STARTED, which is the column they display.
+///
+/// A deliberate change: the list used to order by `last_seen` while the time column showed
+/// `first_seen`, so the column a reader saw was not the column the rows were in. Marking a
+/// column as sorted while sorting by a different one would have made that permanent. The
+/// fixture below discriminates — a session that started earlier but ran longer is more recently
+/// *active* and less recently *started*, so the two orders disagree.
+#[test]
+fn sessions_order_by_the_time_column_they_display() {
+    let now = crate::utils::now();
+    let long_early = Usage {
+        session_id: Some("early-but-long".into()),
+        created: now - 1_000,
+        ..usage(Some("/w/a"), Some("early-but-long"), Some(1.0), 10)
+    };
+    let long_early_end = Usage {
+        created: now - 10,
+        ..long_early.clone()
+    };
+    let short_late = Usage {
+        session_id: Some("late-but-short".into()),
+        created: now - 500,
+        ..usage(Some("/w/b"), Some("late-but-short"), Some(1.0), 10)
+    };
+
+    let mut app = test_app(vec![long_early, long_early_end, short_late]);
+    app.recompute();
+
+    let order: Vec<&str> = app
+        .sessions()
+        .iter()
+        .map(|s| s.session_id.as_str())
+        .collect();
+    assert_eq!(
+        order,
+        vec!["late-but-short", "early-but-long"],
+        "most recently STARTED first, matching the column shown"
+    );
+
+    // The two orders genuinely differ here, or this proves nothing.
+    let by_last: Vec<&str> = {
+        let mut sessions: Vec<_> = app.sessions().to_vec();
+        sessions.sort_by_key(|s| std::cmp::Reverse(s.last_seen));
+        sessions
+            .iter()
+            .map(|s| s.session_id.clone())
+            .collect::<Vec<_>>()
+            .leak()
+            .iter()
+            .map(|s| s.as_str())
+            .collect()
+    };
+    assert_ne!(
+        order, by_last,
+        "the fixture must distinguish the two orders"
+    );
+}
+
+/// `>` moves to the next column, `<` back, and both wrap.
+#[test]
+fn the_sort_column_cycles_within_the_panel() {
+    let mut app = test_app(vec![usage(Some("/w/api"), Some("s1"), Some(1.0), 100)]);
+    app.recompute();
+    app.toggle_panel(Panel::Projects);
+    let columns = Panel::Projects.sort_columns().len();
+    let start = app.sort_for(Panel::Projects).column;
+
+    app.cycle_sort_column(true);
+    assert_eq!(app.sort_for(Panel::Projects).column, (start + 1) % columns);
+    app.cycle_sort_column(false);
+    assert_eq!(
+        app.sort_for(Panel::Projects).column,
+        start,
+        "and back again"
+    );
+
+    // Wrapping, rather than stopping at the end.
+    for _ in 0..columns {
+        app.cycle_sort_column(true);
+    }
+    assert_eq!(
+        app.sort_for(Panel::Projects).column,
+        start,
+        "a full lap returns"
+    );
+}
+
+/// Sorting is per panel: a column index means different things on different panels.
+#[test]
+fn each_panel_keeps_its_own_sort() {
+    let mut app = test_app(vec![usage(Some("/w/api"), Some("s1"), Some(1.0), 100)]);
+    app.recompute();
+
+    app.toggle_panel(Panel::Projects);
+    let projects_before = app.sort_for(Panel::Projects);
+    app.cycle_sort_column(true);
+    let projects_after = app.sort_for(Panel::Projects);
+    assert_ne!(projects_before.column, projects_after.column);
+
+    app.toggle_panel(Panel::Sessions);
+    assert_eq!(
+        app.sort_for(Panel::Sessions),
+        Panel::Sessions.default_sort_for_test(),
+        "the sessions panel keeps its own default, not the projects column"
+    );
+    app.toggle_panel(Panel::Projects);
+    assert_eq!(
+        app.sort_for(Panel::Projects),
+        projects_after,
+        "and projects remembers"
+    );
+}
+
+/// Reversing flips the order and the marker.
+#[test]
+fn reversing_flips_the_order_and_says_so() {
+    let mut app = test_app(vec![
+        usage(Some("/w/a"), Some("s1"), Some(1.0), 100),
+        usage(Some("/w/b"), Some("s2"), Some(9.0), 100),
+    ]);
+    app.recompute();
+    app.toggle_panel(Panel::Projects);
+    assert_eq!(
+        app.projects()[0].project,
+        "/w/b",
+        "dearest first by default"
+    );
+    let column = app.sort_for(Panel::Projects).column;
+    assert_eq!(app.sort_marker(Panel::Projects, column), " v");
+
+    app.reverse_sort();
+    assert_eq!(app.projects()[0].project, "/w/a", "cheapest first now");
+    assert_eq!(app.sort_marker(Panel::Projects, column), " ^");
+    // And only the sorted column is marked.
+    let other = (column + 1) % Panel::Projects.sort_columns().len();
+    assert_eq!(app.sort_marker(Panel::Projects, other), "");
+}
+
+/// Unknown cost is not zero, and must not be sorted as if it were.
+#[test]
+fn unknown_cost_sorts_to_one_end_rather_than_as_zero() {
+    let mut app = test_app(vec![
+        usage(Some("/w/a"), Some("s1"), Some(5.0), 100),
+        usage(Some("/w/b"), Some("s2"), None, 100),
+        usage(Some("/w/c"), Some("s3"), Some(1.0), 100),
+    ]);
+    app.recompute();
+    // Sort the model table by COST, ascending.
+    app.toggle_panel(Panel::Models);
+    let cost_column = Panel::Models
+        .sort_columns()
+        .iter()
+        .position(|c| *c == "COST")
+        .unwrap();
+    while app.sort_for(Panel::Models).column != cost_column {
+        app.cycle_sort_column(true);
+    }
+    if app.sort_for(Panel::Models).descending {
+        app.reverse_sort();
+    }
+
+    let costs: Vec<Option<f64>> = app.rows().iter().map(|r| r.cost).collect();
+    let first_known = costs.iter().position(|c| c.is_some());
+    let last_unknown = costs.iter().rposition(|c| c.is_none());
+    if let (Some(first_known), Some(last_unknown)) = (first_known, last_unknown) {
+        assert!(
+            last_unknown < first_known,
+            "unknown cost must cluster at one end, not interleave as $0.00: {costs:?}"
+        );
+    }
+}
+
+/// A panel with nothing to sort ignores the keys rather than storing an unusable column.
+#[test]
+fn panels_without_columns_ignore_the_sort_keys() {
+    let mut app = test_app(vec![usage(Some("/w/api"), Some("s1"), Some(1.0), 100)]);
+    app.recompute();
+    app.toggle_panel(Panel::Budgets);
+    assert!(Panel::Budgets.sort_columns().is_empty());
+
+    app.cycle_sort_column(true);
+    app.reverse_sort();
+    assert_eq!(app.sort_marker(Panel::Budgets, 0), "", "nothing to mark");
 }

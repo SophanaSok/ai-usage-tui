@@ -32,7 +32,7 @@ pub fn draw_models(frame: &mut Frame, area: Rect, app: &App) {
         ])
         .style(style)
     });
-    let header = Row::new(vec!["PROVIDER / MODEL", "CLASS", "TOKENS", "COST", "REQS"])
+    let header = Row::new(super::sorted_header(app, crate::ui::app::Panel::Models))
         .style(Style::default().fg(MUTED).add_modifier(Modifier::BOLD));
     let widths = [
         Constraint::Min(24),

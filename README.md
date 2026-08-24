@@ -482,6 +482,14 @@ On a project row, **`Enter`** shows just that project's sessions, and
 panel names the project it is scoped to, so the two views cannot be mistaken for
 each other.
 
+**`<`** and **`>`** (or `,` and `.`) move the sort to the previous or next column of the
+current panel, and **`o`** reverses it. The sorted column carries a `v` or `^` in its
+header, so the order is never a mystery. Each panel keeps its own sort, and the
+defaults are the orders these lists have always had.
+
+Unknown cost sorts to one end rather than being interleaved as `$0.00` — a row
+whose price is unknown is not a cheap row.
+
 **`/`** filters the rows the current panel lists — model and provider names,
 project paths, session ids and the models a session used. `Enter` keeps the
 filter and hands the keyboard back; `Esc` clears it. The footer shows the query
