@@ -97,13 +97,25 @@ case "$(uname -s)-$(uname -m)" in
   Linux-aarch64) SLUG=aarch64-linux  ;;
   Darwin-arm64)  SLUG=aarch64-macos  ;;
   Darwin-x86_64) SLUG=x86_64-macos   ;;
+  *) SLUG=""; echo "No prebuilt binary for $(uname -s)-$(uname -m) — build from source instead." ;;
 esac
-curl -fsSL "https://github.com/SophanaSok/ai-usage-tui/releases/download/${VERSION}/ai-usage-tui-${VERSION}-${SLUG}.tar.gz" \
-  | tar xz
-install -m 755 ai-usage-tui ~/.local/bin/   # or sudo install ... /usr/local/bin/
+
+if [ -n "$SLUG" ]; then
+  # Unpacked into a scratch directory: the archive also contains README.md and
+  # LICENSE, so extracting it in place would overwrite yours.
+  TMP="$(mktemp -d)"
+  curl -fsSL "https://github.com/SophanaSok/ai-usage-tui/releases/download/${VERSION}/ai-usage-tui-${VERSION}-${SLUG}.tar.gz" \
+    | tar xz -C "$TMP"
+  mkdir -p ~/.local/bin
+  install -m 755 "$TMP/ai-usage-tui" ~/.local/bin/   # or sudo install ... /usr/local/bin/
+  rm -rf "$TMP"
+fi
 
 ai-usage-tui
 ```
+
+If the last line reports `command not found`, `~/.local/bin` is not on your
+`PATH`; add `export PATH="$HOME/.local/bin:$PATH"` to your shell's rc file.
 
 If OpenCode stores its database elsewhere:
 
@@ -144,10 +156,27 @@ macOS example (Apple Silicon — use `x86_64-macos` on an Intel Mac):
 
 ```sh
 VERSION=v0.5.0
+TMP="$(mktemp -d)"
 curl -fsSL "https://github.com/SophanaSok/ai-usage-tui/releases/download/${VERSION}/ai-usage-tui-${VERSION}-aarch64-macos.tar.gz" \
-  | tar xz
-install -m 755 ai-usage-tui /usr/local/bin/
+  | tar xz -C "$TMP"
+sudo install -m 755 "$TMP/ai-usage-tui" /usr/local/bin/
+rm -rf "$TMP"
 ```
+
+The archive carries `README.md` and `LICENSE` alongside the binary, so unpack it
+into a scratch directory as above rather than extracting it where you stand.
+
+**Gatekeeper.** The macOS binaries are neither signed nor notarized — the project
+has no Apple Developer ID. Downloading the archive *in a browser* marks it
+`com.apple.quarantine`, and the extracted binary is then refused with "cannot be
+opened because the developer cannot be verified". Clear it once:
+
+```sh
+xattr -d com.apple.quarantine /usr/local/bin/ai-usage-tui
+```
+
+Downloading with `curl`, as above, does not set the attribute, and needs no such
+step.
 
 Linux package example:
 
@@ -858,6 +887,10 @@ Default local storage paths (when the corresponding XDG variable is unset):
   remains unavailable by design.
 - **Config not applied:** verify TOML syntax and the path shown above. A custom
   `--config PATH` fails immediately when the file does not exist.
+- **macOS refuses to run the binary** ("cannot be opened because the developer
+  cannot be verified"): the release binaries are unsigned. Run `xattr -d
+  com.apple.quarantine /path/to/ai-usage-tui`, or install with `curl` rather
+  than a browser download, which never sets the attribute.
 - **`could not determine a home directory`:** set `HOME` (or `USERPROFILE` on
   Windows), or pass explicit paths with `--db`, `--journal`, `--claude-dir`, and
   `--codex-dir`.

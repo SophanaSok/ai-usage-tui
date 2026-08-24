@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The documented quick start no longer overwrites the reader's own `README.md` and
+  `LICENSE`.** v0.5.0 started packing those two files into every unix tarball for MIT
+  compliance, but the README's install snippets still piped the download into a bare
+  `tar xz`, which extracts into the current directory. Anyone who pasted the quick start
+  while sitting in a project directory had both files replaced, silently. Both snippets now
+  unpack into a `mktemp -d` scratch directory and install only the binary from it.
+- **The quick start's platform `case` has an `*)` arm.** On any platform without a prebuilt
+  binary `$SLUG` expanded empty, the URL 404'd, and the pipeline died on `tar: Unexpected EOF
+  in archive`. It now names the platform and points at a source build.
+- **The quick start creates `~/.local/bin` and explains `PATH`.** `install` failed outright on
+  a machine without the directory, and succeeded-then-`command not found` on a machine where
+  it exists but is not on `PATH`.
+
+### Documentation
+
+- **macOS Gatekeeper is documented.** The release binaries are unsigned and unnotarized, so an
+  archive downloaded in a browser is quarantined and the binary is refused with "cannot be
+  opened because the developer cannot be verified". The Installation and Troubleshooting
+  sections now give `xattr -d com.apple.quarantine` and note that a `curl` download never sets
+  the attribute.
+
 ## 0.5.0 - 2026-08-23
 
 ### Added
