@@ -13,6 +13,7 @@ pub struct ConfigFile {
     pub db: Option<String>,
     pub journal: Option<String>,
     pub claude_dir: Option<String>,
+    pub codex_dir: Option<String>,
     pub refresh_interval: Option<u64>,
     pub days: Option<u64>,
     pub provider: Option<String>,
@@ -25,6 +26,7 @@ pub struct ConfigFile {
 pub struct CollectorsConfig {
     pub opencode: Option<CollectorConfig>,
     pub claude_code: Option<CollectorConfig>,
+    pub codex: Option<CollectorConfig>,
     pub journal: Option<CollectorConfig>,
     pub zen_pricing: Option<CollectorConfig>,
 }
@@ -57,7 +59,7 @@ impl ConfigFile {
                 if cfg.billing.is_some() || cfg.config_json.is_some() {
                     return Err(anyhow::anyhow!(
                         "[collectors.{name}] does not support `billing` or `config_json`; \
-                         they apply to [collectors.claude_code]"
+                         they apply to [collectors.claude_code] and [collectors.codex]"
                     ));
                 }
             }
@@ -130,6 +132,26 @@ pub fn apply_config(mut cli: Cli) -> Result<(Cli, ConfigFile)> {
         }
         if cli.claude_json.is_none() {
             cli.claude_json = claude.config_json.clone().map(PathBuf::from);
+        }
+    }
+    if cli.codex_dir.is_none() {
+        cli.codex_dir = config.codex_dir.take().map(PathBuf::from);
+    }
+    if let Some(codex) = config
+        .collectors
+        .as_ref()
+        .and_then(|collectors| collectors.codex.as_ref())
+    {
+        if codex.config_json.is_some() {
+            return Err(anyhow::anyhow!(
+                "[collectors.codex] does not support `config_json`: Codex has no config \
+                 document this tool reads"
+            ));
+        }
+        if !cli.codex_billing_set {
+            if let Some(billing) = codex.billing {
+                cli.codex_billing = billing;
+            }
         }
     }
     if !cli.refresh_interval_set {
@@ -299,5 +321,37 @@ mod tests {
             .to_string();
         assert!(error.contains("[collectors.opencode]"), "{error}");
         assert!(error.contains("claude_code"), "{error}");
+    }
+
+    #[test]
+    fn codex_settings_parse_but_a_config_document_is_refused() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            "codex_dir = \"/x/codex\"\n[collectors.codex]\nenabled = false\ninterval = 45\nbilling = \"api\"\n",
+        )
+        .unwrap();
+        let (cli, config) = apply_config(cli_with_config(&path)).unwrap();
+        assert_eq!(
+            cli.codex_dir.as_deref(),
+            Some(std::path::Path::new("/x/codex"))
+        );
+        assert_eq!(cli.codex_billing, BillingSetting::Api);
+        let codex = config.collectors.unwrap().codex.unwrap();
+        assert_eq!(codex.enabled, Some(false));
+        assert_eq!(codex.interval, Some(45));
+
+        // Codex's only document is a credential file; there is nothing to point at.
+        fs::write(
+            &path,
+            "[collectors.codex]\nconfig_json = \"/x/auth.json\"\n",
+        )
+        .unwrap();
+        let error = match apply_config(cli_with_config(&path)) {
+            Ok(_) => panic!("a config document for Codex was accepted"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("[collectors.codex]"), "{error}");
     }
 }

@@ -36,6 +36,38 @@ content is read or retained. Of `~/.claude.json`, only the presence of `oauthAcc
 rate-limit-tier keys are read; the email, name, organisation and prompt history in the same file
 are dropped with the parsed document. `.credentials.json` and `settings.json` are never read.
 
+## Codex CLI
+
+Reads OpenAI usage from Codex CLI's session logs ("rollouts") at
+`~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<thread-id>.jsonl` and under
+`~/.codex/archived_sessions/` (override the home with `--codex-dir`, the `codex_dir` config
+setting, or `CODEX_HOME`). Enabled by default; disable via `[collectors.codex] enabled = false`.
+Files the CLI has compressed to `.jsonl.zst` are not read.
+
+Each rollout is tailed by byte offset, with a partial trailing line left for the next poll. Only
+three line kinds are read: `session_meta` (thread id, `cwd`), `turn_context` (the model in force
+from there on), and `event_msg` / `token_count`, whose `info.last_token_usage` is one model API
+call. Following the CLI's own arithmetic, `cached_input_tokens` is split out of `input_tokens` as
+cache-read and `reasoning_output_tokens` out of `output_tokens` as reasoning; cache writes stay
+inside input because OpenAI bills them at the input rate. Re-emissions whose running total did not
+advance (rate-limit refreshes, resumes) and post-compaction estimates are skipped. A forked thread
+copies its ancestor's history into a new file, so identity is content-based
+(`codex:<timestamp>:<call tokens>:<running total>`) and the copy dedupes against the original.
+Usage carries the thread id as session and the working directory as project.
+
+Codex reports no dollar cost, and rollouts are identical on an API key and on a ChatGPT plan. The
+decision is made once per source by the same `src/collector/billing.rs`: an explicit
+`[collectors.codex] billing` or `--codex-billing`; else `OPENAI_API_KEY` or `CODEX_API_KEY` in the
+environment means per-token; else per-token with a "billing unknown" hint on the source line. No
+Codex config document is read, so `config_json` is rejected under `[collectors.codex]`. The source
+line also appends `· N token events disagree with running totals` when the CLI's cumulative
+counter did not move by a call's own figure. Rows are `openai` / `PAID`, priced `estimated` from
+the bundled table — `gpt-5`, `gpt-5.1`, `gpt-5.2`, `gpt-5.3-codex`, `gpt-5.4`, `gpt-5.5`, and
+`gpt-5.6` families — and a model absent from it stays `unavailable`.
+
+**Privacy:** rollouts hold prompts, tool-call arguments and outputs, and reasoning summaries; none
+of it is parsed or retained. `~/.codex/auth.json` is a credential file and is never opened.
+
 ## Ollama
 
 Ollama response metrics expose prompt and output token counts, but Ollama does not provide a complete historical usage database. `--record-ollama` provides an opt-in local journal for requests made after tracking is enabled.
@@ -57,6 +89,8 @@ Zen usage can be read from OpenCode history. `--refresh-pricing` scrapes the liv
 - OpenCode collector: polls OpenCode DB every 30s (configurable), resuming from a
   `time_created` high-water mark rather than re-reading the whole table
 - Claude Code collector: polls session logs every 30s (configurable), tailing by byte offset
+- Codex collector: polls rollouts every 30s (configurable), tailing by byte offset with a
+  per-file cursor
 - Journal collector: polls journal DB every 60s (configurable)
 - Zen Pricing collector: refreshes hourly when enabled (opt-in)
 

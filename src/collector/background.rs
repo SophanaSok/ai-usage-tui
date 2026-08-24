@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use crate::collector::billing::{detect, BillingSetting, Decision, Signals};
+use crate::collector::billing::{detect, resolve_sticky, BillingSetting, Decision, Signals};
 use crate::collector::{usage_key, UsageKey};
 use crate::logging;
 use crate::model::Usage;
@@ -459,23 +459,46 @@ impl ClaudeCodeCollector {
                 omarchy_tier: None,
             },
         );
-        let decision = match self.decision.take() {
-            Some(previous) if previous.is_evidenced() && !fresh.is_evidenced() => previous,
-            Some(previous) if previous == fresh => previous,
-            _ => {
-                logging::info(
-                    "billing",
-                    &format!(
-                        "claude_code: {} ({})",
-                        fresh.describe("collectors.claude_code"),
-                        fresh.reason
-                    ),
-                );
-                fresh
-            }
-        };
+        let decision = resolve_sticky("claude_code", self.decision.take(), fresh);
         self.decision = Some(decision.clone());
         decision
+    }
+}
+
+pub struct CodexCollector {
+    pub root: Option<PathBuf>,
+    pub interval_secs: u64,
+    /// Per-file cursors: byte offset plus the model, thread and directory in force there.
+    pub cursors: crate::collector::codex::Cursors,
+    pub billing: BillingSetting,
+    pub decision: Option<Decision>,
+}
+
+impl Collector for CodexCollector {
+    fn name(&self) -> &str {
+        "codex"
+    }
+    fn interval(&self) -> Duration {
+        Duration::from_secs(self.interval_secs)
+    }
+    fn poll(&mut self) -> Result<Vec<Usage>> {
+        let fresh = detect(
+            "codex",
+            self.billing,
+            &Signals {
+                claude_json: None,
+                env_has: &crate::collector::billing::env_has,
+                omarchy_tier: None,
+            },
+        );
+        let decision = resolve_sticky("codex", self.decision.take(), fresh);
+        self.decision = Some(decision.clone());
+        let (usages, _) = crate::collector::codex::load_codex(
+            self.root.as_deref(),
+            &mut self.cursors,
+            &decision,
+        )?;
+        Ok(usages)
     }
 }
 

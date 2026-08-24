@@ -14,8 +14,8 @@ pub mod ui;
 pub mod utils;
 
 pub use collector::background::{
-    ClaudeCodeCollector, Collector, CollectorHandle, JournalCollector, OpenCodeCollector,
-    ZenPricingCollector,
+    ClaudeCodeCollector, CodexCollector, Collector, CollectorHandle, JournalCollector,
+    OpenCodeCollector, ZenPricingCollector,
 };
 
 #[cfg(test)]
@@ -41,6 +41,7 @@ mod integration_tests {
             db_path: Some(db_path),
             journal: journal_path,
             claude_dir: Some(temp_dir.path().join("no-claude-logs")),
+            codex_dir: Some(temp_dir.path().join("no-codex-home")),
             ..Default::default()
         };
         let (usages, _source) = load_usage(&roots).unwrap();
@@ -165,6 +166,7 @@ mod integration_tests {
             db_path: Some(db_path.clone()),
             journal: journal_path,
             claude_dir: Some(temp_dir.path().join("no-claude-logs")),
+            codex_dir: Some(temp_dir.path().join("no-codex-home")),
             ..Default::default()
         };
         let (usages, _source) = load_usage(&roots).unwrap();
@@ -177,6 +179,7 @@ mod integration_tests {
             once: true,
             db_path: Some(db_path),
             claude_dir: Some(temp_dir.path().join("no-claude-logs")),
+            codex_dir: Some(temp_dir.path().join("no-codex-home")),
             ..Default::default()
         };
 
@@ -195,6 +198,7 @@ mod integration_tests {
             once: true,
             db_path: Some(db_path),
             claude_dir: Some(temp_dir.path().join("no-claude-logs")),
+            codex_dir: Some(temp_dir.path().join("no-codex-home")),
             ..Default::default()
         };
 
@@ -224,6 +228,7 @@ mod integration_tests {
             db_path: Some(setup_test_db()),
             journal_path: Some(temp_dir.path().join("journal.db")),
             claude_dir: Some(temp_dir.path().join(".claude").join("projects")),
+            codex_dir: Some(temp_dir.path().join("no-codex-home")),
             claude_billing: crate::collector::billing::BillingSetting::Subscription,
             ..Default::default()
         };

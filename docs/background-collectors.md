@@ -24,7 +24,8 @@ in-memory state is shared between collectors and the UI.
 ### Deduplication
 
 Merges key on `UsageKey`, which prefers a stable `event_id` (OpenCode's message id, Claude Code's
-`requestId`, the journal's `event_id` column) and falls back to the usage shape *plus* its
+`requestId`, Codex's content-based `codex:<timestamp>:<call tokens>:<running total>`, the journal's
+`event_id` column) and falls back to the usage shape *plus* its
 timestamp. Token counts alone are not an identity: agent loops routinely produce distinct requests
 with byte-identical counts, and keying on shape alone silently collapsed them.
 
@@ -127,6 +128,37 @@ the path follows `CLAUDE_CONFIG_DIR`, or is derived from an overridden root as
 `<root>/../../.claude.json`. `billing` and `config_json` are rejected at parse time under any
 other collector table.
 
+## Codex collector
+
+Reads Codex CLI rollouts under `$CODEX_HOME/sessions/` and `archived_sessions/` (default
+`~/.codex`). Polls every 30 seconds by default. `.jsonl.zst` files are not read.
+
+The per-file cursor is more than a byte offset: it remembers the offset, the model, the thread id,
+the working directory, and the last running total. A bare offset is not enough because the model
+comes from a `turn_context` line and the thread and directory from `session_meta`, all consumed on
+an earlier poll — resuming mid-file with only an offset would report every later call as
+`unknown`. The running total is the replay guard: a `token_count` whose cumulative figure did not
+move is a re-emission, not a new call. A file that has shrunk was rotated or rewritten, so the
+whole cursor is reset, not just the offset. A trailing partial line is left for the next poll.
+
+**Only `session_meta`, `turn_context`, and the `token_count` block are parsed.** Rollouts hold
+prompts, tool-call arguments and outputs, and reasoning summaries; none of it is read or retained,
+under the same planted-credential test as Claude Code.
+
+Billing is decided on the collector thread before each poll, from `[collectors.codex] billing`,
+then `OPENAI_API_KEY` / `CODEX_API_KEY` in the environment, else per-token with "billing unknown".
+No file is consulted — `~/.codex/auth.json` is a credential file — so `config_json` is rejected
+under this table. The decision is sticky in the same way as Claude Code's.
+
+```toml
+[collectors.codex]
+enabled = true
+interval = 30
+billing = "auto"                        # auto | subscription | api
+```
+
+Override the root with `--codex-dir PATH`, the `codex_dir` config key, or `CODEX_HOME`.
+
 ## Journal collector
 
 Reads the local journal database — Ollama events recorded via `--record-ollama` and routing events
@@ -167,6 +199,11 @@ enabled = true
 interval = 30
 billing = "auto"                        # auto | subscription | api
 # config_json = "/home/user/.claude.json"
+
+[collectors.codex]
+enabled = true
+interval = 30
+billing = "auto"                        # auto | subscription | api
 
 [collectors.journal]
 enabled = true

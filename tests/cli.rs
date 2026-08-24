@@ -27,6 +27,11 @@ fn hermetic(command: &mut Command) -> &mut Command {
             "{}/tests/fixtures/no-such-claude-dir",
             env!("CARGO_MANIFEST_DIR")
         ))
+        .arg("--codex-dir")
+        .arg(format!(
+            "{}/tests/fixtures/no-such-codex-home",
+            env!("CARGO_MANIFEST_DIR")
+        ))
         .arg("--all")
 }
 
@@ -142,6 +147,8 @@ fn claude_billing_decides_whether_transcript_rows_carry_dollars() {
             .arg(&journal)
             .arg("--claude-dir")
             .arg(&projects)
+            .arg("--codex-dir")
+            .arg(temp.join("no-codex-home"))
             .args(extra);
         // The detector consults these; a developer's shell must not decide the test.
         for name in [
@@ -186,4 +193,75 @@ fn claude_billing_decides_whether_transcript_rows_carry_dollars() {
     assert_eq!(rows[0]["cost_status"], "quota", "{}", rows[0]);
 
     let _ = std::fs::remove_dir_all(&temp);
+}
+
+#[test]
+fn codex_rollouts_are_exported_with_split_buckets_and_no_content() {
+    let codex_home = format!("{}/tests/fixtures/codex_home", env!("CARGO_MANIFEST_DIR"));
+    let mut command = bin();
+    command
+        .arg("--json")
+        .arg("--all")
+        .arg("--db")
+        .arg(fixture_db())
+        .arg("--journal")
+        .arg(std::env::temp_dir().join(format!("ai-usage-codex-{}.db", std::process::id())))
+        .arg("--claude-dir")
+        .arg(format!(
+            "{}/tests/fixtures/no-such-claude-dir",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .arg("--codex-dir")
+        .arg(&codex_home)
+        .arg("--codex-billing")
+        .arg("api");
+    for name in ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_HOME"] {
+        command.env_remove(name);
+    }
+    let output = command.output().expect("run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("FIXTURE_SECRET"),
+        "rollout content reached the export:\n{stdout}"
+    );
+
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let rows: Vec<_> = json["usage"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["provider"] == "openai")
+        .collect();
+    // Two billed calls in the live rollout (the repeated and the limit-only events are
+    // skipped) plus one in the archived, older-nesting file.
+    assert_eq!(rows.len(), 3, "{rows:#?}");
+    let first = rows
+        .iter()
+        .find(|row| row["input_tokens"] == 400)
+        .expect("the first call, with cached tokens split out");
+    assert_eq!(first["cache_read_tokens"], 800);
+    assert_eq!(first["output_tokens"], 240);
+    assert_eq!(first["reasoning_tokens"], 100);
+    assert_eq!(first["model"], "gpt-5-codex");
+    assert_eq!(first["cost_status"], "estimated");
+    assert_eq!(first["project"], "/home/fixture/project");
+    assert_eq!(first["session_id"], "0198f4c2-7d1e-7a3b-9c11-3e5a6b7c8d90");
+    let archived = rows
+        .iter()
+        .find(|row| row["model"] == "gpt-5.1-codex-max")
+        .expect("the archived rollout is scanned too");
+    assert_eq!(
+        archived["session_id"],
+        "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    );
+    assert!(
+        json["source"].as_str().unwrap().contains("Codex:"),
+        "{}",
+        json["source"]
+    );
 }

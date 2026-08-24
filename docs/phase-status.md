@@ -47,6 +47,9 @@
 - `quota` now covers Claude Code on a Pro/Max subscription: billing is detected per source
   (`src/collector/billing.rs`), subscription rows carry `api_equivalent_cost` instead of `cost`,
   and `[collectors.claude_code] billing` / `--claude-billing` override the detection
+- Codex CLI collector (`src/collector/codex.rs`): reads rollouts under `~/.codex/sessions` and
+  `archived_sessions`, `openai` rows priced from the bundled table, billing from
+  `[collectors.codex] billing` / `--codex-billing` / `OPENAI_API_KEY`, hermetic via `--codex-dir`
 
 ## Released in v0.4.1 (2026-08-20)
 
