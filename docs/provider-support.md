@@ -95,6 +95,22 @@ is likewise already inside the prompt count and is deliberately not added again.
 share it. Keying on it alone would deduplicate real requests away and under-report spend, so the
 timestamp and total are part of the key.
 
+**Validated against real output.** `tests/fixtures/gemini_telemetry.json` is a redacted capture
+written by Gemini CLI itself. No account is needed to reproduce one: point
+`GOOGLE_GEMINI_BASE_URL` at a local HTTP server that returns a `generateContent` body with a
+`usageMetadata` block, set `security.auth.selectedType` to `gemini-api-key` in
+`~/.gemini/settings.json`, and run `gemini --skip-trust -p ...`. The real CLI, SDK and exporter
+produce the file; nothing leaves the machine and nothing is billed.
+
+**Records that are not usage.** The file also contains `api_request`, `user_prompt`,
+`model_routing`, `gen_ai.client.inference.operation.details` and OTLP **metric** records. The
+metric records have no `attributes` key at all, so anything indexing `["attributes"]` breaks on
+them; the reader skips every record whose `event.name` is not `gemini_cli.api_response`.
+
+**What is deliberately not read.** The `resource` block carries the host name, home directory
+paths and the full command line — including the prompt when it was passed with `-p`. Only
+`attributes` is read, and only the usage fields within it.
+
 **Format caveat.** The exporter is `JSON.stringify(record, 2) + "\n"`, so records are
 pretty-printed and concatenated. The file cannot be split on newlines, and a poll can land
 mid-record while the CLI is writing — the reader consumes only complete top-level objects and

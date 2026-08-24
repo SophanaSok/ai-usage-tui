@@ -513,6 +513,89 @@ mod tests {
         }
     }
 
+    /// The parser against a **real capture**, not a hand-written approximation.
+    ///
+    /// `tests/fixtures/gemini_telemetry.json` was produced by Gemini CLI 0.56.0 itself, its real
+    /// OpenTelemetry SDK and its real `FileLogExporter`, by pointing `GOOGLE_GEMINI_BASE_URL` at
+    /// a local stand-in for Google's API — so no account and no billable call were involved, and
+    /// the bytes are the genuine article rather than a reading of minified JavaScript. Host name,
+    /// home paths, the prompt and the identifiers are redacted; the structure is untouched.
+    ///
+    /// It carries the two records that matter and the two that must be ignored: two
+    /// `api_response` events, a `user_prompt` event, and a metrics record with no `attributes`
+    /// key at all — a shape the format notes did not predict and which would panic an
+    /// `["attributes"]` index.
+    #[test]
+    fn a_real_capture_parses_to_the_counts_it_reports() {
+        let path = std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/gemini_telemetry.json"
+        ));
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::copy(&path, dir.path().join("telemetry.json")).unwrap();
+
+        let (usages, source) =
+            load_gemini(Some(dir.path()), &mut Offsets::new(), Billing::PerToken).unwrap();
+        assert_eq!(usages.len(), 2, "{source}");
+
+        let usage = &usages[0];
+        assert_eq!(usage.model, "gemini-2.5-pro");
+        // The capture reports promptTokenCount 1234 with cachedContentTokenCount 234. Google
+        // counts the cache *inside* the prompt, so the buckets are made disjoint.
+        assert_eq!(usage.input, 1_000);
+        assert_eq!(usage.cache_read, 234);
+        assert_eq!(usage.output, 567);
+        assert_eq!(usage.reasoning, 89, "thoughts_token_count");
+        // tool_token_count is 12 in the capture and is deliberately not added: Google already
+        // counts it inside promptTokenCount.
+        assert_eq!(usage.input + usage.cache_read, 1_234);
+        assert_eq!(
+            usage.session_id.as_deref(),
+            Some("a1b2c3d4-0000-4000-8000-000000000002")
+        );
+
+        // Both responses share one prompt_id *and* an identical total_token_count -- exactly the
+        // shape a real tool-use loop produces. Keying identity on either alone would collapse
+        // six real requests into one and under-report spend.
+        assert_ne!(usages[0].event_id, usages[1].event_id);
+        assert_ne!(
+            crate::collector::usage_key(&usages[0]),
+            crate::collector::usage_key(&usages[1])
+        );
+    }
+
+    /// The capture's `response_text` carries a planted credential, and its `resource` block
+    /// carries a host name and home paths. Neither may reach a usage record.
+    #[test]
+    fn nothing_outside_the_usage_attributes_is_read_from_a_real_capture() {
+        let path = std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/gemini_telemetry.json"
+        ));
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            raw.contains("sk-planted-credential"),
+            "the fixture must actually contain a credential, or this proves nothing"
+        );
+        assert!(
+            raw.contains("redacted-host"),
+            "and a host name in `resource`"
+        );
+
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::copy(&path, dir.path().join("telemetry.json")).unwrap();
+        let (usages, _) =
+            load_gemini(Some(dir.path()), &mut Offsets::new(), Billing::PerToken).unwrap();
+
+        let rendered = format!("{usages:?}");
+        for leaked in ["sk-planted-credential", "redacted-host", "REDACTED-PROMPT"] {
+            assert!(
+                !rendered.contains(leaked),
+                "{leaked} reached a usage record: {rendered}"
+            );
+        }
+    }
+
     #[test]
     fn a_missing_telemetry_file_is_not_an_error() {
         let dir = tempfile::TempDir::new().unwrap();
