@@ -16,6 +16,8 @@ This constraint is load-bearing for the Claude Code collector in particular: ses
 
 The Omarchy reader (`src/omarchy`) sits inside the same boundary. Omarchy's agents panel fetches each subscription's rate-limit windows from the vendor with the agent's saved sign-in; this tool reads only the finished display records it writes (`${XDG_STATE_HOME:-~/.local/state}/omarchy/agents/usage/*.json`), six fields each — never the OAuth token, never over HTTP, never Omarchy's probe cache, and it writes nothing there.
 
+The one write into Omarchy's directory is `--omarchy-record` (`src/omarchy/record.rs`, driven by `write_omarchy_records` in `src/main.rs`): explicit and opt-in, it writes `<id>.json` — token counts, model ids, request and session counts, budget figures; never content, never a path — atomically (temporary then rename, mode 0600) and exits. Ids are limited to `opencode` and `ollama` so Omarchy's own `claude`/`codex`/`fireworks` files cannot be overwritten. The TUI, `--json` and `--csv` never write there; a test asserts it.
+
 ## Cost Provenance
 
 Every cost value must be labeled as provider-reported, calculated, estimated, free, local, or unavailable. A missing cost must never be rendered as a paid zero.
@@ -26,7 +28,7 @@ This extends to the pricing table: a rate that is absent is distinct from a rate
 
 Background collectors run in dedicated `std::thread`-based polling loops and merge normalized usage events into the shared in-memory `CollectorState`. They never write to the journal database — the journal is a source (written by `--record-ollama` / `--record-routing`, read by the journal collector), not a sink. The TUI calls `snapshot()` on its own refresh interval (default 30s), keeping the UI responsive regardless of collector latency. Configuration lives in the `[collectors.opencode]`, `[collectors.claude_code]`, `[collectors.codex]`, `[collectors.journal]`, and `[collectors.zen_pricing]` sections of the config file.
 
-Omarchy's subscription limits are not a collector: `App::refresh()` reads the records directly beside the routing table, and `--json` reads them once for its `limits` array. `[omarchy]` (`dir`, `limits`) and `--omarchy-dir` configure it; the record's `tierLabel` is also the last signal in the billing decision.
+Omarchy's subscription limits are not a collector: `App::refresh()` reads the records directly beside the routing table, and `--json` reads them once for its `limits` array. `[omarchy]` (`dir`, `limits`, `records`, `balance`, `balance_budget`) and `--omarchy-dir` configure it; the record's `tierLabel` is also the last signal in the billing decision.
 
 Ingestion is incremental: the OpenCode collector resumes from a `time_created` high-water mark and the Claude Code and Codex collectors tail each session log by byte offset, so none re-reads history on every poll.
 

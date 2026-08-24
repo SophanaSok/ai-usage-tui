@@ -96,6 +96,24 @@ The `tierLabel` is the last billing signal for the Claude Code and Codex collect
 the explicit setting, the API-key environment variables, and `~/.claude.json`. Override the
 directory with `--omarchy-dir` or `[omarchy] dir`; `[omarchy] limits = false` disables it.
 
+The other direction is `--omarchy-record` (`src/omarchy/record.rs`), which writes this tool's
+usage as `<id>.json` into the same directory so the panel gains a tab per id in `[omarchy]
+records` (default `["opencode"]`). Which sources feed which id:
+
+| Record id | Rows | Why |
+| --- | --- | --- |
+| `opencode` | every OpenCode row, all providers, priced | Omarchy has no OpenCode collector |
+| `ollama` | journal rows with provider `ollama` | Omarchy has no local-model tab |
+| `claude`, `codex`, `fireworks` | refused | Omarchy's own files; a record so named would overwrite them |
+
+Claude Code and Codex rows are never written: Omarchy's `claude` and `codex` tabs already cover
+those logs. Those collectors also fold OpenCode's anthropic/openai rows into their tabs, so such a
+row can show in both the `opencode` tab and Omarchy's — display overlap, not double counting,
+since the panel never sums tabs. Every configured budget becomes a `limits[]` meter with the
+spend `--check-budgets` reports (all sources), and `[omarchy] balance = true` draws one
+(`balance_budget`, default `global/monthly`) as the panel's prepaid ledger. Nothing is written
+unless the flag is given.
+
 ## Background Collectors
 
 - OpenCode collector: polls OpenCode DB every 30s (configurable), resuming from a

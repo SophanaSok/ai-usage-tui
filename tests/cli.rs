@@ -315,3 +315,66 @@ fn json_carries_omarchy_limits_and_nothing_else_from_the_records() {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_eq!(json["limits"], serde_json::json!([]));
 }
+
+#[test]
+fn an_omarchy_record_is_written_only_when_asked() {
+    let temp = std::env::temp_dir().join(format!("ai-usage-omarchy-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp);
+    std::fs::create_dir_all(&temp).unwrap();
+    let state = temp.join("state");
+    let config = temp.join("config.toml");
+    std::fs::write(
+        &config,
+        "[[budgets.entry]]\nscope = \"global\"\nperiod = \"monthly\"\nlimit = 10.0\n",
+    )
+    .unwrap();
+
+    // The whole default path — not just the flag — must stay write-free: XDG_STATE_HOME is
+    // where the record would land if anything wrote one uninvited.
+    let output = hermetic(bin().arg("--json"))
+        .env("XDG_STATE_HOME", &state)
+        .output()
+        .expect("run");
+    assert!(output.status.success());
+    assert!(!state.exists(), "an export must not create Omarchy state");
+
+    let usage_dir = temp.join("usage");
+    let output = bin()
+        .arg("--omarchy-record")
+        .arg("--config")
+        .arg(&config)
+        .arg("--db")
+        .arg(fixture_db())
+        .arg("--journal")
+        .arg(temp.join("journal.db"))
+        .arg("--claude-dir")
+        .arg(temp.join("no-claude"))
+        .arg("--codex-dir")
+        .arg(temp.join("no-codex"))
+        .arg("--omarchy-dir")
+        .arg(&usage_dir)
+        .output()
+        .expect("run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Wrote Omarchy record"), "{stdout}");
+    let record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(usage_dir.join("opencode.json")).unwrap())
+            .unwrap();
+    assert_eq!(record["id"], "opencode");
+    assert_eq!(record["schemaVersion"], 1);
+    assert!(record["totalPrompts"].as_u64().unwrap() > 0, "{record}");
+    assert_eq!(record["limits"][0]["title"], "Monthly budget");
+    assert!(record.get("balance").is_none(), "balance is opt-in");
+    let names: Vec<String> = std::fs::read_dir(&usage_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["opencode.json"], "no temporary left behind");
+
+    let _ = std::fs::remove_dir_all(&temp);
+}

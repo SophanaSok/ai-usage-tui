@@ -4,6 +4,19 @@
 
 ### Added
 
+- **`--omarchy-record` publishes usage and budgets to Omarchy's agents panel.** A one-shot
+  action that writes `<id>.json` into `${XDG_STATE_HOME:-~/.local/state}/omarchy/agents/usage/`
+  (`--omarchy-dir` / `[omarchy] dir`) so the bar gains a tab for what Omarchy cannot meter
+  itself: `[omarchy] records` names the ids — `opencode` (default; every OpenCode row, all
+  providers, priced) and `ollama` (the journal's Ollama rows) — while `claude`, `codex` and
+  `fireworks` are refused because they would overwrite Omarchy's own files. Claude Code and
+  Codex rows are left out since Omarchy's tabs cover them. Every configured budget becomes a
+  `limits[]` meter (`Monthly budget` / `Daily budget`, spend/limit clamped to 1, reset at the
+  next local midnight or month), so the panel alarms at 90 % and counts down like a rate limit;
+  `[omarchy] balance = true` also draws one budget (`balance_budget`, default `global/monthly`)
+  as the prepaid ledger. The record carries token counts, model ids, request and session counts
+  and dollar figures — never content or paths — and is written atomically with mode 0600.
+  Nothing writes there without the flag. `contrib/systemd/user/` ships a 15-minute user timer.
 - **Subscription limits from Omarchy's agents panel.** Omarchy 4 meters every AI coding
   subscription on the machine and writes one JSON record per agent under
   `${XDG_STATE_HOME:-~/.local/state}/omarchy/agents/usage/`. A new `l` panel shows those
