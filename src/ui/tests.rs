@@ -104,9 +104,7 @@ fn test_app(usages: Vec<Usage>) -> App {
         pulse: 0,
         refresh_interval: Duration::from_secs(30),
         refreshed_at: Instant::now(),
-        db_path: None,
-        journal_path: PathBuf::from("/tmp/unused-journal.db"),
-        claude_dir: None,
+        roots: crate::collector::SourceRoots::new(PathBuf::from("/tmp/unused-journal.db")),
         provider_filter: None,
         model_filter: None,
         collector: None,
@@ -229,9 +227,7 @@ fn rows_do_not_mix_cost_provenance() {
         pulse: 0,
         refresh_interval: Duration::from_secs(30),
         refreshed_at: Instant::now(),
-        db_path: None,
-        journal_path: PathBuf::from("/tmp/unused-journal.db"),
-        claude_dir: None,
+        roots: crate::collector::SourceRoots::new(PathBuf::from("/tmp/unused-journal.db")),
         provider_filter: None,
         model_filter: None,
         collector: None,
@@ -1095,6 +1091,7 @@ fn transition(
         sessions,
         cost_after,
         unpriced_after,
+        quota_after: 0,
     }
 }
 
@@ -1544,4 +1541,120 @@ fn a_rendered_frame_carries_the_panels_a_reader_came_for() {
     for expected in ["AI USAGE", "TOTAL TOKENS", "PROJECT COST", "quit"] {
         assert!(svg.contains(expected), "the frame is missing {expected:?}");
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Subscription-billed usage: Claude Code on a plan, which the collector stamps and pricing
+// turns into quota-billed rows carrying an API-rate counterfactual.
+// ---------------------------------------------------------------------------------------------
+
+/// A Claude Code row on a Pro/Max plan, as the collector stamps it, normalised by the real
+/// pricing pass so these tests exercise the seam rather than a hand-set enum.
+fn subscription_usage(tokens: u64, created: i64) -> Usage {
+    let mut usage = Usage {
+        provider: "anthropic".into(),
+        model: "claude-sonnet-4-5-20250929".into(),
+        category: Category::Paid,
+        cost_status: CostStatus::Unavailable,
+        billing: crate::model::Billing::Subscription,
+        requests: 1,
+        input: tokens,
+        output: tokens / 4,
+        cost: None,
+        created,
+        session_id: Some("plan-session".into()),
+        project: Some("/w/plan".into()),
+        ..Default::default()
+    };
+    let engine = crate::pricing::PricingEngine::bundled();
+    crate::pricing::apply_estimated_pricing(std::slice::from_mut(&mut usage), &engine);
+    assert_eq!(
+        usage.cost_status,
+        CostStatus::Quota,
+        "fixture must go through pricing"
+    );
+    assert!(usage.api_equivalent_cost.is_some_and(|c| c > 0.0));
+    usage
+}
+
+fn render_breakdown(app: &App, w: u16, h: u16) -> String {
+    render_panel(w, h, |frame, area| {
+        crate::ui::panels::breakdown::draw_breakdown(frame, area, app)
+    })
+}
+
+fn render_metrics(app: &App, w: u16, h: u16) -> String {
+    render_panel(w, h, |frame, area| {
+        crate::ui::panels::metrics::draw_metrics(frame, area, app)
+    })
+}
+
+#[test]
+fn an_all_subscription_breakdown_says_on_quota_and_shows_the_counterfactual() {
+    // Before: "EST. PAID COST $0.0000" for a month of Max-plan work. The tile read as free.
+    let now = crate::utils::now();
+    let mut app = test_app(
+        (0..5)
+            .map(|i| subscription_usage(20_000, now - i))
+            .collect(),
+    );
+    app.recompute();
+
+    let rendered = render_breakdown(&app, 60, 12);
+    assert!(rendered.contains("on quota"), "{rendered}");
+    assert!(
+        rendered.contains("API-RATE EQUIV.") && rendered.contains("≈ $"),
+        "the list-rate figure must survive as a labelled counterfactual:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("$0.0000"),
+        "never render plan-billed work as zero dollars:\n{rendered}"
+    );
+}
+
+#[test]
+fn a_priced_breakdown_still_shows_dollars_and_no_counterfactual_line() {
+    // The anti-test: the fix must not replace real dollars with "on quota" when any exist.
+    let mut app = test_app(vec![usage(None, None, Some(2.5), 100)]);
+    app.recompute();
+    let rendered = render_breakdown(&app, 60, 12);
+    assert!(rendered.contains("$2.5000"), "{rendered}");
+    assert!(!rendered.contains("API-RATE EQUIV."), "{rendered}");
+}
+
+#[test]
+fn the_paid_tile_does_not_show_zero_dollars_for_subscription_work() {
+    let now = crate::utils::now();
+    let mut app = test_app(
+        (0..3)
+            .map(|i| subscription_usage(20_000, now - i))
+            .collect(),
+    );
+    app.recompute();
+
+    let rendered = render_metrics(&app, 130, 7);
+    assert!(rendered.contains("on quota"), "{rendered}");
+    assert!(!rendered.contains("$0.0000"), "{rendered}");
+}
+
+#[test]
+fn subscription_rows_are_quota_volume_not_a_coverage_gap() {
+    let now = crate::utils::now();
+    let mut usages = vec![usage(None, None, Some(1.0), 100)];
+    usages.extend((0..4).map(|i| subscription_usage(100, now - i)));
+    let c = coverage(&usages);
+    assert_eq!(c.pct(), Some(100.0), "{c:?}");
+    assert_eq!(c.quota_requests, 4);
+}
+
+#[test]
+fn an_escalation_onto_a_subscription_model_is_not_zero_dollars_after() {
+    // Before: "$0.00 after" for a session that escalated to Opus on a Max plan.
+    let mut app = test_app(Vec::new());
+    let mut onto_plan = transition("haiku", "opus", 3, 0.0, 0);
+    onto_plan.quota_after = 9;
+    app.set_escalations_for_test(escalations_for_test(10, 3, vec![onto_plan]));
+    let rendered = render_routing(&app, 84, 12);
+    assert!(rendered.contains("on quota after"), "{rendered}");
+    assert!(!rendered.contains("$0.00 after"), "{rendered}");
 }

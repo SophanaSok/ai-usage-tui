@@ -18,6 +18,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::classify::classify;
+use crate::collector::billing::Decision;
 use crate::helpers::{number, string};
 use crate::model::{CostStatus, Usage};
 use crate::utils::home_dir;
@@ -31,6 +32,30 @@ pub fn projects_dir() -> Option<PathBuf> {
         return Some(PathBuf::from(config).join("projects"));
     }
     Some(home_dir()?.join(".claude").join("projects"))
+}
+
+/// Claude Code's own config document, `~/.claude.json` by default.
+///
+/// Its `oauthAccount` block is the billing signal (see `collector::billing`). Resolution order:
+/// an explicit path; `$CLAUDE_CONFIG_DIR/.claude.json`, where Claude Code keeps it when that
+/// variable is set; and otherwise a path derived from the session-log root — `~/.claude/projects`
+/// sits two levels below `~/.claude.json`. Deriving from the root is what keeps tests hermetic:
+/// a fixture root under `tests/fixtures/` resolves to a file that does not exist rather than to
+/// the developer's real account.
+pub fn config_json_path(explicit: Option<&Path>, claude_dir: Option<&Path>) -> Option<PathBuf> {
+    if let Some(path) = explicit {
+        return Some(path.to_path_buf());
+    }
+    if let Ok(config) = std::env::var("CLAUDE_CONFIG_DIR") {
+        return Some(PathBuf::from(config).join(".claude.json"));
+    }
+    let overridden = claude_dir
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::var("CLAUDE_PROJECTS_DIR").ok().map(PathBuf::from));
+    if let Some(root) = overridden {
+        return Some(root.parent()?.parent()?.join(".claude.json"));
+    }
+    Some(home_dir()?.join(".claude.json"))
 }
 
 /// Byte offsets already consumed per session file.
@@ -50,9 +75,13 @@ impl Offsets {
     }
 }
 
+/// Every usage row is stamped with `decision.billing`: nothing on a transcript line says how
+/// the account pays, so the answer comes from the source-level decision, and the source string
+/// says which answer was reached so a wrong one is visible on screen.
 pub fn load_claude_code(
     root: Option<&Path>,
     offsets: &mut Offsets,
+    decision: &Decision,
 ) -> Result<(Vec<Usage>, String)> {
     let Some(root) = root.map(Path::to_path_buf).or_else(projects_dir) else {
         return Ok((Vec::new(), "Claude Code: no home directory".into()));
@@ -69,7 +98,12 @@ pub fn load_claude_code(
     for path in session_files(&root) {
         files += 1;
         match read_session(&path, offsets) {
-            Ok(mut found) => usages.append(&mut found),
+            Ok(mut found) => {
+                for usage in &mut found {
+                    usage.billing = decision.billing;
+                }
+                usages.append(&mut found);
+            }
             // One unreadable or truncated transcript must not sink the whole collector.
             Err(_) => continue,
         }
@@ -77,7 +111,12 @@ pub fn load_claude_code(
 
     Ok((
         usages,
-        format!("Claude Code: {} ({} sessions)", root.display(), files),
+        format!(
+            "Claude Code: {} ({} sessions) · {}",
+            root.display(),
+            files,
+            decision.describe("collectors.claude_code")
+        ),
     ))
 }
 
@@ -190,6 +229,8 @@ pub fn parse_line(line: &str) -> Option<Usage> {
         // Claude Code reports no dollar cost; pricing is estimated downstream, and the
         // provenance stays `estimated` rather than pretending the provider told us.
         cost_status: CostStatus::Unavailable,
+        billing: Default::default(),
+        api_equivalent_cost: None,
         created,
         session_id: string(&json, &["sessionId", "session_id"]),
         // The full working directory, not its last segment: `~/a/build` and `~/b/build` are
@@ -214,6 +255,17 @@ fn normalize_project_path(cwd: &str) -> String {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    use crate::model::Billing;
+
+    /// The decision an API-key user gets, so tests exercise the pre-existing pricing path.
+    fn per_token() -> Decision {
+        Decision {
+            billing: Billing::PerToken,
+            tier: None,
+            reason: "config",
+        }
+    }
 
     const ASSISTANT_LINE: &str = r#"{"type":"assistant","uuid":"u-1","requestId":"req_abc","sessionId":"sess-1","timestamp":"2026-08-18T10:00:00Z","cwd":"/home/dev/ai-usage-tui","gitBranch":"main","message":{"id":"msg_1","role":"assistant","model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":1200,"output_tokens":340,"cache_read_input_tokens":8000,"cache_creation_input_tokens":500}}}"#;
 
@@ -281,16 +333,16 @@ mod tests {
         std::fs::write(&log, format!("{}\n", ASSISTANT_LINE)).unwrap();
 
         let mut offsets = Offsets::new();
-        let (first, _) = load_claude_code(Some(dir.path()), &mut offsets).unwrap();
+        let (first, _) = load_claude_code(Some(dir.path()), &mut offsets, &per_token()).unwrap();
         assert_eq!(first.len(), 1);
 
         // Nothing new: a second poll must do no work rather than re-parsing the transcript.
-        let (second, _) = load_claude_code(Some(dir.path()), &mut offsets).unwrap();
+        let (second, _) = load_claude_code(Some(dir.path()), &mut offsets, &per_token()).unwrap();
         assert!(second.is_empty(), "re-read an unchanged session log");
 
         let mut file = std::fs::OpenOptions::new().append(true).open(&log).unwrap();
         writeln!(file, "{}", ASSISTANT_LINE).unwrap();
-        let (third, _) = load_claude_code(Some(dir.path()), &mut offsets).unwrap();
+        let (third, _) = load_claude_code(Some(dir.path()), &mut offsets, &per_token()).unwrap();
         assert_eq!(third.len(), 1, "appended line was not picked up");
     }
 
@@ -302,11 +354,11 @@ mod tests {
         std::fs::write(&log, ASSISTANT_LINE).unwrap();
 
         let mut offsets = Offsets::new();
-        let (first, _) = load_claude_code(Some(dir.path()), &mut offsets).unwrap();
+        let (first, _) = load_claude_code(Some(dir.path()), &mut offsets, &per_token()).unwrap();
         assert!(first.is_empty(), "consumed an incomplete line");
 
         std::fs::write(&log, format!("{}\n", ASSISTANT_LINE)).unwrap();
-        let (second, _) = load_claude_code(Some(dir.path()), &mut offsets).unwrap();
+        let (second, _) = load_claude_code(Some(dir.path()), &mut offsets, &per_token()).unwrap();
         assert_eq!(second.len(), 1, "line was not re-read once complete");
     }
 
@@ -317,11 +369,11 @@ mod tests {
         std::fs::write(&log, format!("{}\n{}\n", ASSISTANT_LINE, ASSISTANT_LINE)).unwrap();
 
         let mut offsets = Offsets::new();
-        let (first, _) = load_claude_code(Some(dir.path()), &mut offsets).unwrap();
+        let (first, _) = load_claude_code(Some(dir.path()), &mut offsets, &per_token()).unwrap();
         assert_eq!(first.len(), 2);
 
         std::fs::write(&log, format!("{}\n", ASSISTANT_LINE)).unwrap();
-        let (second, _) = load_claude_code(Some(dir.path()), &mut offsets).unwrap();
+        let (second, _) = load_claude_code(Some(dir.path()), &mut offsets, &per_token()).unwrap();
         assert_eq!(
             second.len(),
             1,
@@ -350,9 +402,47 @@ mod tests {
         let (usages, source) = load_claude_code(
             Some(Path::new("/nonexistent/claude/projects")),
             &mut offsets,
+            &per_token(),
         )
         .unwrap();
         assert!(usages.is_empty());
         assert!(source.contains("no session logs"));
+    }
+
+    #[test]
+    fn rows_carry_the_billing_decision_and_the_source_line_names_it() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let project = dir.path().join("-home-dev-proj");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("s.jsonl"), format!("{}\n", ASSISTANT_LINE)).unwrap();
+
+        let decision = Decision {
+            billing: Billing::Subscription,
+            tier: Some("Max 5x".into()),
+            reason: "claude.json oauthAccount",
+        };
+        let (usages, source) =
+            load_claude_code(Some(dir.path()), &mut Offsets::new(), &decision).unwrap();
+        assert_eq!(usages[0].billing, Billing::Subscription);
+        assert!(source.contains("subscription Max 5x"), "{source}");
+
+        let (usages, source) =
+            load_claude_code(Some(dir.path()), &mut Offsets::new(), &per_token()).unwrap();
+        assert_eq!(usages[0].billing, Billing::PerToken);
+        assert!(source.contains("api billing"), "{source}");
+    }
+
+    #[test]
+    fn the_config_document_is_derived_from_an_overridden_root() {
+        // A fixture root must never resolve to the developer's own ~/.claude.json.
+        let root = Path::new("/fixtures/home/.claude/projects");
+        assert_eq!(
+            config_json_path(None, Some(root)).unwrap(),
+            Path::new("/fixtures/home/.claude.json")
+        );
+        assert_eq!(
+            config_json_path(Some(Path::new("/explicit.json")), Some(root)).unwrap(),
+            Path::new("/explicit.json")
+        );
     }
 }

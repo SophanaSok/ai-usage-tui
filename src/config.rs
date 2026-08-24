@@ -5,6 +5,7 @@ use serde::Deserialize;
 
 use crate::budget::BudgetsConfig;
 use crate::cli::Cli;
+use crate::collector::billing::BillingSetting;
 use crate::model::Range;
 
 #[derive(Debug, Default, Deserialize)]
@@ -28,10 +29,41 @@ pub struct CollectorsConfig {
     pub zen_pricing: Option<CollectorConfig>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct CollectorConfig {
     pub enabled: Option<bool>,
     pub interval: Option<u64>,
+    /// `auto` (default), `subscription`, or `api`. Only meaningful for agent collectors that
+    /// can run on a plan; the others reject it rather than ignore it.
+    pub billing: Option<BillingSetting>,
+    /// The agent's own config document, when it is not where the collector would look.
+    pub config_json: Option<String>,
+}
+
+impl ConfigFile {
+    /// Keys that parse but that the named collector does not act on are an error, not a
+    /// no-op: a `billing` line under the wrong table would otherwise sit there looking like
+    /// it worked.
+    fn validate(&self) -> Result<()> {
+        let Some(collectors) = &self.collectors else {
+            return Ok(());
+        };
+        for (name, cfg) in [
+            ("opencode", &collectors.opencode),
+            ("journal", &collectors.journal),
+            ("zen_pricing", &collectors.zen_pricing),
+        ] {
+            if let Some(cfg) = cfg {
+                if cfg.billing.is_some() || cfg.config_json.is_some() {
+                    return Err(anyhow::anyhow!(
+                        "[collectors.{name}] does not support `billing` or `config_json`; \
+                         they apply to [collectors.claude_code]"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 pub fn config_path() -> Option<PathBuf> {
@@ -65,8 +97,12 @@ pub fn load_config(cli: &Cli) -> Result<ConfigFile> {
     }
     let contents = fs::read_to_string(&path)
         .map_err(|error| anyhow::anyhow!("could not read {}: {}", path.display(), error))?;
-    toml::from_str(&contents)
-        .map_err(|error| anyhow::anyhow!("could not parse {}: {}", path.display(), error))
+    let config: ConfigFile = toml::from_str(&contents)
+        .map_err(|error| anyhow::anyhow!("could not parse {}: {}", path.display(), error))?;
+    config
+        .validate()
+        .map_err(|error| anyhow::anyhow!("{}: {}", path.display(), error))?;
+    Ok(config)
 }
 
 /// Fill in CLI defaults from the config file, returning the parsed config alongside so callers
@@ -81,6 +117,20 @@ pub fn apply_config(mut cli: Cli) -> Result<(Cli, ConfigFile)> {
     }
     if cli.claude_dir.is_none() {
         cli.claude_dir = config.claude_dir.take().map(PathBuf::from);
+    }
+    if let Some(claude) = config
+        .collectors
+        .as_ref()
+        .and_then(|collectors| collectors.claude_code.as_ref())
+    {
+        if !cli.claude_billing_set {
+            if let Some(billing) = claude.billing {
+                cli.claude_billing = billing;
+            }
+        }
+        if cli.claude_json.is_none() {
+            cli.claude_json = claude.config_json.clone().map(PathBuf::from);
+        }
     }
     if !cli.refresh_interval_set {
         if let Some(seconds) = config.refresh_interval {
@@ -197,5 +247,57 @@ mod tests {
             !budgets.entry.is_empty(),
             "the [[budgets.entry]] examples must still parse after the header is added"
         );
+    }
+
+    #[test]
+    fn billing_parses_and_reaches_the_cli_unless_the_flag_was_given() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            "[collectors.claude_code]\nbilling = \"subscription\"\nconfig_json = \"/x/.claude.json\"\n",
+        )
+        .unwrap();
+        let (cli, _) = apply_config(cli_with_config(&path)).unwrap();
+        assert_eq!(cli.claude_billing, BillingSetting::Subscription);
+        assert_eq!(
+            cli.claude_json.as_deref(),
+            Some(std::path::Path::new("/x/.claude.json"))
+        );
+
+        let flagged = Cli {
+            claude_billing: BillingSetting::Api,
+            claude_billing_set: true,
+            ..cli_with_config(&path)
+        };
+        let (cli, _) = apply_config(flagged).unwrap();
+        assert_eq!(
+            cli.claude_billing,
+            BillingSetting::Api,
+            "the flag wins over config"
+        );
+    }
+
+    #[test]
+    fn an_unknown_billing_mode_is_a_parse_error() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[collectors.claude_code]\nbilling = \"sometimes\"\n").unwrap();
+        let error = load_config(&cli_with_config(&path))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("could not parse"), "{error}");
+    }
+
+    #[test]
+    fn billing_under_a_collector_that_cannot_use_it_is_rejected_not_ignored() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[collectors.opencode]\nbilling = \"subscription\"\n").unwrap();
+        let error = load_config(&cli_with_config(&path))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("[collectors.opencode]"), "{error}");
+        assert!(error.contains("claude_code"), "{error}");
     }
 }

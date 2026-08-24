@@ -6,6 +6,28 @@
 
 - **`tests/docs.rs` guards the README against drift.** The quick-start version pins must match
   `Cargo.toml`, and the CLI table must match what `--help` actually accepts, or the test fails.
+- **Claude Code billing detection.** Claude Code writes the same transcript on an API key and on
+  a Pro/Max plan, and priced at list rates a subscription's traffic read as hundreds of dollars
+  that were never charged, tripping budgets on them. The collector now decides once per source —
+  `[collectors.claude_code] billing` or `--claude-billing`, else an Anthropic API-key variable in
+  the environment, else `oauthAccount` in `~/.claude.json`, else per-token with a visible
+  "billing unknown" hint — stamps every row, and names the answer on the source line
+  (`· subscription Max 20x`). Only the presence of `oauthAccount` and its rate-limit-tier keys are
+  read from that file; the email, name and prompt history beside them are dropped unread, and
+  `.credentials.json` and `settings.json` are never opened. Subscription rows become `quota` and
+  keep the list-rate figure as `api_equivalent_cost`, shown as `API-RATE EQUIV.` in the breakdown
+  and never summed into cost. `config_json` points at the document when it is elsewhere.
+
+### Changed
+
+- **Anthropic rows from a subscription account now export as `quota`, with a new column.** Rows
+  that exported `("PAID", "estimated", cost: N)` now export
+  `("PAID", "quota", cost: null, api_equivalent_cost: N)` when Claude Code runs on a Pro/Max plan.
+  Budgets scoped to `global`, `provider = "anthropic"`, or a Claude model no longer count them, and
+  `--check-budgets` no longer exits `1` for them. The CSV gains a fifteenth column,
+  `api_equivalent_cost`, appended after `session_id`; JSON rows gain the same key, `null` unless
+  the row is subscription-billed. Nothing is removed or renamed and no existing column moves.
+  `[collectors.claude_code] billing = "api"` restores the previous accounting.
 
 ### Fixed
 

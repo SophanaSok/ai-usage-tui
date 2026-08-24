@@ -48,11 +48,28 @@ pub fn draw_breakdown(frame: &mut Frame, area: Rect, app: &App) {
         ListItem::new(Line::from("")),
         ListItem::new(Line::from(vec![
             Span::styled("EST. PAID COST ", Style::default().fg(YELLOW)),
+            // `$0.0000` next to thousands of subscription requests reads as "free". The work
+            // cost money; it was billed against a plan. Say that instead of printing a zero.
             Span::styled(
-                format!("${:.4}", t.cost),
+                if t.cost == 0.0 && t.quota_requests > 0 && t.unknown_requests == 0 {
+                    "on quota".to_string()
+                } else {
+                    format!("${:.4}", t.cost)
+                },
                 Style::default().fg(YELLOW).add_modifier(Modifier::BOLD),
             ),
         ])),
+        ListItem::new(Line::from(if t.api_equivalent > 0.0 {
+            vec![
+                Span::styled("API-RATE EQUIV. ", Style::default().fg(MUTED)),
+                Span::styled(
+                    format!("≈ ${:.4} (on quota, not billed)", t.api_equivalent),
+                    Style::default().fg(MUTED),
+                ),
+            ]
+        } else {
+            Vec::new()
+        })),
         ListItem::new(Line::from(vec![
             Span::styled("PRICING STATUS  ", Style::default().fg(MUTED)),
             // "complete" must not absorb quota-billed work: it is accounted for, but it

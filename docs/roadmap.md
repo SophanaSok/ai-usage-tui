@@ -16,7 +16,8 @@ and breadth, not correctness.
 
 Sources read today: OpenCode SQLite, Claude Code JSONL, the local Ollama/routing journal, and the
 Zen pricing table. Verified end to end against ~103MB of real Claude Code logs — 5,879 requests
-parsed in 0.27s with **zero unpriced rows**.
+parsed in 0.27s with **zero unpriced rows**. On a subscription account those rows are `quota`
+rather than priced, and carry the list-rate figure as `api_equivalent_cost` instead of `cost`.
 
 The two things worth defending, and the reason to prefer depth over breadth below:
 
@@ -156,13 +157,18 @@ cargo build --release --locked
   --db tests/fixtures/opencode_test.db --claude-dir /nonexistent
 
 # Against real Claude Code logs — the true end-to-end check.
-# Watch the unpriced count: it should be zero.
+# Watch the unpriced count: it should be zero. Subscription rows are `quota` with
+# `cost` null by design, so they are excluded — without that this reports 100%
+# unpriced on a Max account.
 ./target/release/ai-usage-tui --json --db /nonexistent.db --all \
   | python3 -c "import json,sys; d=json.load(sys.stdin); \
       rows=[u for u in d['usage'] if u['provider']=='anthropic']; \
-      print(len(rows), 'requests,', sum(1 for u in rows if u['cost'] is None), 'unpriced')"
+      print(len(rows), 'requests,', sum(1 for u in rows if u['cost'] is None \
+        and u['cost_status'] != 'quota'), 'unpriced,', \
+        sum(1 for u in rows if u['cost_status'] == 'quota'), 'on quota')"
 ```
 
-Tests are hermetic — they never read the developer's real `~/.claude/projects`. Keep it that way:
-pass an explicit `claude_dir` in any new test that goes through `load_usage` or `print_once`, and
-in any command in this file.
+Tests are hermetic — they never read the developer's real `~/.claude/projects` or `~/.claude.json`.
+Keep it that way: pass an explicit `claude_dir` (the config document is derived from it) or
+`claude_json` in any new test that goes through `load_usage` or `print_once`, and in any command
+in this file.

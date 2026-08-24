@@ -18,14 +18,23 @@ written line is left unconsumed until it is complete. Events dedupe on `requestI
 to the message `uuid`. Usage carries a session id and a project name derived from the working
 directory.
 
-Claude Code reports no dollar cost, so cost is estimated from the pricing table and labelled
-`estimated` — never `reported`. Model ids arrive dated and dash-versioned
-(`claude-sonnet-4-5-20250929`); resolution strips the date and converts the version to the
-table's dotted form.
+Claude Code reports no dollar cost, and its transcripts are identical on an API key and on a
+Pro/Max subscription. The collector decides once per source which it is (`src/collector/billing.rs`:
+an explicit `[collectors.claude_code] billing` or `--claude-billing`; else an Anthropic API-key
+variable in the environment means per-token; else an `oauthAccount` block in `~/.claude.json` means
+subscription; else per-token with a "billing unknown" hint on the source line) and stamps every row.
+Per-token rows are priced from the pricing table and labelled `estimated` — never `reported`.
+Subscription rows carry `cost_status = quota` and `cost = null` for the same reason Ollama Cloud
+does (below): the work is billed, but not per token at any rate the tool can know. The list-rate
+figure survives as `api_equivalent_cost`, a counterfactual that is never summed into cost or
+budgets. Model ids arrive dated and dash-versioned (`claude-sonnet-4-5-20250929`); resolution strips
+the date and converts the version to the table's dotted form.
 
 **Privacy:** transcripts contain full prompts, completions, file contents, and anything a tool
 printed, including secrets. Only the `usage` block and a few identifiers are parsed; no message
-content is read or retained.
+content is read or retained. Of `~/.claude.json`, only the presence of `oauthAccount` and its two
+rate-limit-tier keys are read; the email, name, organisation and prompt history in the same file
+are dropped with the parsed document. `.credentials.json` and `settings.json` are never read.
 
 ## Ollama
 

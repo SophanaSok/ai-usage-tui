@@ -3,7 +3,7 @@ use std::fs;
 use anyhow::Result;
 
 use crate::cli::Cli;
-use crate::collector::load_usage;
+use crate::collector::{load_usage, SourceRoots};
 use crate::helpers::print_line;
 use crate::model::{Range, Usage};
 use crate::ui::cost_display;
@@ -19,19 +19,23 @@ pub fn print_once(cli: &Cli) -> Result<()> {
                 "could not determine a home directory; pass an explicit path (see --help)"
             )
         })?;
-    let (usages, source) = load_usage(cli.db_path.as_deref(), &journal, cli.claude_dir.as_deref())?;
+    let (usages, source) = load_usage(&SourceRoots::from_cli(cli, journal))?;
     let filter = UsageFilter::new(cli);
     if let Some(path) = &cli.csv_path {
         let mut csv = String::from(
-            "provider,model,category,cost_status,requests,input_tokens,output_tokens,reasoning_tokens,cache_read_tokens,cache_write_tokens,cost,created,project,session_id\n",
+            "provider,model,category,cost_status,requests,input_tokens,output_tokens,reasoning_tokens,cache_read_tokens,cache_write_tokens,cost,created,project,session_id,api_equivalent_cost\n",
         );
         for usage in usages.iter().filter(|usage| filter.matches(usage)) {
             let cost = usage
                 .cost
                 .map(|value| value.to_string())
                 .unwrap_or_default();
+            let api_equivalent = usage
+                .api_equivalent_cost
+                .map(|value| value.to_string())
+                .unwrap_or_default();
             csv.push_str(&format!(
-                "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
                 csv_field(&usage.provider),
                 csv_field(&usage.model),
                 usage.category.label(),
@@ -47,6 +51,7 @@ pub fn print_once(cli: &Cli) -> Result<()> {
                 // Appended, never inserted: a consumer reading by column index keeps working.
                 csv_field(usage.project.as_deref().unwrap_or_default()),
                 csv_field(usage.session_id.as_deref().unwrap_or_default()),
+                csv_field(&api_equivalent),
             ));
         }
         fs::write(path, csv)?;
@@ -75,6 +80,8 @@ pub fn print_once(cli: &Cli) -> Result<()> {
                     "created": usage.created,
                     "project": usage.project,
                     "session_id": usage.session_id,
+                    // What a subscription row would have cost at list rates; null otherwise.
+                    "api_equivalent_cost": usage.api_equivalent_cost,
                 })
             })
             .collect();

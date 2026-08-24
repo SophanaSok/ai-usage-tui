@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 use crate::collector::pricing_refresh::pricing_cache_path;
-use crate::model::{Category, CostStatus, Usage};
+use crate::model::{Billing, Category, CostStatus, Usage};
 
 pub(crate) const BUNDLED_PRICING: &str = include_str!("../pricing/zen.toml");
 
@@ -538,6 +538,19 @@ pub fn bundled_free_models() -> &'static std::collections::HashSet<String> {
 pub fn apply_estimated_pricing(usages: &mut [Usage], engine: &PricingEngine) {
     for usage in usages.iter_mut() {
         if usage.cost_status != CostStatus::Unavailable {
+            continue;
+        }
+        // A subscription pays for the plan, not the tokens. The list-rate figure is still
+        // worth knowing — it is what the same work would cost on an API key — so it travels
+        // as a counterfactual, never as `cost`, and the row joins the quota-billed volume
+        // that every total and coverage figure already keeps out of its dollars.
+        if usage.billing == Billing::Subscription {
+            if usage.cost.is_none() {
+                if let Some((cost, CostStatus::Estimated)) = engine.estimate_cost(usage) {
+                    usage.api_equivalent_cost = Some(cost);
+                }
+                usage.cost_status = CostStatus::Quota;
+            }
             continue;
         }
         if usage.category == Category::Cloud {
@@ -1229,5 +1242,67 @@ mod tests {
                 model
             );
         }
+    }
+
+    #[test]
+    fn a_subscription_row_becomes_quota_with_a_counterfactual_and_no_cost() {
+        // Deleting the subscription arm in `apply_estimated_pricing` makes the first half of
+        // this fail (the row would price as Estimated) while the second half still passes.
+        let base = Usage {
+            provider: "anthropic".into(),
+            model: "claude-sonnet-4-5-20250929".into(),
+            category: Category::Paid,
+            cost_status: CostStatus::Unavailable,
+            input: 100_000,
+            output: 10_000,
+            ..Default::default()
+        };
+        let engine = PricingEngine::bundled();
+
+        let mut on_plan = Usage {
+            billing: Billing::Subscription,
+            ..base.clone()
+        };
+        apply_estimated_pricing(std::slice::from_mut(&mut on_plan), &engine);
+        assert_eq!(on_plan.cost_status, CostStatus::Quota);
+        assert_eq!(
+            on_plan.cost, None,
+            "a plan pays for the tokens; no dollars per request"
+        );
+        assert!(on_plan.api_equivalent_cost.is_some_and(|c| c > 0.0));
+        assert_eq!(
+            on_plan.category,
+            Category::Paid,
+            "still paid work, just not per token"
+        );
+
+        let mut on_key = base;
+        apply_estimated_pricing(std::slice::from_mut(&mut on_key), &engine);
+        assert_eq!(on_key.cost_status, CostStatus::Estimated);
+        assert_eq!(
+            on_key.cost, on_plan.api_equivalent_cost,
+            "same list-rate arithmetic"
+        );
+        assert_eq!(on_key.api_equivalent_cost, None);
+    }
+
+    #[test]
+    fn a_subscription_row_with_no_table_rate_is_quota_not_a_pricing_gap() {
+        let mut usage = Usage {
+            provider: "anthropic".into(),
+            model: "claude-model-no-table-has".into(),
+            category: Category::Paid,
+            cost_status: CostStatus::Unavailable,
+            billing: Billing::Subscription,
+            requests: 1,
+            input: 1_000,
+            ..Default::default()
+        };
+        apply_estimated_pricing(std::slice::from_mut(&mut usage), &PricingEngine::bundled());
+        assert_eq!(usage.cost_status, CostStatus::Quota);
+        assert_eq!(usage.api_equivalent_cost, None);
+        let coverage = crate::ui::aggregate::coverage(std::slice::from_ref(&usage));
+        assert_eq!(coverage.pct(), None, "nothing here is a missing price");
+        assert_eq!(coverage.quota_requests, 1);
     }
 }

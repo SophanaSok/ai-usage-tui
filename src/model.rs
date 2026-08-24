@@ -105,6 +105,30 @@ impl Category {
     }
 }
 
+/// How a request is paid for: per token, or against a plan the user already pays for.
+///
+/// Claude Code on a Pro or Max plan and Codex on a ChatGPT plan write the same token counts
+/// as an API-key session, and nothing on the row says which. Priced at list rates, a
+/// subscription's usage read as hundreds of dollars of spend that were never charged, and
+/// tripped budgets on money that did not exist. The collector decides once per source (see
+/// `collector::billing`) and stamps every row; pricing then keeps the list-rate figure as a
+/// labelled counterfactual rather than as cost.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Billing {
+    #[default]
+    PerToken,
+    Subscription,
+}
+
+impl Billing {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::PerToken => "per_token",
+            Self::Subscription => "subscription",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Usage {
     /// Stable per-event identity from the source (OpenCode message id, journal `event_id`).
@@ -121,6 +145,13 @@ pub struct Usage {
     pub cache_write: u64,
     pub cost: Option<f64>,
     pub cost_status: CostStatus,
+    /// Whether this request was billed per token or against a subscription. Set by the
+    /// collector; consulted by pricing, which turns subscription rows into `Quota`.
+    pub billing: Billing,
+    /// What the request would have cost at API list rates. Only set on subscription rows,
+    /// where `cost` is deliberately `None`: it is a counterfactual, never money that changed
+    /// hands, and it is never summed into a dollar total.
+    pub api_equivalent_cost: Option<f64>,
     pub created: i64,
     /// Conversation/session this usage belongs to, when the source records one.
     pub session_id: Option<String>,
@@ -275,6 +306,9 @@ pub struct Totals {
     /// API exposes per request, so they are counted separately: without this, a row whose work is
     /// entirely quota-billed has no unpriced requests and no dollars, and renders as `$0.00`.
     pub quota_requests: u64,
+    /// What the subscription-billed requests would have cost at API list rates. Kept apart
+    /// from `cost` because it was never charged; shown only as a labelled counterfactual.
+    pub api_equivalent: f64,
 }
 
 impl Totals {
@@ -295,6 +329,9 @@ impl Totals {
             if let Some(cost) = usage.cost {
                 self.cost += cost;
             }
+        }
+        if let Some(equivalent) = usage.api_equivalent_cost {
+            self.api_equivalent += equivalent;
         }
     }
     pub fn tokens(&self) -> u64 {
@@ -407,5 +444,23 @@ mod tests {
     #[test]
     fn extreme_day_ranges_are_safe() {
         assert!(Range::Days(u64::MAX).cutoff() <= now());
+    }
+
+    #[test]
+    fn a_subscription_row_adds_to_quota_and_the_counterfactual_but_never_to_cost() {
+        let mut totals = Totals::default();
+        totals.add(&Usage {
+            requests: 2,
+            input: 100,
+            cost: None,
+            cost_status: CostStatus::Quota,
+            billing: Billing::Subscription,
+            api_equivalent_cost: Some(1.25),
+            ..Default::default()
+        });
+        assert_eq!(totals.cost, 0.0);
+        assert_eq!(totals.quota_requests, 2);
+        assert_eq!(totals.unknown_requests, 0);
+        assert!((totals.api_equivalent - 1.25).abs() < 1e-9);
     }
 }

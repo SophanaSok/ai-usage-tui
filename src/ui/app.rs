@@ -2,12 +2,12 @@
 
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
 use crate::budget::{Alert, BudgetEngine};
 use crate::collector::background::CollectorHandle;
+use crate::collector::SourceRoots;
 use crate::escalation::{self, Escalations};
 use crate::model::{
     BurnRate, Category, CostStatus, DayTotals, ProjectTotals, Range, RoutingAggregates,
@@ -34,9 +34,8 @@ pub struct App {
     pub pulse: u64,
     pub refresh_interval: Duration,
     pub refreshed_at: Instant,
-    pub db_path: Option<PathBuf>,
-    pub journal_path: PathBuf,
-    pub claude_dir: Option<PathBuf>,
+    /// Every source path and billing setting, for the collector-less refresh path.
+    pub roots: SourceRoots,
     pub provider_filter: Option<String>,
     pub model_filter: Option<String>,
     pub collector: Option<CollectorHandle>,
@@ -120,9 +119,7 @@ impl Coverage {
 impl App {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        db_path: Option<PathBuf>,
-        journal_path: PathBuf,
-        claude_dir: Option<PathBuf>,
+        roots: SourceRoots,
         range: Range,
         refresh_interval: Duration,
         provider_filter: Option<String>,
@@ -141,9 +138,7 @@ impl App {
             pulse: 0,
             refresh_interval,
             refreshed_at: Instant::now(),
-            db_path,
-            journal_path,
-            claude_dir,
+            roots,
             provider_filter,
             model_filter,
             collector,
@@ -244,6 +239,10 @@ impl App {
                     entry.cost = Some(entry.cost.unwrap_or(0.0) + cost);
                 }
             }
+            if let Some(equivalent) = u.api_equivalent_cost {
+                entry.api_equivalent_cost =
+                    Some(entry.api_equivalent_cost.unwrap_or(0.0) + equivalent);
+            }
         }
         self.view.rows = grouped.into_values().collect();
         self.view.rows.sort_by_key(|u| Reverse(u.total_tokens()));
@@ -306,11 +305,7 @@ impl App {
             self.status = collector.status();
             self.degraded = collector.is_degraded();
         } else {
-            match crate::collector::load_usage(
-                self.db_path.as_deref(),
-                &self.journal_path,
-                self.claude_dir.as_deref(),
-            ) {
+            match crate::collector::load_usage(&self.roots) {
                 Ok((usages, source)) => {
                     self.usages = usages;
                     self.status = source;
@@ -327,7 +322,7 @@ impl App {
         self.refreshed_at = Instant::now();
         self.recompute();
         // Routing lives in SQLite; read it here, not inside `draw`.
-        self.view.routing = match crate::collector::journal::load_routing(&self.journal_path) {
+        self.view.routing = match crate::collector::journal::load_routing(&self.roots.journal) {
             Ok(events) => crate::routing::aggregate(&events),
             Err(error) => {
                 // An empty routing panel used to be the rendering for both "no events yet"
