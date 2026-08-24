@@ -7,7 +7,6 @@
 use std::collections::BTreeSet;
 
 const README: &str = include_str!("../README.md");
-const CLI_SOURCE: &str = include_str!("../src/cli.rs");
 /// Every `.rs` file under `src/`, walked at test time.
 ///
 /// This was a hand-maintained list of five `include_str!`s with a comment asking the next person
@@ -121,63 +120,6 @@ fn readme_cli_table_matches_the_parser() {
     );
 }
 
-/// `--help` must offer the same long flags the parser accepts and the README documents.
-///
-/// `readme_cli_table_matches_the_parser` compared two of the three lists and left the help text
-/// out, which is how a stray `(default: ~/.claude/projects)` line sat orphaned under
-/// `--omarchy-record` -- inherited from a `--claude-dir` entry three flags above it -- through
-/// several releases. Three lists, one comparison.
-#[test]
-fn help_text_lists_every_flag_the_parser_accepts() {
-    let helped = help_long_flags();
-    let parsed = parser_long_flags();
-
-    let unhelped: Vec<_> = parsed.difference(&helped).collect();
-    let phantom: Vec<_> = helped.difference(&parsed).collect();
-    assert!(
-        unhelped.is_empty() && phantom.is_empty(),
-        "`--help` and src/cli.rs `parse_cli` disagree.\n\
-         parsed by cli.rs but missing from OPTIONS in print_help: {unhelped:?}\n\
-         listed in print_help but not parsed by cli.rs: {phantom:?}"
-    );
-    assert!(
-        helped.len() >= 20,
-        "only {} flags found in the help text; the OPTIONS marker may have moved",
-        helped.len()
-    );
-}
-
-/// Long flags declared in `print_help`'s `OPTIONS:` block.
-///
-/// A flag is only counted where it is *declared* -- the first token of its line -- so a flag
-/// named inside another flag's description is not mistaken for an entry of its own, and the
-/// wrapped continuation lines are skipped.
-fn help_long_flags() -> BTreeSet<String> {
-    let start = CLI_SOURCE
-        .find("OPTIONS:")
-        .expect("print_help has an OPTIONS: block");
-    let section = &CLI_SOURCE[start..];
-    let end = section
-        .find("ENVIRONMENT:")
-        .expect("OPTIONS is followed by ENVIRONMENT");
-    let mut flags = BTreeSet::new();
-    for line in section[..end].lines() {
-        let trimmed = line.trim_start();
-        if !trimmed.starts_with('-') {
-            continue;
-        }
-        for token in trimmed.split([' ', ',']) {
-            if let Some(flag) = token.strip_prefix("--") {
-                if !flag.is_empty() {
-                    flags.insert(format!("--{flag}"));
-                }
-                break;
-            }
-        }
-    }
-    flags
-}
-
 /// Backtick-quoted `--flag` tokens inside the "CLI reference" table, up to the environment
 /// variables that follow it. Tolerant of column layout: only the token matters.
 fn readme_cli_flags() -> BTreeSet<String> {
@@ -201,25 +143,29 @@ fn readme_cli_flags() -> BTreeSet<String> {
     flags
 }
 
-/// String literals that begin a `match` arm in `parse_cli`: `"--flag" =>` or `"--flag" |`.
-/// Literals used elsewhere in the file — help text, tests such as `"--not-a-real-option"` —
-/// are followed by other characters and are not counted.
+/// Every long flag the parser accepts, asked of clap directly.
+///
+/// This used to scrape `"--flag" =>` match arms out of `src/cli.rs` with a hand-rolled scanner,
+/// because there was a hand-rolled parser to scrape. Querying the `Command` is not just tidier —
+/// it cannot be fooled by a flag defined in a way the scanner did not anticipate, which a text
+/// scan silently reports as "not a flag".
+///
+/// The companion guard that compared `--help` against the parser is gone, deliberately: clap
+/// generates the help from these same definitions, so the two can no longer disagree. That
+/// invariant is structural now rather than tested.
 fn parser_long_flags() -> BTreeSet<String> {
-    let mut flags = BTreeSet::new();
-    let mut rest = CLI_SOURCE;
-    while let Some(open) = rest.find("\"--") {
-        let after_open = &rest[open + 1..];
-        let Some(close) = after_open.find('"') else {
-            break;
-        };
-        let literal = &after_open[..close];
-        let tail = after_open[close + 1..].trim_start_matches(' ');
-        if tail.starts_with("=>") || tail.starts_with('|') {
-            flags.insert(literal.to_string());
-        }
-        rest = &after_open[close + 1..];
-    }
-    flags
+    // `build()` first: clap adds `--help` and `--version` lazily, so `get_arguments()` on an
+    // unbuilt command omits the two flags the README does document.
+    let mut command = ai_usage_tui::cli::command();
+    command.build();
+    command
+        .get_arguments()
+        .filter_map(|arg| arg.get_long())
+        // `--help` and `--version` are included: clap defines them like any other argument and
+        // the README documents both. The hand-rolled scanner missed them because they were
+        // spelled `"-h" | "--help"` and it only matched the first literal in an arm.
+        .map(|long| format!("--{long}"))
+        .collect()
 }
 
 /// The README's panel table and `ui::keys::BINDINGS` must offer the same panel keys.

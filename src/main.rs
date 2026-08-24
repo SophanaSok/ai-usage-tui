@@ -42,6 +42,16 @@ fn dispatch() -> Result<()> {
         print_help();
         return Ok(());
     }
+    // Before the config is read: these describe the CLI itself and must work regardless of
+    // whether a config file exists or parses.
+    if let Some(shell) = parsed_cli.completions {
+        ai_usage_tui::cli::print_completions(shell);
+        return Ok(());
+    }
+    if parsed_cli.man {
+        ai_usage_tui::cli::print_man()?;
+        return Ok(());
+    }
     if parsed_cli.version {
         print_line(&format!("ai-usage-tui {}", env!("CARGO_PKG_VERSION")))?;
         return Ok(());

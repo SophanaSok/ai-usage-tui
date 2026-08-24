@@ -384,7 +384,11 @@ fn an_unknown_flag_is_an_error_not_a_panic() {
     let output = bin().arg("--not-a-real-flag").output().expect("run");
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("unknown option"), "{stderr}");
+    // Asserted on substance rather than phrasing: the hand-rolled parser said "unknown option",
+    // clap says "unexpected argument". What has to hold either way is that the offending flag is
+    // named, the user is pointed somewhere useful, and nothing panicked.
+    assert!(stderr.contains("--not-a-real-flag"), "{stderr}");
+    assert!(stderr.contains("--help"), "{stderr}");
     assert!(!stderr.contains("panicked"), "{stderr}");
 }
 
