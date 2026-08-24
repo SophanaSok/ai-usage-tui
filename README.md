@@ -56,8 +56,12 @@ cost. Local and explicitly free usage is excluded from budget spend.
 | `LOCAL` | Usage identified as running on a local endpoint |
 | `CLOUD` | Hosted or cloud-routed usage without authoritative cost |
 | `FREE` | Usage from a model explicitly identified as free |
-| `PAID` | Usage with a known billable cost |
-| `UNKNOWN` | Usage without enough metadata to classify or price |
+| `PAID` | Usage from a provider that bills per token — including aggregators and clouds (OpenRouter, Bedrock, Azure, Vertex). Whether a *rate* is known is reported separately, below |
+| `UNKNOWN` | Usage whose provider is not recognised as billing per token |
+
+`PAID` is about who bills, not about whether we have a figure. A paid row with no
+published rate keeps `cost` as unknown and counts against the pricing-coverage
+figure, so the gap is visible rather than hidden in `UNKNOWN`.
 
 Cost status is reported separately from category: `reported` comes from the
 provider, `calculated` or `estimated` comes from pricing data, `free` and

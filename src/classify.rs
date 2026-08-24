@@ -1,14 +1,28 @@
 use crate::model::{Category, CostStatus};
 
-/// Providers that bill directly and whose model ids we can resolve against the pricing table.
-/// Without this, first-party usage (Anthropic, OpenAI, Google, ...) falls through to
-/// `Unknown` and lands in the red UNKNOWN tile even after a cost has been estimated for it.
+/// Providers that bill per token. Matched as whole tokens of the provider id.
 ///
-/// Deliberately excludes aggregators and resellers (OpenRouter, Bedrock, Azure) — they do bill,
-/// but they namespace model ids (`anthropic/claude-sonnet-4.5`) in a form the pricing engine
-/// cannot resolve yet, so calling them PAID would promise a cost figure we cannot produce.
-/// Add them once provider-qualified model resolution lands.
-const FIRST_PARTY_PAID_PROVIDERS: &[&str] = &[
+/// Without this, billable usage falls through to `Unknown` and lands in the red UNKNOWN tile.
+/// Note what this does *not* do: it never causes a row to be priced. A row is priced when the
+/// pricing table can resolve it, and one that gets a figure is promoted to `Paid` regardless of
+/// what is listed here (`pricing::apply_estimated_pricing`). This list decides the category of
+/// rows we *cannot* price — the difference between "real spend, rate unknown" and "no idea what
+/// this is".
+///
+/// The aggregators were excluded until provider-qualified model resolution landed, on the
+/// grounds that calling them PAID promised a figure we could not produce. Both halves of that
+/// have changed: the pricing table now carries provider-qualified keys for them (106 for
+/// OpenRouter, 111 for Azure, 82 for Bedrock), and a PAID row with no rate is a state the tool
+/// already reports honestly — it counts against the pricing-coverage figure rather than being
+/// rendered as `$0.00`.
+///
+/// Kept as an explicit list rather than derived from the pricing table's key prefixes, which
+/// looked more principled and is not: `google` has no keys at all (LiteLLM spells it `gemini`
+/// and `vertex_ai`), `ollama` has 29 and is emphatically not billable, and LiteLLM's
+/// `fireworks_ai` does not match the `fireworks-ai` a collector records. Matching those up
+/// needs fuzzy token comparison, and a token like `ai` matches nearly anything.
+const PAID_PROVIDERS: &[&str] = &[
+    // First-party.
     "anthropic",
     "openai",
     "google",
@@ -18,6 +32,17 @@ const FIRST_PARTY_PAID_PROVIDERS: &[&str] = &[
     "deepseek",
     "xai",
     "groq",
+    // Aggregators, resellers and clouds. All bill per token, and all have provider-qualified
+    // rates in the bundled table.
+    "openrouter",
+    "bedrock",
+    "azure",
+    "vertex",
+    "fireworks",
+    "deepinfra",
+    "together",
+    "togetherai",
+    "perplexity",
 ];
 
 const LOCAL_HOSTS: &[&str] = &[
@@ -71,10 +96,9 @@ pub fn classify(provider: &str, model: &str) -> Category {
         return Category::Free;
     }
 
-    if FIRST_PARTY_PAID_PROVIDERS
-        .iter()
-        .any(|known| has_token(&p, known))
-    {
+    // After the local and free checks, deliberately: `ollama` has rates in the bundled pricing
+    // table and several hosts carry a provider name that also appears here.
+    if PAID_PROVIDERS.iter().any(|known| has_token(&p, known)) {
         return Category::Paid;
     }
 
@@ -117,6 +141,66 @@ pub fn cost_status_from_label(label: &str) -> CostStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The aggregators bill per token and the table can now price them.
+    #[test]
+    fn aggregators_and_clouds_are_billable_not_unknown() {
+        for (provider, model) in [
+            ("openrouter", "anthropic/claude-3.5-sonnet"),
+            (
+                "amazon-bedrock",
+                "anthropic.claude-sonnet-4-5-20250929-v1:0",
+            ),
+            ("azure", "gpt-4o"),
+            ("google-vertex", "gemini-2.5-pro"),
+            ("fireworks-ai", "llama-v3p1-70b-instruct"),
+            ("deepinfra", "meta-llama/Meta-Llama-3.1-70B-Instruct"),
+            ("togetherai", "meta-llama/Llama-3-70b-chat-hf"),
+            ("perplexity", "sonar"),
+        ] {
+            assert_eq!(
+                classify(provider, model),
+                Category::Paid,
+                "{provider} should be billable"
+            );
+        }
+    }
+
+    /// The ordering that keeps the previous line honest.
+    ///
+    /// `ollama` has 29 provider-qualified entries in the bundled pricing table, so anything that
+    /// decided billability from the table alone would call a local model paid. The local and free
+    /// checks run first, and this fails if that order is ever changed.
+    #[test]
+    fn local_and_free_still_win_over_the_paid_list() {
+        assert_eq!(classify("ollama", "qwen3-coder"), Category::Local);
+        assert_eq!(classify("openai", "localhost-proxy"), Category::Local);
+        assert_eq!(
+            classify("openrouter", "deepseek-v4-flash-free"),
+            Category::Free
+        );
+        // `:cloud` is decided before everything else.
+        assert_eq!(classify("ollama", "glm-5.2:cloud"), Category::Cloud);
+    }
+
+    /// Token matching, not substring: the reason `cloudflare` is not "cloud" and `freeform` is
+    /// not "free".
+    #[test]
+    fn provider_names_are_matched_as_whole_tokens() {
+        assert_ne!(classify("cloudflare", "some-model"), Category::Cloud);
+        assert_ne!(classify("someprovider", "freeform-model"), Category::Free);
+        // A provider that merely contains a listed name as a substring is not a match.
+        assert_eq!(
+            classify("notopenairelated", "some-model"),
+            Category::Unknown
+        );
+    }
+
+    /// Nothing here should make a row *priced*; that is the pricing engine's decision.
+    #[test]
+    fn an_unrecognised_provider_is_still_unknown() {
+        assert_eq!(classify("some-startup", "their-model"), Category::Unknown);
+    }
 
     /// Every `CostStatus`, so the round-trip test below fails to compile if a variant is added
     /// without being considered here.
@@ -177,7 +261,15 @@ mod tests {
 
     #[test]
     fn unknown_models_are_not_free() {
-        assert_eq!(classify("openrouter", "some-model"), Category::Unknown);
+        // The point of this test is that an unrecognised *model* is not free. It used to assert
+        // `openrouter` + unknown model was `Unknown`, which encoded the old policy of excluding
+        // aggregators from the paid list; that policy has changed deliberately. What must not
+        // change is that an unrecognised model never becomes FREE, which would exclude it from
+        // every cost total.
+        assert_ne!(classify("openrouter", "some-model"), Category::Free);
+        assert_ne!(classify("some-startup", "some-model"), Category::Free);
+        // OpenRouter bills, so a model we cannot price there is billable-with-unknown-cost.
+        assert_eq!(classify("openrouter", "some-model"), Category::Paid);
     }
 
     #[test]
