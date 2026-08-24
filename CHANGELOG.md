@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 0.5.0 - 2026-08-23
+
 ### Added
 
 - **`--omarchy-record` publishes usage and budgets to Omarchy's agents panel.** A one-shot
