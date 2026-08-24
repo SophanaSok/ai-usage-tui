@@ -23,6 +23,12 @@ class AiUsageTui < Formula
       url "https://github.com/SophanaSok/ai-usage-tui/releases/download/__TAG__/ai-usage-tui-__TAG__-x86_64-linux.tar.gz"
       sha256 "__LINUX_SHA256__"
     end
+    # The aarch64-linux tarball has been built and published since v0.2.0; the formula simply
+    # never offered it, so `brew install` on an ARM Linux box fell through to no bottle at all.
+    on_arm do
+      url "https://github.com/SophanaSok/ai-usage-tui/releases/download/__TAG__/ai-usage-tui-__TAG__-aarch64-linux.tar.gz"
+      sha256 "__LINUX_ARM_SHA256__"
+    end
   end
 
   def install

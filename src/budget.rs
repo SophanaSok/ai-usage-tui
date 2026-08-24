@@ -91,6 +91,7 @@ impl Alert {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BudgetEntry {
     pub scope: BudgetScopeKind,
     pub name: Option<String>,
@@ -101,6 +102,7 @@ pub struct BudgetEntry {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BudgetsConfig {
     pub webhook: Option<String>,
     /// Absent means no budgets, not a malformed config. Configuring only a webhook — to be

@@ -13,17 +13,14 @@ use ai_usage_tui::{
     budget::{AlertDispatcher, BudgetEngine},
     cli::{parse_cli, print_help},
     collector::{
-        background::{
-            ClaudeCodeCollector, CodexCollector, Collector, CollectorHandle, JournalCollector,
-            OpenCodeCollector, ZenPricingCollector,
-        },
+        background::{Collector, CollectorHandle},
         journal::{record_ollama, record_routing},
         load_usage,
         pricing_refresh::refresh_pricing,
+        registry,
         zen::refresh_zen_catalog,
         SourceRoots,
     },
-    config::CollectorConfig,
     config::{apply_config, ConfigFile},
     export::{csv_field, print_once},
     helpers::{is_broken_pipe, print_line},
@@ -49,7 +46,11 @@ fn dispatch() -> Result<()> {
         print_line(&format!("ai-usage-tui {}", env!("CARGO_PKG_VERSION")))?;
         return Ok(());
     }
-    if parsed_cli.refresh_zen {
+    let (cli, config) = apply_config(parsed_cli)?;
+    // Below `apply_config`, not above it: these two used to run first, which meant `--config`
+    // was parsed, accepted and then ignored for them alone -- a mistyped path was an error for
+    // every other invocation and silently fine for these.
+    if cli.refresh_zen {
         let path = refresh_zen_catalog()?;
         print_line(&format!(
             "Cached OpenCode Zen catalog at {}",
@@ -57,7 +58,7 @@ fn dispatch() -> Result<()> {
         ))?;
         return Ok(());
     }
-    if parsed_cli.refresh_pricing {
+    if cli.refresh_pricing {
         let path = refresh_pricing()?;
         print_line(&format!(
             "Refreshed Zen pricing table at {}",
@@ -65,13 +66,15 @@ fn dispatch() -> Result<()> {
         ))?;
         return Ok(());
     }
-    let (cli, config) = apply_config(parsed_cli)?;
     if let Some(path) = ai_usage_tui::logging::log_path() {
         ai_usage_tui::logging::info(
             "main",
             &format!("ai-usage-tui {} starting", env!("CARGO_PKG_VERSION")),
         );
         eprintln!("logging to {}", path.display());
+    }
+    if cli.doctor {
+        return doctor(&cli, &config);
     }
     if cli.record_ollama {
         let path = cli
@@ -121,81 +124,29 @@ fn build_collectors(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Option
         .journal_path
         .clone()
         .or_else(ai_usage_tui::utils::journal_path)?;
+    let roots = SourceRoots::from_cli(cli, journal);
 
-    let collectors_cfg = config.collectors.as_ref();
-    let mut collectors: Vec<Box<dyn Collector>> = Vec::new();
-    // Omarchy's records, when present, name the plan each agent runs on; that is a billing
-    // signal the collectors consult without touching any credential.
-    let omarchy_dir = SourceRoots::from_cli(cli, journal.clone())
-        .omarchy_usage_dir()
-        .filter(|_| cli.limits_enabled);
-
-    let opencode_cfg = collector_cfg(collectors_cfg, |c| c.opencode.as_ref());
-    if opencode_cfg.enabled.unwrap_or(true) {
-        collectors.push(Box::new(OpenCodeCollector {
-            db_path: cli.db_path.clone(),
-            interval_secs: opencode_cfg.interval.unwrap_or(30),
-            cursor: Default::default(),
-        }));
-    }
-
-    // Claude Code's own session logs: the largest source of Anthropic usage on most machines,
-    // and invisible to the OpenCode collector.
-    let claude_cfg = collector_cfg(collectors_cfg, |c| c.claude_code.as_ref());
-    if claude_cfg.enabled.unwrap_or(true) {
-        collectors.push(Box::new(ClaudeCodeCollector {
-            root: cli.claude_dir.clone(),
-            interval_secs: claude_cfg.interval.unwrap_or(30),
-            offsets: Default::default(),
-            billing: cli.claude_billing,
-            claude_json: cli.claude_json.clone(),
-            omarchy_dir: omarchy_dir.clone(),
-            decision: None,
-        }));
-    }
-
-    // Codex CLI rollouts: the OpenAI counterpart of the Claude Code logs, likewise invisible
-    // to the OpenCode collector.
-    let codex_cfg = collector_cfg(collectors_cfg, |c| c.codex.as_ref());
-    if codex_cfg.enabled.unwrap_or(true) {
-        collectors.push(Box::new(CodexCollector {
-            root: cli.codex_dir.clone(),
-            interval_secs: codex_cfg.interval.unwrap_or(30),
-            cursors: Default::default(),
-            billing: cli.codex_billing,
-            omarchy_dir: omarchy_dir.clone(),
-            decision: None,
-        }));
-    }
-
-    let journal_cfg = collector_cfg(collectors_cfg, |c| c.journal.as_ref());
-    if journal_cfg.enabled.unwrap_or(true) {
-        collectors.push(Box::new(JournalCollector {
-            journal_path: journal,
-            interval_secs: journal_cfg.interval.unwrap_or(60),
-        }));
-    }
-
-    let zen_cfg = collector_cfg(collectors_cfg, |c| c.zen_pricing.as_ref());
-    if zen_cfg.enabled.unwrap_or(false) {
-        collectors.push(Box::new(ZenPricingCollector {
-            interval_secs: zen_cfg.interval.unwrap_or(3600),
-        }));
-    }
+    // One list, iterated. This used to be five near-identical blocks that had to be kept in step
+    // by hand with the five reads in `collector::load_usage`; see `collector::registry`.
+    let collectors: Vec<Box<dyn Collector>> = registry::SOURCES
+        .iter()
+        .filter(|spec| roots.is_enabled(spec))
+        .map(|spec| {
+            let interval = config
+                .collectors
+                .as_ref()
+                .and_then(|collectors| collectors.get(spec.id))
+                .and_then(|cfg| cfg.interval)
+                .unwrap_or(spec.default_interval);
+            (spec.collector)(&roots, interval)
+        })
+        .collect();
 
     if collectors.is_empty() {
         None
     } else {
         Some(CollectorHandle::spawn(collectors))
     }
-}
-
-/// Per-collector settings, defaulted when the section is absent.
-fn collector_cfg(
-    collectors: Option<&ai_usage_tui::config::CollectorsConfig>,
-    pick: impl Fn(&ai_usage_tui::config::CollectorsConfig) -> Option<&CollectorConfig>,
-) -> CollectorConfig {
-    collectors.and_then(pick).cloned().unwrap_or_default()
 }
 
 fn run_tui(
@@ -386,6 +337,119 @@ fn write_omarchy_records(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> R
         ))?;
     }
     Ok(())
+}
+
+/// Report what each source resolved to, so "the dashboard is empty" is a question with an answer.
+///
+/// Every line comes from the same traversal the dashboard and the exporters use
+/// (`collector::diagnose`), so this can never describe a set of sources the rest of the tool
+/// does not actually read. It reads exactly what a normal collection reads, and writes nothing.
+fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    let _ = writeln!(out, "ai-usage-tui {}", env!("CARGO_PKG_VERSION"));
+
+    let journal = cli
+        .journal_path
+        .clone()
+        .or_else(ai_usage_tui::utils::journal_path)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "could not determine a home directory; set AI_USAGE_JOURNAL_PATH or pass --journal"
+            )
+        })?;
+    let roots = SourceRoots::from_cli(cli, journal);
+    let reports = ai_usage_tui::collector::diagnose(&roots)?;
+
+    let _ = writeln!(out, "\nSOURCES");
+    let mut found_any = false;
+    for report in &reports {
+        let mark = if report.present { "found " } else { "absent" };
+        let where_ = report
+            .path
+            .as_deref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<no home directory>".to_string());
+        let rows = if report.present {
+            format!("{:>7} rows", report.rows)
+        } else {
+            " ".repeat(12)
+        };
+        found_any |= report.rows > 0;
+        let _ = writeln!(out, "  {:<12} {} {}  {}", report.id, mark, rows, where_);
+        // Only where there is something to bill: on a machine without Codex, "billing unknown"
+        // is noise about a source that is not there.
+        if report.present {
+            if let Some(detail) = &report.detail {
+                let _ = writeln!(out, "  {:<12} {:<19}  {}", "", "", detail);
+            }
+        }
+        if !report.present {
+            if let Some(hint) = absence_hint(report.id) {
+                let _ = writeln!(out, "  {:<12} {:<19}  {}", "", "", hint);
+            }
+        }
+    }
+
+    let _ = writeln!(out, "\nCONFIG");
+    let config_path = cli
+        .config_path
+        .clone()
+        .or_else(ai_usage_tui::config::config_path);
+    match &config_path {
+        Some(path) if path.exists() => {
+            let _ = writeln!(out, "  loaded       {}", path.display());
+        }
+        Some(path) => {
+            let _ = writeln!(out, "  none         {} (not present)", path.display());
+            let _ = writeln!(
+                out,
+                "               copy examples/config.toml there to configure budgets and collectors"
+            );
+        }
+        None => {
+            let _ = writeln!(out, "  none         <no config directory>");
+        }
+    }
+    let budgets = config.budgets.as_ref().map_or(0, |b| b.entry.len());
+    let _ = writeln!(out, "  budgets      {budgets} configured");
+    match ai_usage_tui::logging::log_path() {
+        Some(path) => {
+            let _ = writeln!(out, "  log          {}", path.display());
+        }
+        None => {
+            let _ = writeln!(out, "  log          off (set AI_USAGE_LOG=1 or a path)");
+        }
+    }
+
+    if !found_any {
+        let _ = writeln!(
+            out,
+            "\nNo usage was found in any source. That is the expected result on a machine that has\n\
+             not yet run OpenCode, Claude Code, Codex or a journaled Ollama request -- the paths\n\
+             above are where each one would be read from."
+        );
+    }
+
+    print_line(out.trim_end())?;
+    Ok(())
+}
+
+/// How to point a source somewhere else, printed only when it was not where we looked.
+fn absence_hint(id: &str) -> Option<&'static str> {
+    match id {
+        "opencode" => Some("point elsewhere with --db PATH or OPENCODE_DB_PATH"),
+        "claude_code" => Some("point elsewhere with --claude-dir PATH or CLAUDE_PROJECTS_DIR"),
+        "codex" => Some("point elsewhere with --codex-dir PATH or CODEX_HOME"),
+        "journal" => {
+            Some("written by --record-ollama and --record-routing; nothing to do if unused")
+        }
+        "zen_pricing" => {
+            Some("optional; populate with --refresh-zen (pricing still works without it)")
+        }
+        _ => None,
+    }
 }
 
 /// Budget breach as an error, so the non-zero exit runs destructors like any other failure.

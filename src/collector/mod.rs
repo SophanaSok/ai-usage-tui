@@ -5,6 +5,7 @@ pub mod codex;
 pub mod journal;
 pub mod opencode;
 pub mod pricing_refresh;
+pub mod registry;
 pub mod zen;
 
 use std::collections::HashSet;
@@ -14,11 +15,7 @@ use anyhow::Result;
 
 use crate::cli::Cli;
 use crate::collector::billing::{detect, BillingSetting, Decision, Signals};
-use crate::collector::claude_code::{config_json_path, load_claude_code, Offsets};
-use crate::collector::codex::{load_codex, Cursors};
-use crate::collector::journal::load_journal;
-use crate::collector::opencode::load_opencode;
-use crate::collector::zen::zen_cache_path;
+use crate::collector::claude_code::config_json_path;
 use crate::model::Usage;
 use crate::pricing::{apply_estimated_pricing, PricingEngine};
 
@@ -42,6 +39,8 @@ pub struct SourceRoots {
     pub omarchy_dir: Option<PathBuf>,
     /// Whether to read those records at all. On by default: an absent directory is idle.
     pub limits_enabled: bool,
+    /// `[collectors.<id>] enabled` overrides, by source id. Absent means the registry default.
+    pub source_enabled: std::collections::BTreeMap<String, bool>,
 }
 
 impl Default for SourceRoots {
@@ -56,6 +55,7 @@ impl Default for SourceRoots {
             codex_billing: BillingSetting::Auto,
             omarchy_dir: None,
             limits_enabled: true,
+            source_enabled: Default::default(),
         }
     }
 }
@@ -73,6 +73,21 @@ impl SourceRoots {
         self.omarchy_dir
             .clone()
             .or_else(crate::utils::omarchy_usage_dir)
+    }
+
+    /// Whether a source is collected at all, from `[collectors.<id>] enabled`.
+    pub fn is_enabled(&self, spec: &registry::SourceSpec) -> bool {
+        self.source_enabled
+            .get(spec.id)
+            .copied()
+            .unwrap_or(spec.default_enabled)
+    }
+
+    /// Omarchy's records directory *as a billing signal*: the directory in force, unless the
+    /// reader is switched off. `main.rs` and every collector construction used to spell this
+    /// `.omarchy_usage_dir().filter(|_| cli.limits_enabled)` separately.
+    pub fn omarchy_signal_dir(&self) -> Option<PathBuf> {
+        self.omarchy_usage_dir().filter(|_| self.limits_enabled)
     }
 
     /// The plan label Omarchy already derived for an agent, when its record is here.
@@ -95,6 +110,7 @@ impl SourceRoots {
             codex_billing: cli.codex_billing,
             omarchy_dir: cli.omarchy_dir.clone(),
             limits_enabled: cli.limits_enabled,
+            source_enabled: cli.source_enabled.clone(),
         }
     }
 
@@ -135,58 +151,100 @@ impl SourceRoots {
     }
 }
 
+/// One source's contribution to a collection pass: what it found, and where.
+///
+/// `load_usage` merges these into one list and one status line; `diagnose` prints them one per
+/// row. Both walk the same traversal, so the dashboard and `--doctor` can never disagree about
+/// which sources exist or where each was looked for.
+#[derive(Clone, Debug)]
+pub struct SourceReport {
+    /// Stable id, matching the `[collectors.<id>]` config table where there is one.
+    pub id: &'static str,
+    /// Where this source was read from, when it resolves to a single path.
+    pub path: Option<PathBuf>,
+    /// The one-line status this source already reports for the dashboard header.
+    pub status: String,
+    /// Rows this source produced, before cross-source deduplication.
+    pub rows: usize,
+    /// Whether anything was there to read at all. A source that is simply absent is a normal
+    /// state on most machines, not a fault.
+    pub present: bool,
+    /// Context a reader needs to interpret the rows -- currently the billing decision.
+    pub detail: Option<String>,
+}
+
+/// Read every source once, keeping each one's rows and report separate.
+///
+/// One traversal of [`registry::SOURCES`], so the dashboard, the exporters and `--doctor` can
+/// never disagree about which sources exist or where each was looked for.
+fn collect_sources(roots: &SourceRoots) -> Result<Vec<(SourceReport, Vec<Usage>)>> {
+    registry::SOURCES
+        .iter()
+        .map(|spec| {
+            // Only a row-producing source can be switched off here; see `contributes_rows`.
+            if spec.contributes_rows && !roots.is_enabled(spec) {
+                // Reported rather than skipped: "disabled" is the answer `--doctor` should give
+                // when a source is configured off, and the header should not silently lose it.
+                return Ok((
+                    SourceReport {
+                        id: spec.id,
+                        path: None,
+                        status: format!("{}: disabled", spec.id),
+                        rows: 0,
+                        present: false,
+                        detail: Some(format!(
+                            "switched off by [collectors.{}] enabled = false",
+                            spec.id
+                        )),
+                    },
+                    Vec::new(),
+                ));
+            }
+            (spec.load)(roots)
+        })
+        .collect()
+}
+
+/// Per-source report without merging, for `--doctor`.
+pub fn diagnose(roots: &SourceRoots) -> Result<Vec<SourceReport>> {
+    Ok(collect_sources(roots)?
+        .into_iter()
+        .map(|(report, _)| report)
+        .collect())
+}
+
 /// One-shot read of every source.
 ///
 /// Production passes the roots resolved from the CLI and config; tests pass explicit paths so
 /// they never read the developer's real transcripts or config.
 pub fn load_usage(roots: &SourceRoots) -> Result<(Vec<Usage>, String)> {
-    let (mut usages, opencode_source) = load_opencode(roots.db_path.as_deref())?;
-    let journal_usages = load_journal(&roots.journal)?;
-    let journal_source = if roots.journal.exists() {
-        format!("journal: {}", roots.journal.display())
-    } else {
-        "journal: not initialized".to_string()
-    };
-    let zen_source = match zen_cache_path() {
-        Some(path) if path.exists() => {
-            format!("Zen catalog: cached (informational) at {}", path.display())
-        }
-        _ => "Zen catalog: not cached".to_string(),
-    };
-    let decision = roots.claude_decision();
-    let (claude_usages, claude_source) =
-        load_claude_code(roots.claude_dir.as_deref(), &mut Offsets::new(), &decision)
-            .unwrap_or_else(|error| (Vec::new(), format!("Claude Code: unavailable ({})", error)));
+    let sources = collect_sources(roots)?;
+    let status = sources
+        .iter()
+        .map(|(report, _)| report.status.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ");
 
-    let codex_decision = roots.codex_decision();
-    let (codex_usages, codex_source) = load_codex(
-        roots.codex_dir.as_deref(),
-        &mut Cursors::new(),
-        &codex_decision,
-    )
-    .unwrap_or_else(|error| (Vec::new(), format!("Codex: unavailable ({})", error)));
-
+    // Deduplication is *cross-source* only. OpenCode is the base list and every one of its rows
+    // is kept: an OpenCode message without an `id` falls back to the shape key, and an agent
+    // loop routinely emits distinct requests with byte-identical counts in the same second --
+    // deduplicating those against each other under-reports real spend (CONTRIBUTING invariant
+    // 3). Later sources are matched against what is already there, in source order.
+    let mut sources = sources.into_iter();
+    let mut usages: Vec<Usage> = sources.next().map(|(_, rows)| rows).unwrap_or_default();
     let mut seen: HashSet<UsageKey> = usages.iter().map(usage_key).collect();
-    for extra in journal_usages
-        .into_iter()
-        .chain(claude_usages)
-        .chain(codex_usages)
-    {
-        if seen.insert(usage_key(&extra)) {
-            usages.push(extra);
+    for (_, rows) in sources {
+        for usage in rows {
+            if seen.insert(usage_key(&usage)) {
+                usages.push(usage);
+            }
         }
     }
 
     let engine = PricingEngine::load();
     apply_estimated_pricing(&mut usages, &engine);
 
-    Ok((
-        usages,
-        format!(
-            "{} | {} | {} | {} | {}",
-            opencode_source, claude_source, codex_source, journal_source, zen_source
-        ),
-    ))
+    Ok((usages, status))
 }
 
 /// Identity of a usage event for deduplication.

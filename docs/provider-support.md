@@ -114,6 +114,48 @@ spend `--check-budgets` reports (all sources), and `[omarchy] balance = true` dr
 (`balance_budget`, default `global/monthly`) as the panel's prepaid ledger. Nothing is written
 unless the flag is given.
 
+## Billing detection
+
+Claude Code and Codex both write identical transcripts whether they run on an API key or on a
+subscription, and nothing on a usage line says which. Priced at list rates, a plan's traffic reads
+as real spend and trips budgets on money that was never charged — so the collector decides how the
+account pays *before* pricing runs.
+
+### Claude Code
+
+Claude Code writes identical transcripts whether it runs on an API
+key or a Pro/Max plan, and nothing on a usage line says which. Priced at list
+rates, a subscription's traffic reads as real spend and trips budgets on money
+that was never charged, so the collector decides how the account pays before
+pricing runs. In order: an explicit `billing` setting; then, if any of
+`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, or
+`CLAUDE_CODE_USE_VERTEX` is set in the environment, per-token; then, if Claude
+Code's own `~/.claude.json` has an `oauthAccount` block, subscription, with the
+plan named from its rate-limit tier (`default_claude_max_20x` → "Max 20x");
+then the plan label in Omarchy's record for the agent, if Omarchy's agents
+panel is present (see [Subscription limits](omarchy.md#subscription-limits)),
+subscription; otherwise per-token, with a visible "billing unknown" hint. Per-token rows are
+priced `estimated` as before. Subscription rows carry `cost_status = quota`,
+`cost = null`, and the list-rate figure as `api_equivalent_cost`.
+
+### Codex CLI
+
+As with Claude Code, a rollout looks the same on an API key and on
+a ChatGPT plan. In order: an explicit `billing` setting; then, if
+`OPENAI_API_KEY` or `CODEX_API_KEY` is set in the environment, per-token;
+then the plan label in Omarchy's record for the agent, if Omarchy's agents
+panel is present, subscription; otherwise per-token, with a visible "billing
+unknown" hint. No Codex config
+document is read — `~/.codex/auth.json` is a credential file and is never
+opened — so `config_json` is rejected under `[collectors.codex]`. Force the
+answer with `[collectors.codex] billing = "subscription"` or `"api"` (default
+`"auto"`), or `--codex-billing MODE`. The decision is printed on the source
+line: `Codex: ~/.codex (N sessions) · api billing` or `· billing unknown — set
+[collectors.codex] billing`. The same line appends `· N token events disagree
+with running totals` when the CLI's cumulative counter did not advance by a
+call's own figure, so a change in what the CLI emits is visible rather than a
+silent under-count.
+
 ## Background Collectors
 
 - OpenCode collector: polls OpenCode DB every 30s (configurable), resuming from a

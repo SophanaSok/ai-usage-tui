@@ -8,14 +8,34 @@ use std::collections::BTreeSet;
 
 const README: &str = include_str!("../README.md");
 const CLI_SOURCE: &str = include_str!("../src/cli.rs");
-/// Every file that reads the environment. A new `env::var` elsewhere must be listed here.
-const ENV_SOURCES: &[&str] = &[
-    include_str!("../src/utils.rs"),
-    include_str!("../src/logging.rs"),
-    include_str!("../src/collector/claude_code.rs"),
-    include_str!("../src/collector/codex.rs"),
-    include_str!("../src/collector/billing.rs"),
-];
+/// Every `.rs` file under `src/`, walked at test time.
+///
+/// This was a hand-maintained list of five `include_str!`s with a comment asking the next person
+/// to remember. A new collector reading `env::var("YOURS_HOME")` -- exactly what `codex.rs` does
+/// for `CODEX_HOME` -- was invisible to the check that exists to catch it, until someone thought
+/// to add the file. Walking the tree cannot be forgotten.
+fn env_sources() -> Vec<String> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<String>) {
+        let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read {dir:?}: {e}"));
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(
+                    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}")),
+                );
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut out,
+    );
+    assert!(out.len() >= 20, "only {} source files walked", out.len());
+    out
+}
 /// Read by the code but deliberately not rows in the README table: the Windows stand-ins for
 /// `HOME` and the XDG directories are described in the sentence under the table, and the
 /// agents' own API-key variables are documented where billing detection is.
@@ -98,6 +118,63 @@ fn readme_cli_table_matches_the_parser() {
     );
 }
 
+/// `--help` must offer the same long flags the parser accepts and the README documents.
+///
+/// `readme_cli_table_matches_the_parser` compared two of the three lists and left the help text
+/// out, which is how a stray `(default: ~/.claude/projects)` line sat orphaned under
+/// `--omarchy-record` -- inherited from a `--claude-dir` entry three flags above it -- through
+/// several releases. Three lists, one comparison.
+#[test]
+fn help_text_lists_every_flag_the_parser_accepts() {
+    let helped = help_long_flags();
+    let parsed = parser_long_flags();
+
+    let unhelped: Vec<_> = parsed.difference(&helped).collect();
+    let phantom: Vec<_> = helped.difference(&parsed).collect();
+    assert!(
+        unhelped.is_empty() && phantom.is_empty(),
+        "`--help` and src/cli.rs `parse_cli` disagree.\n\
+         parsed by cli.rs but missing from OPTIONS in print_help: {unhelped:?}\n\
+         listed in print_help but not parsed by cli.rs: {phantom:?}"
+    );
+    assert!(
+        helped.len() >= 20,
+        "only {} flags found in the help text; the OPTIONS marker may have moved",
+        helped.len()
+    );
+}
+
+/// Long flags declared in `print_help`'s `OPTIONS:` block.
+///
+/// A flag is only counted where it is *declared* -- the first token of its line -- so a flag
+/// named inside another flag's description is not mistaken for an entry of its own, and the
+/// wrapped continuation lines are skipped.
+fn help_long_flags() -> BTreeSet<String> {
+    let start = CLI_SOURCE
+        .find("OPTIONS:")
+        .expect("print_help has an OPTIONS: block");
+    let section = &CLI_SOURCE[start..];
+    let end = section
+        .find("ENVIRONMENT:")
+        .expect("OPTIONS is followed by ENVIRONMENT");
+    let mut flags = BTreeSet::new();
+    for line in section[..end].lines() {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with('-') {
+            continue;
+        }
+        for token in trimmed.split([' ', ',']) {
+            if let Some(flag) = token.strip_prefix("--") {
+                if !flag.is_empty() {
+                    flags.insert(format!("--{flag}"));
+                }
+                break;
+            }
+        }
+    }
+    flags
+}
+
 /// Backtick-quoted `--flag` tokens inside the "CLI reference" table, up to the environment
 /// variables that follow it. Tolerant of column layout: only the token matters.
 fn readme_cli_flags() -> BTreeSet<String> {
@@ -142,6 +219,54 @@ fn parser_long_flags() -> BTreeSet<String> {
     flags
 }
 
+/// The README's panel table and `ui::keys::BINDINGS` must offer the same panel keys.
+///
+/// The bindings lived in four places -- the event loop, the `?` overlay, `--help` and this table
+/// -- with nothing keeping them in step. The first three read one table now; this is what keeps
+/// the fourth honest.
+#[test]
+fn readme_panel_table_matches_the_key_bindings() {
+    let documented = readme_panel_keys();
+    let bound: BTreeSet<char> = ai_usage_tui::ui::keys::panel_keys()
+        .map(|(key, _)| key)
+        .collect();
+
+    let undocumented: Vec<_> = bound.difference(&documented).collect();
+    let phantom: Vec<_> = documented.difference(&bound).collect();
+    assert!(
+        undocumented.is_empty() && phantom.is_empty(),
+        "README panel table and src/ui/keys.rs disagree.\n\
+         bound in keys.rs but missing from the README table: {undocumented:?}\n\
+         in the README table but not bound: {phantom:?}"
+    );
+    assert!(
+        documented.len() >= 5,
+        "only {} panel keys found in the README; the table may have moved",
+        documented.len()
+    );
+}
+
+/// Single-character backtick cells in the README's panel table — `| Budgets | `b` | ... |`.
+fn readme_panel_keys() -> BTreeSet<char> {
+    let mut keys = BTreeSet::new();
+    for line in README.lines().filter(|l| l.starts_with("| ")) {
+        let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+        // A panel row is `| Name | `k` | description |`.
+        if cells.len() >= 4 {
+            let cell = cells[2];
+            if let Some(inner) = cell.strip_prefix('`').and_then(|c| c.strip_suffix('`')) {
+                let mut chars = inner.chars();
+                if let (Some(c), None) = (chars.next(), chars.next()) {
+                    if c.is_ascii_alphabetic() {
+                        keys.insert(c);
+                    }
+                }
+            }
+        }
+    }
+    keys
+}
+
 /// The README's environment-variable table must name every variable the code reads, apart from
 /// the documented exceptions, and nothing the code does not read.
 #[test]
@@ -159,26 +284,30 @@ fn readme_env_table_matches_the_code() {
         .map(str::to_string)
         .collect();
 
+    // Every shape in which this codebase names an environment variable. `utils.rs` reads through
+    // an injected `Env` lookup (so its tests need not mutate the process's environment), which is
+    // why `non_empty(env, "…")` is here alongside the direct `std::env` calls. This guard caught
+    // that refactor: the variables were still read, and the old two-prefix scanner reported every
+    // one of them as documented-but-never-read.
+    const CALL_SHAPES: &[&str] = &["var_os(\"", "var(\"", "non_empty(env, \""];
     let mut read: BTreeSet<String> = BTreeSet::new();
-    for source in ENV_SOURCES {
-        let mut rest = *source;
-        while let Some(at) = rest.find("var") {
-            let after = &rest[at..];
-            let literal = after
-                .strip_prefix("var_os(\"")
-                .or_else(|| after.strip_prefix("var(\""));
-            if let Some(literal) = literal {
-                let name: String = literal
+    for source in &env_sources() {
+        for shape in CALL_SHAPES {
+            let mut rest = source.as_str();
+            while let Some(at) = rest.find(shape) {
+                let after = &rest[at + shape.len()..];
+                let name: String = after
                     .chars()
                     .take_while(|c| c.is_ascii_uppercase() || *c == '_')
                     .collect();
                 if !name.is_empty() {
                     read.insert(name);
                 }
+                rest = after;
             }
-            rest = &rest[at + 3..];
         }
     }
+
     // The detector names its variables in a list rather than reading them one by one.
     for name in ENV_NOT_IN_TABLE {
         read.remove(*name);

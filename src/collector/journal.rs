@@ -5,10 +5,17 @@ use rusqlite::{params, Connection, OpenFlags};
 use serde_json::Value;
 
 use crate::classify::{category_from_label, classify, cost_status_from_label};
+use crate::collector::background::Collector;
 use crate::collector::opencode::parse_created_at;
 use crate::helpers::{number, string};
 use crate::model::{Category, CostStatus, RoutingEvent, Usage};
 use crate::utils::now;
+use std::path::PathBuf;
+
+/// This source's canonical id: the `Collector::name()` it reports, the
+/// `[collectors.<id>]` table that configures it, and its key in the source registry.
+/// One constant so those can never drift apart.
+pub const ID: &str = "journal";
 
 pub fn load_journal(path: &Path) -> Result<Vec<Usage>> {
     if !path.exists() {
@@ -356,4 +363,55 @@ pub fn record_routing(path: &Path) -> Result<()> {
         path.display()
     );
     Ok(())
+}
+
+pub struct JournalCollector {
+    pub journal_path: PathBuf,
+    pub interval_secs: u64,
+}
+
+impl Collector for JournalCollector {
+    fn name(&self) -> &str {
+        ID
+    }
+    fn interval(&self) -> Duration {
+        Duration::from_secs(self.interval_secs)
+    }
+    fn poll(&mut self) -> Result<Vec<Usage>> {
+        load_journal(&self.journal_path)
+    }
+}
+
+/// One-shot read for the source registry.
+pub(crate) fn read(
+    roots: &crate::collector::SourceRoots,
+) -> crate::collector::registry::SourceRead {
+    let usages = load_journal(&roots.journal)?;
+    let present = roots.journal.exists();
+    Ok((
+        crate::collector::SourceReport {
+            id: ID,
+            present,
+            path: Some(roots.journal.clone()),
+            rows: usages.len(),
+            status: if present {
+                format!("journal: {}", roots.journal.display())
+            } else {
+                "journal: not initialized".to_string()
+            },
+            detail: None,
+        },
+        usages,
+    ))
+}
+
+/// A background collector for the same source.
+pub(crate) fn collector(
+    roots: &crate::collector::SourceRoots,
+    interval_secs: u64,
+) -> Box<dyn Collector> {
+    Box::new(JournalCollector {
+        journal_path: roots.journal.clone(),
+        interval_secs,
+    })
 }

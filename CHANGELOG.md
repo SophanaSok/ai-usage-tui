@@ -2,6 +2,184 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Key bindings are defined once, in `src/ui/keys.rs`.** They existed in five places — the event
+  loop's `match` arms, the `?` overlay's `ROWS`, the `KEYS` block in `--help`, the README's panel
+  table, and prose in `AGENTS.md` — with nothing keeping them in step, so adding a panel meant
+  remembering five edits. The first three now read one table, `tests/docs.rs` fails the build when
+  the README's table disagrees with it, and a test fails if a `Panel` variant has no key at all
+  (a panel the user cannot open). `AGENTS.md` points at the table instead of restating it.
+
+- **`src/ui/tests.rs` (1837 lines) is now `src/ui/tests/`, one file per area.** It was the only
+  home for the projects, coverage, time-series, burn, sessions, routing, breakdown and limits
+  panels plus the SVG renderer and the key reference, with nothing but reading order separating
+  them. The shared fixtures stay in `mod.rs`; the largest test file is now 218 lines.
+
+- **The path resolvers in `src/utils.rs` take an injected environment.** Their tests called
+  `std::env::set_var`, which mutates state every other test in the process shares — Cargo runs
+  tests as threads, not processes — and which is `unsafe` from edition 2024 onward. They now pass
+  a fixed lookup, mirroring how `collector::billing::Signals` already injects its environment, and
+  gained coverage for the Windows `USERPROFILE`/`HOMEDRIVE` fallbacks and the XDG precedence rules.
+  One behaviour change falls out: a variable that is *set but empty* (`OPENCODE_DB_PATH=`) now
+  falls back to the default instead of resolving to an empty path that opens nothing.
+
+- **CI gained a docs job and its advisory check got faster and more timely.** `cargo doc` with
+  warnings denied, plus a relative-link check across every Markdown file — the kind of breakage
+  a doc-only PR causes and nothing caught. `cargo-deny` now runs from a prebuilt action instead
+  of a from-source `cargo install` on every run, and on a weekly schedule as well as on push: an
+  advisory published against an unchanged dependency produces neither a push nor a PR, so it was
+  previously never noticed.
+
+- **One source registry, replacing two hand-maintained wirings.** The set of data sources was
+  wired independently in `collector::load_usage` (used by `--json`, `--csv`, `--check-budgets`,
+  `--omarchy-record` and the dashboard's own refresh) and in `main::build_collectors` (background
+  polling). `CONTRIBUTING.md` documented only the second, so a provider added by following it
+  appeared in the dashboard and was silently absent from every export. Both now iterate
+  `collector::registry::SOURCES`, and a test fails the build when a source is reachable from one
+  path and not the other.
+
+  Adding a provider is a module exposing `ID`, `read` and `collector`, plus one registry entry —
+  down from edits in seven files. The five per-source collector adapters move out of
+  `background.rs` (now purely the supervisor) and into the modules they wrap, which is what
+  `CONTRIBUTING.md` always claimed. Each source owns a canonical `ID` constant used by
+  `Collector::name()`, its config table, and the registry, so those can no longer drift.
+
+- **`[collectors.<id>] enabled = false` now switches a source off everywhere.** It governed the
+  dashboard's background collectors and was ignored by `--json`, `--csv` and `--check-budgets`,
+  which still read the source and still counted its spend against budgets — the shipped example
+  config even documented the split. This is a deliberate behaviour change: exports from a
+  configuration that disables a source will now omit its rows, and the source line says
+  `<id>: disabled` rather than dropping silently. `zen_pricing` is unaffected: it contributes no
+  rows, and its flag governs only the background network refresh, so the line reporting whether
+  the pricing cache exists is still always shown.
+
+- **`[collectors.*]` is keyed by source id rather than a fixed struct.** `[collectors.opencodee]`
+  used to parse into a field nobody read; it is now an error that names the real sources.
+
+### Added
+
+- **A `justfile`.** `just check` runs exactly what CI runs, in CI's order; `just run` starts the
+  dashboard against the committed fixture with the hermetic overrides already applied, `just
+  doctor`, `just deny` and `just msrv` cover the rest. The check list previously existed in four
+  places with three different subsets.
+- **`--doctor`.** The answer to "the dashboard is empty and I do not know why". One line per
+  source: the id, whether anything was there, the exact path searched, how many rows it produced,
+  how billing was decided, and — where a source is absent — the flag or environment variable that
+  points it somewhere else. Then the config file in force, the number of budgets configured, and
+  whether logging is on. It runs the same traversal the dashboard and the exporters use, so it can
+  never describe a set of sources the rest of the tool does not read, and it writes nothing. On a
+  machine with none of the four sources it exits 0 and says so, because that is a normal first run
+  rather than a fault.
+- **Config keys that the parser does not recognise are now errors.** Every config struct carries
+  `deny_unknown_fields`, so `dayz = 14`, `[collectors.opencodee]`, `webook` under `[budgets]` and
+  `warnn` in a budget entry all fail with the offending key named, instead of parsing into nothing.
+  The shipped example config has carried a comment warning about exactly this since the `webhook`
+  key silently disabled every budget; the policy now matches what `load_config` already did for
+  malformed values.
+
+- **`scripts/install.sh`, and the quick start now leads with it.** One line installs the right
+  archive for the platform, verifies it against the release's published `checksums.txt`, unpacks
+  it into a scratch directory and installs only the binary — then says how to fix `PATH` when the
+  destination is not on it. It refuses to install a download it could not verify, and on a
+  platform with no prebuilt binary it names the source build instead of 404ing. POSIX `sh`, curl
+  or wget, no other dependencies.
+- **crates.io publication is wired up.** `Cargo.toml` gains `readme`, an `exclude` that keeps the
+  670KB of README screenshots out of the tarball (247KB compressed, 91 files), and
+  `[package.metadata.binstall]` overrides mapping every release target to its archive, so
+  `cargo binstall ai-usage-tui` works the moment the crate exists. A `publish-crate` job publishes
+  on a tag push and refuses to run when the tag and `Cargo.toml` disagree. The test fixtures are
+  deliberately kept in the package: the `#[cfg(test)]` modules under `src/` read
+  `tests/fixtures/` at runtime, so dropping them would ship a crate whose own tests cannot run.
+- **An `update-taps` job pushes the rendered Homebrew formula and Scoop manifest** to
+  `SophanaSok/homebrew-tap` and `SophanaSok/scoop-bucket`, so `brew install
+  sophanasok/tap/ai-usage-tui` becomes real rather than a template attached to a release.
+- **The Homebrew formula offers Linux aarch64.** The `aarch64-linux` tarball has been built and
+  published since v0.2.0, but the formula only had an `on_intel` block under `on_linux`.
+- **`docs/release-process.md` has a "First publish" section** listing the account-level steps —
+  claiming the crates.io name, creating the tap and bucket, the optional AUR package. Every job
+  added here is gated on its secret and prints a notice instead of failing, so the release path is
+  green before and after those steps.
+
+### Documentation
+
+- **The two provider "Billing" essays move to
+  [`docs/provider-support.md`](docs/provider-support.md#billing-detection).** Thirty lines each,
+  on the install-to-first-run path, explaining a detection cascade to a reader who has not yet
+  seen a number. The README keeps the paragraph that matters — what the collector decides, how to
+  override it, and that `--doctor` and the source line show the answer — and points at the rest.
+  The README is 836 lines, down from 911, with the CLI and environment tables untouched where
+  `tests/docs.rs` expects them.
+- **The Omarchy integration moves to [`docs/omarchy.md`](docs/omarchy.md).** It occupied 136
+  contiguous lines in the README's primary usage section — enough that a general-audience tool
+  read as an add-on for one Arch/Hyprland desktop. A short pointer stays behind. The behaviour is
+  unchanged and was already correct: on a machine without Omarchy the reader logs the absence
+  once and idles.
+- **`docs/phase-status.md` and `docs/execution-log.md` are removed.** Both restated
+  `CHANGELOG.md` from memory and had drifted — phase-status still filed the whole of v0.5.0
+  under "Unreleased" — while being linked from the README as current contributor documentation.
+- **`MODEL_ROUTING.md` moves to `docs/model-routing.md`.** It is the maintainer's development-time
+  model policy, and at the repository root beside README and CONTRIBUTING it read as product
+  documentation.
+- **A `.mailmap`.** 38 of the first 85 commits were authored as `User <user@localhost>` and the
+  maintainer appeared under four identities; `git shortlog` and the contributor graph now show
+  one person.
+
+### Fixed
+
+- **`--help` no longer carries an orphaned line, and drift is now caught.** A stray
+  `(default: ~/.claude/projects)` sat under `--omarchy-record`, inherited from a `--claude-dir`
+  entry three flags above it, because `tests/docs.rs` compared the README table against the parser
+  and never looked at the help text. It compares all three lists now, and the OPTIONS block is
+  regrouped into data sources, range and filters, dashboard, and one-shot actions.
+- **`--refresh-zen` and `--refresh-pricing` honour `--config`.** Both ran before the config was
+  loaded, so a mistyped `--config` path was a hard error for every other invocation and silently
+  fine for these two.
+- **A failed refresh no longer blames OpenCode for the journal.** `App::refresh` reported every
+  `load_usage` failure as `OpenCode unavailable`, sending readers to the wrong file when it was
+  the journal that could not be read.
+- **A supervisor test asserted after a flat 200ms sleep**, on a three-OS matrix, where a loaded
+  runner could miss the deadline and fail a correct build. It polls for the outcome now.
+- **`scripts/release.sh` printed "All checks passed!" without running two of them.** It skipped
+  `cargo fmt --check` and `cargo deny` entirely, and every check in it is path-relative with no
+  anchoring, so running it from anywhere but the repository root checked nothing and still
+  passed. It now runs the formatting check and the doc tests, anchors itself to the repository,
+  and names any check it had to skip instead of claiming a clean run.
+- **`tests/docs.rs` guarded environment-variable documentation against a hand-maintained list of
+  five files.** A new collector reading its own environment variable — exactly what `codex.rs`
+  does for `CODEX_HOME` — escaped the check that exists to catch it. It walks `src/` now.
+- **The journal's only write path had no tests.** `--record-ollama` and `--record-routing` are
+  the only things in the project that write, and neither was exercised; the three fixtures
+  written for them were referenced from nowhere. Round-trip tests now cover a single response, a
+  streamed response journaling once from its final line, idempotent re-recording, and a routing
+  event read back through `--routing-json`.
+- **The rendered Chocolatey package could not be packed.** The release job flattened every
+  template with `basename`, so `chocolateyinstall.ps1` was published beside the nuspec — whose
+  `<file src="tools/**" target="tools/" />` then matched nothing, producing a package that
+  installed nothing. Manifests now render under `rendered/<manager>/` preserving each template's
+  layout, and the job asserts the nuspec's glob will resolve before publishing.
+
+- **The documented quick start no longer overwrites the reader's own `README.md` and
+  `LICENSE`.** v0.5.0 started packing those two files into every unix tarball for MIT
+  compliance, but the README's install snippets still piped the download into a bare
+  `tar xz`, which extracts into the current directory. Anyone who pasted the quick start
+  while sitting in a project directory had both files replaced, silently. Both snippets now
+  unpack into a `mktemp -d` scratch directory and install only the binary from it.
+- **The quick start's platform `case` has an `*)` arm.** On any platform without a prebuilt
+  binary `$SLUG` expanded empty, the URL 404'd, and the pipeline died on `tar: Unexpected EOF
+  in archive`. It now names the platform and points at a source build.
+- **The quick start creates `~/.local/bin` and explains `PATH`.** `install` failed outright on
+  a machine without the directory, and succeeded-then-`command not found` on a machine where
+  it exists but is not on `PATH`.
+
+### Documentation
+
+- **macOS Gatekeeper is documented.** The release binaries are unsigned and unnotarized, so an
+  archive downloaded in a browser is quarantined and the binary is refused with "cannot be
+  opened because the developer cannot be verified". The Installation and Troubleshooting
+  sections now give `xattr -d com.apple.quarantine` and note that a `curl` download never sets
+  the attribute.
+
 ## 0.5.0 - 2026-08-23
 
 ### Added

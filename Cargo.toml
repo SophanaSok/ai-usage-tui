@@ -10,6 +10,13 @@ repository = "https://github.com/SophanaSok/ai-usage-tui"
 homepage = "https://github.com/SophanaSok/ai-usage-tui"
 keywords = ["ai", "tui", "dashboard", "usage", "opencode"]
 categories = ["command-line-utilities", "visualization"]
+readme = "README.md"
+# Kept out of the published tarball. `tests/`, `examples/` and `pricing/` stay in: the unit tests
+# under `src/` read `tests/fixtures/` at runtime, `src/config.rs` includes `examples/config.toml`,
+# and `src/pricing.rs` includes `pricing/zen.toml` at compile time -- so a packaged crate has to
+# carry all three to build and test. What is left is 670KB of README screenshots, which crates.io
+# resolves against the repository anyway, and CI/dev scripts nobody consuming the crate needs.
+exclude = ["docs/assets/*", ".github/*", "scripts/*"]
 
 [dependencies]
 anyhow = "1"
@@ -24,6 +31,39 @@ toml = "1.1"
 
 [dev-dependencies]
 tempfile = "3"
+
+# `cargo binstall ai-usage-tui` -- fetch the release archive instead of compiling. The slug in the
+# archive name is not derivable from the target triple, so each target the release matrix builds
+# names its own URL. Keep this in step with the matrix in .github/workflows/release.yml.
+[package.metadata.binstall]
+# The binary sits at the archive root, beside README.md and LICENSE.
+bin-dir = "{ bin }{ binary-ext }"
+
+[package.metadata.binstall.overrides.x86_64-unknown-linux-gnu]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-x86_64-linux.tar.gz"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.aarch64-unknown-linux-gnu]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-aarch64-linux.tar.gz"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.aarch64-apple-darwin]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-aarch64-macos.tar.gz"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-apple-darwin]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-x86_64-macos.tar.gz"
+pkg-fmt = "tgz"
+
+# The Windows binary is built for the gnu triple but runs on any x86_64 Windows, and almost every
+# Rust user on Windows is on msvc -- so both triples point at the one published zip.
+[package.metadata.binstall.overrides.x86_64-pc-windows-gnu]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-x86_64-windows.zip"
+pkg-fmt = "zip"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-x86_64-windows.zip"
+pkg-fmt = "zip"
 
 [package.metadata.deb]
 maintainer = "Sophana Sok <sokdevelopment@gmail.com>"

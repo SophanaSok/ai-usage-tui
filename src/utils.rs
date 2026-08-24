@@ -1,4 +1,5 @@
 use chrono::Datelike;
+use std::ffi::OsString;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, path::PathBuf};
 
@@ -52,20 +53,42 @@ pub fn format_count(value: u64) -> String {
     }
 }
 
+/// How the path resolvers below read the environment.
+///
+/// Production passes [`system_env`]. Tests pass a fixed lookup instead of calling
+/// `std::env::set_var`: Cargo runs tests as threads of one process, so setting a variable
+/// mutates state every other test shares -- and `set_var` is `unsafe` from edition 2024 onward.
+/// This mirrors `collector::billing::Signals`, which injects its environment the same way.
+pub type Env<'a> = &'a dyn Fn(&str) -> Option<OsString>;
+
+/// The real environment.
+pub fn system_env(name: &str) -> Option<OsString> {
+    env::var_os(name)
+}
+
+/// A variable's value, ignoring one that is set but empty.
+fn non_empty(env: Env<'_>, name: &str) -> Option<OsString> {
+    env(name).filter(|value| !value.is_empty())
+}
+
 /// The user's home directory.
 ///
 /// Windows does not set `HOME`. Relying on it alone made every path lookup fail there with
 /// "HOME is not set" — on a platform for which this project ships Scoop and Chocolatey
 /// packages.
 pub fn home_dir() -> Option<PathBuf> {
-    if let Some(home) = env::var_os("HOME").filter(|v| !v.is_empty()) {
+    home_dir_in(&system_env)
+}
+
+pub fn home_dir_in(env: Env<'_>) -> Option<PathBuf> {
+    if let Some(home) = non_empty(env, "HOME") {
         return Some(PathBuf::from(home));
     }
-    if let Some(profile) = env::var_os("USERPROFILE").filter(|v| !v.is_empty()) {
+    if let Some(profile) = non_empty(env, "USERPROFILE") {
         return Some(PathBuf::from(profile));
     }
-    let drive = env::var_os("HOMEDRIVE").filter(|v| !v.is_empty())?;
-    let path = env::var_os("HOMEPATH").filter(|v| !v.is_empty())?;
+    let drive = non_empty(env, "HOMEDRIVE")?;
+    let path = non_empty(env, "HOMEPATH")?;
     let mut combined = PathBuf::from(drive);
     combined.push(PathBuf::from(path));
     Some(combined)
@@ -73,60 +96,93 @@ pub fn home_dir() -> Option<PathBuf> {
 
 /// Root for user data, honouring `XDG_DATA_HOME`, then `%LOCALAPPDATA%`, then `~/.local/share`.
 pub fn data_root() -> Option<PathBuf> {
-    if let Some(xdg) = env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
+    data_root_in(&system_env)
+}
+
+pub fn data_root_in(env: Env<'_>) -> Option<PathBuf> {
+    if let Some(xdg) = non_empty(env, "XDG_DATA_HOME") {
         return Some(PathBuf::from(xdg));
     }
     if cfg!(windows) {
-        if let Some(local) = env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()) {
+        if let Some(local) = non_empty(env, "LOCALAPPDATA") {
             return Some(PathBuf::from(local));
         }
     }
-    Some(home_dir()?.join(".local").join("share"))
+    Some(home_dir_in(env)?.join(".local").join("share"))
 }
 
 /// Root for user config, honouring `XDG_CONFIG_HOME`, then `%APPDATA%`, then `~/.config`.
 pub fn config_root() -> Option<PathBuf> {
-    if let Some(xdg) = env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+    config_root_in(&system_env)
+}
+
+pub fn config_root_in(env: Env<'_>) -> Option<PathBuf> {
+    if let Some(xdg) = non_empty(env, "XDG_CONFIG_HOME") {
         return Some(PathBuf::from(xdg));
     }
     if cfg!(windows) {
-        if let Some(roaming) = env::var_os("APPDATA").filter(|v| !v.is_empty()) {
+        if let Some(roaming) = non_empty(env, "APPDATA") {
             return Some(PathBuf::from(roaming));
         }
     }
-    Some(home_dir()?.join(".config"))
+    Some(home_dir_in(env)?.join(".config"))
 }
 
 /// Root for user state, honouring `XDG_STATE_HOME`, then `~/.local/state`. Omarchy keeps its
 /// agents-panel records here; this tool only ever reads them.
 pub fn state_root() -> Option<PathBuf> {
-    if let Some(xdg) = env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty()) {
+    state_root_in(&system_env)
+}
+
+pub fn state_root_in(env: Env<'_>) -> Option<PathBuf> {
+    if let Some(xdg) = non_empty(env, "XDG_STATE_HOME") {
         return Some(PathBuf::from(xdg));
     }
-    Some(home_dir()?.join(".local").join("state"))
+    Some(home_dir_in(env)?.join(".local").join("state"))
 }
 
 /// Where Omarchy's agents panel writes one JSON record per agent.
 pub fn omarchy_usage_dir() -> Option<PathBuf> {
-    Some(state_root()?.join("omarchy").join("agents").join("usage"))
+    omarchy_usage_dir_in(&system_env)
+}
+
+pub fn omarchy_usage_dir_in(env: Env<'_>) -> Option<PathBuf> {
+    Some(
+        state_root_in(env)?
+            .join("omarchy")
+            .join("agents")
+            .join("usage"),
+    )
 }
 
 pub fn db_path() -> Option<PathBuf> {
-    if let Ok(path) = env::var("OPENCODE_DB_PATH") {
+    db_path_in(&system_env)
+}
+
+pub fn db_path_in(env: Env<'_>) -> Option<PathBuf> {
+    if let Some(path) = non_empty(env, "OPENCODE_DB_PATH") {
         return Some(PathBuf::from(path));
     }
-    Some(data_root()?.join("opencode").join("opencode.db"))
+    Some(data_root_in(env)?.join("opencode").join("opencode.db"))
 }
 
 pub fn data_dir() -> Option<PathBuf> {
-    Some(data_root()?.join("ai-usage-tui"))
+    data_dir_in(&system_env)
+}
+
+pub fn data_dir_in(env: Env<'_>) -> Option<PathBuf> {
+    Some(data_root_in(env)?.join("ai-usage-tui"))
 }
 
 pub fn journal_path() -> Option<PathBuf> {
-    if let Ok(path) = env::var("AI_USAGE_JOURNAL_PATH") {
+    journal_path_in(&system_env)
+}
+
+pub fn journal_path_in(env: Env<'_>) -> Option<PathBuf> {
+    if let Some(path) = non_empty(env, "AI_USAGE_JOURNAL_PATH") {
         return Some(PathBuf::from(path));
     }
-    Some(data_dir()?.join("usage.db"))
+    Some(data_dir_in(env)?.join("usage.db"))
 }
 
 #[cfg(test)]
@@ -153,33 +209,114 @@ mod tests {
         assert!(local_month_start() <= local_day_start());
     }
 
+    /// A fixed environment, so nothing here touches the process's own.
+    fn env_of(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + use<> {
+        let owned: Vec<(String, OsString)> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), OsString::from(*v)))
+            .collect();
+        move |name: &str| {
+            owned
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.clone())
+        }
+    }
+
     #[test]
     fn env_overrides_take_precedence_over_derived_paths() {
-        // Serialised implicitly: these two vars are read only by the functions under test.
-        std::env::set_var("OPENCODE_DB_PATH", "/tmp/explicit-opencode.db");
-        std::env::set_var("AI_USAGE_JOURNAL_PATH", "/tmp/explicit-journal.db");
+        let env = env_of(&[
+            ("HOME", "/home/u"),
+            ("OPENCODE_DB_PATH", "/tmp/explicit-opencode.db"),
+            ("AI_USAGE_JOURNAL_PATH", "/tmp/explicit-journal.db"),
+        ]);
         assert_eq!(
-            db_path().unwrap(),
+            db_path_in(&env).unwrap(),
             PathBuf::from("/tmp/explicit-opencode.db")
         );
         assert_eq!(
-            journal_path().unwrap(),
+            journal_path_in(&env).unwrap(),
             PathBuf::from("/tmp/explicit-journal.db")
         );
-        std::env::remove_var("OPENCODE_DB_PATH");
-        std::env::remove_var("AI_USAGE_JOURNAL_PATH");
+
+        // Without them, both derive from the data root.
+        let bare = env_of(&[("HOME", "/home/u")]);
+        assert_eq!(
+            db_path_in(&bare).unwrap(),
+            PathBuf::from("/home/u/.local/share/opencode/opencode.db")
+        );
+        assert_eq!(
+            journal_path_in(&bare).unwrap(),
+            PathBuf::from("/home/u/.local/share/ai-usage-tui/usage.db")
+        );
+    }
+
+    #[test]
+    fn a_variable_that_is_set_but_empty_is_not_a_path() {
+        // An exported-but-empty OPENCODE_DB_PATH used to resolve to "", which opens nothing and
+        // reports no database rather than falling back to the real default.
+        let env = env_of(&[
+            ("HOME", "/home/u"),
+            ("OPENCODE_DB_PATH", ""),
+            ("XDG_DATA_HOME", ""),
+        ]);
+        assert_eq!(
+            db_path_in(&env).unwrap(),
+            PathBuf::from("/home/u/.local/share/opencode/opencode.db")
+        );
     }
 
     #[test]
     fn the_omarchy_usage_dir_honours_xdg_state_home() {
-        std::env::set_var("XDG_STATE_HOME", "/tmp/xdg-state");
+        let env = env_of(&[("HOME", "/home/u"), ("XDG_STATE_HOME", "/tmp/xdg-state")]);
         assert_eq!(
-            omarchy_usage_dir().unwrap(),
+            omarchy_usage_dir_in(&env).unwrap(),
             PathBuf::from("/tmp/xdg-state/omarchy/agents/usage")
         );
-        std::env::remove_var("XDG_STATE_HOME");
-        assert!(omarchy_usage_dir()
-            .unwrap()
-            .ends_with(".local/state/omarchy/agents/usage"));
+        let bare = env_of(&[("HOME", "/home/u")]);
+        assert_eq!(
+            omarchy_usage_dir_in(&bare).unwrap(),
+            PathBuf::from("/home/u/.local/state/omarchy/agents/usage")
+        );
+    }
+
+    /// Windows sets none of `HOME` or the XDG variables; without these fallbacks every path
+    /// lookup there failed with "HOME is not set".
+    #[test]
+    fn the_windows_stand_ins_resolve_a_home() {
+        assert_eq!(
+            home_dir_in(&env_of(&[("USERPROFILE", "C:\\Users\\u")])).unwrap(),
+            PathBuf::from("C:\\Users\\u")
+        );
+        // HOMEDRIVE + HOMEPATH are joined with `PathBuf::push`, which only treats `\` as a
+        // separator on Windows -- so assert the join happened rather than a literal string that
+        // is only correct on the platform this fallback exists for.
+        let joined = home_dir_in(&env_of(&[("HOMEDRIVE", "C:"), ("HOMEPATH", "\\Users\\u")]))
+            .expect("HOMEDRIVE + HOMEPATH resolve a home");
+        let joined = joined.to_string_lossy();
+        assert!(joined.starts_with("C:"), "{joined}");
+        assert!(joined.ends_with("Users\\u"), "{joined}");
+        assert!(home_dir_in(&env_of(&[])).is_none());
+        // HOME wins when several are present.
+        assert_eq!(
+            home_dir_in(&env_of(&[
+                ("HOME", "/home/u"),
+                ("USERPROFILE", "C:\\Users\\u")
+            ]))
+            .unwrap(),
+            PathBuf::from("/home/u")
+        );
+    }
+
+    #[test]
+    fn the_config_root_prefers_xdg_over_the_home_default() {
+        assert_eq!(
+            config_root_in(&env_of(&[("HOME", "/home/u"), ("XDG_CONFIG_HOME", "/cfg")])).unwrap(),
+            PathBuf::from("/cfg")
+        );
+        assert_eq!(
+            config_root_in(&env_of(&[("HOME", "/home/u")])).unwrap(),
+            PathBuf::from("/home/u/.config")
+        );
     }
 }

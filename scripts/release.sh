@@ -6,6 +6,11 @@ set -euo pipefail
 
 VERSION="${1:?Usage: scripts/release.sh <version>}"
 
+# Anchored to the repository, not to the caller's working directory: every check below is
+# relative (`Cargo.toml`, `README.md`, `CHANGELOG.md`), so running this from anywhere but the
+# root silently checked nothing and still printed a pass.
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 echo "==> Running pre-flight checks for v${VERSION}..."
 
 # 1. Check we're on main branch
@@ -22,19 +27,36 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 
-# 3. Run tests
+# 3. Formatting. CI checks this first and it is the cheapest thing to fail on; leaving it out
+# meant "All checks passed!" could be followed by a red CI run on the tag.
+echo "==> Checking formatting..."
+cargo fmt --all -- --check
+
+# 4. Run tests
 echo "==> Running tests..."
 cargo test --all-targets --locked
+cargo test --doc --locked
 
-# 4. Run clippy
+# 5. Run clippy
 echo "==> Running clippy..."
 cargo clippy --all-targets --all-features --locked -- -D warnings
 
-# 5. Build release
+# 6. Advisories and licence policy. Skipped with a warning rather than failing, because it needs
+# a tool that may not be installed -- but the skip is said out loud, not hidden.
+if command -v cargo-deny >/dev/null 2>&1; then
+  echo "==> Checking advisories..."
+  cargo deny check
+else
+  echo "WARNING: cargo-deny is not installed; skipping the advisory check that CI runs."
+  echo "         Install it with: cargo install cargo-deny --locked"
+  SKIPPED="${SKIPPED:-}advisories "
+fi
+
+# 7. Build release
 echo "==> Building release..."
 cargo build --release --locked
 
-# 6. Verify version matches in Cargo.toml
+# 8. Verify version matches in Cargo.toml
 CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 if [ "$CARGO_VERSION" != "$VERSION" ]; then
   echo "ERROR: Cargo.toml version is '$CARGO_VERSION', expected '$VERSION'"
@@ -42,20 +64,24 @@ if [ "$CARGO_VERSION" != "$VERSION" ]; then
   exit 1
 fi
 
-# 7. Verify README.md quick-start pins this version
+# 9. Verify README.md quick-start pins this version
 if ! grep -qF "VERSION=v${VERSION}" README.md; then
   echo "ERROR: README.md quick-start still pins a different VERSION="
   grep -n '^VERSION=v' README.md || true
   exit 1
 fi
 
-# 8. Check CHANGELOG.md has the version
+# 10. Check CHANGELOG.md has the version
 if ! grep -q "## $VERSION" CHANGELOG.md 2>/dev/null; then
   echo "WARNING: CHANGELOG.md may not have a '$VERSION' section"
 fi
 
 echo ""
-echo "==> All checks passed!"
+if [ -n "${SKIPPED:-}" ]; then
+  echo "==> Checks passed, but these were SKIPPED and CI still runs them: ${SKIPPED}"
+else
+  echo "==> All checks passed!"
+fi
 echo "==> To release, run:"
 echo "    git tag v${VERSION}"
 echo "    git push origin main"

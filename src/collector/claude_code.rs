@@ -18,10 +18,18 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::classify::classify;
+use crate::collector::background::Collector;
 use crate::collector::billing::Decision;
+use crate::collector::billing::{detect, resolve_sticky, BillingSetting, Signals};
 use crate::helpers::{number, string};
 use crate::model::{CostStatus, Usage};
 use crate::utils::home_dir;
+use std::time::Duration;
+
+/// This source's canonical id: the `Collector::name()` it reports, the
+/// `[collectors.<id>]` table that configures it, and its key in the source registry.
+/// One constant so those can never drift apart.
+pub const ID: &str = "claude_code";
 
 /// Root of Claude Code's session logs, overridable for tests and non-standard installs.
 pub fn projects_dir() -> Option<PathBuf> {
@@ -251,8 +259,146 @@ pub(crate) fn normalize_project_path(cwd: &str) -> String {
     }
 }
 
+pub struct ClaudeCodeCollector {
+    pub root: Option<PathBuf>,
+    pub interval_secs: u64,
+    /// Per-file byte offsets, so each poll tails only what was appended.
+    pub offsets: Offsets,
+    pub billing: BillingSetting,
+    /// Claude Code's `~/.claude.json`, when it is not at the default location.
+    pub claude_json: Option<PathBuf>,
+    /// Omarchy's records directory, for the plan label its panel already derived; `None`
+    /// disables that signal.
+    pub omarchy_dir: Option<PathBuf>,
+    /// The billing decision in force. Evidence, once found, is kept: Claude Code rewrites its
+    /// config document constantly, and a poll that catches it half-written must not flip the
+    /// rows it collects to a different status from the rows already merged.
+    pub decision: Option<Decision>,
+}
+
+impl ClaudeCodeCollector {
+    fn resolve_billing(&mut self) -> Decision {
+        let path = config_json_path(self.claude_json.as_deref(), self.root.as_deref());
+        let tier = self
+            .omarchy_dir
+            .as_deref()
+            .and_then(|dir| crate::omarchy::tier_label_for(dir, "claude_code"));
+        let fresh = detect(
+            "claude_code",
+            self.billing,
+            &Signals {
+                claude_json: path.as_deref(),
+                env_has: &crate::collector::billing::env_has,
+                omarchy_tier: tier.as_deref(),
+            },
+        );
+        let decision = resolve_sticky("claude_code", self.decision.take(), fresh);
+        self.decision = Some(decision.clone());
+        decision
+    }
+}
+
+impl Collector for ClaudeCodeCollector {
+    fn name(&self) -> &str {
+        ID
+    }
+    fn interval(&self) -> Duration {
+        Duration::from_secs(self.interval_secs)
+    }
+    fn poll(&mut self) -> Result<Vec<Usage>> {
+        let decision = self.resolve_billing();
+        let (usages, _) = load_claude_code(self.root.as_deref(), &mut self.offsets, &decision)?;
+        Ok(usages)
+    }
+}
+
+/// One-shot read for the source registry.
+///
+/// An unreadable transcript tree degrades to zero rows and says so, rather than propagating:
+/// one bad session directory must not take the whole dashboard down.
+pub(crate) fn read(
+    roots: &crate::collector::SourceRoots,
+) -> crate::collector::registry::SourceRead {
+    let decision = roots.claude_decision();
+    let (usages, status) =
+        load_claude_code(roots.claude_dir.as_deref(), &mut Offsets::new(), &decision)
+            .unwrap_or_else(|error| (Vec::new(), format!("Claude Code: unavailable ({})", error)));
+    let path = roots.claude_dir.clone().or_else(projects_dir);
+    Ok((
+        crate::collector::SourceReport {
+            id: ID,
+            present: path.as_deref().is_some_and(Path::exists),
+            path,
+            rows: usages.len(),
+            status,
+            detail: Some(decision.describe("collectors.claude_code")),
+        },
+        usages,
+    ))
+}
+
+/// A background collector for the same source.
+pub(crate) fn collector(
+    roots: &crate::collector::SourceRoots,
+    interval_secs: u64,
+) -> Box<dyn Collector> {
+    Box::new(ClaudeCodeCollector {
+        root: roots.claude_dir.clone(),
+        interval_secs,
+        offsets: Offsets::new(),
+        billing: roots.claude_billing,
+        claude_json: roots.claude_json.clone(),
+        omarchy_dir: roots.omarchy_signal_dir(),
+        decision: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_billing_decision_with_evidence_survives_a_half_written_config_document() {
+        // Claude Code rewrites ~/.claude.json constantly. A poll that catches it mid-write must
+        // not flip the rows it collects to per-token while the rows already merged stay quota.
+        let dir = tempfile::TempDir::new().unwrap();
+        let projects = dir.path().join(".claude").join("projects").join("p");
+        std::fs::create_dir_all(&projects).unwrap();
+        std::fs::write(
+            projects.join("s.jsonl"),
+            "{\"type\":\"assistant\",\"uuid\":\"u-1\",\"requestId\":\"req_1\",\"timestamp\":\"2026-08-18T10:00:00Z\",\"message\":{\"id\":\"msg_1\",\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}\n",
+        )
+        .unwrap();
+        let config_json = dir.path().join(".claude.json");
+        std::fs::write(
+            &config_json,
+            "{\"oauthAccount\":{\"organizationRateLimitTier\":\"default_claude_max_20x\"}}",
+        )
+        .unwrap();
+
+        let mut collector = ClaudeCodeCollector {
+            root: Some(dir.path().join(".claude").join("projects")),
+            interval_secs: 30,
+            offsets: Default::default(),
+            billing: BillingSetting::Auto,
+            claude_json: Some(config_json.clone()),
+            omarchy_dir: None,
+            decision: None,
+        };
+        let rows = collector.poll().unwrap();
+        assert_eq!(rows[0].billing, crate::model::Billing::Subscription);
+        assert_eq!(
+            collector.decision.as_ref().and_then(|d| d.tier.as_deref()),
+            Some("Max 20x")
+        );
+
+        std::fs::write(&config_json, "{\"oauthAccount\":{\"organizationRateLimi").unwrap();
+        collector.poll().unwrap();
+        assert_eq!(
+            collector.decision.as_ref().map(|d| d.billing),
+            Some(crate::model::Billing::Subscription),
+            "evidence already found is kept over a momentary unreadable file"
+        );
+    }
+
     use super::*;
     use std::io::Write;
 

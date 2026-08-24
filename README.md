@@ -88,7 +88,21 @@ OpenCode rows and can still display journaled Ollama usage.
 
 ## Quick start
 
-Download a prebuilt binary, put it on your `PATH`, and run the dashboard:
+```sh
+curl -fsSL https://raw.githubusercontent.com/SophanaSok/ai-usage-tui/main/scripts/install.sh | sh
+
+ai-usage-tui
+```
+
+[`scripts/install.sh`](scripts/install.sh) picks the archive for your platform,
+**verifies it against the release's published SHA-256 checksums**, and installs
+into `~/.local/bin` — `--dir PATH` to choose somewhere else, `--version vX.Y.Z`
+to pin a release. It refuses to install anything it could not verify, and names
+the source build on a platform with no prebuilt binary.
+
+### Manual download
+
+If you would rather not pipe a script into your shell:
 
 ```sh
 VERSION=v0.5.0
@@ -97,13 +111,25 @@ case "$(uname -s)-$(uname -m)" in
   Linux-aarch64) SLUG=aarch64-linux  ;;
   Darwin-arm64)  SLUG=aarch64-macos  ;;
   Darwin-x86_64) SLUG=x86_64-macos   ;;
+  *) SLUG=""; echo "No prebuilt binary for $(uname -s)-$(uname -m) — build from source instead." ;;
 esac
-curl -fsSL "https://github.com/SophanaSok/ai-usage-tui/releases/download/${VERSION}/ai-usage-tui-${VERSION}-${SLUG}.tar.gz" \
-  | tar xz
-install -m 755 ai-usage-tui ~/.local/bin/   # or sudo install ... /usr/local/bin/
+
+if [ -n "$SLUG" ]; then
+  # Unpacked into a scratch directory: the archive also contains README.md and
+  # LICENSE, so extracting it in place would overwrite yours.
+  TMP="$(mktemp -d)"
+  curl -fsSL "https://github.com/SophanaSok/ai-usage-tui/releases/download/${VERSION}/ai-usage-tui-${VERSION}-${SLUG}.tar.gz" \
+    | tar xz -C "$TMP"
+  mkdir -p ~/.local/bin
+  install -m 755 "$TMP/ai-usage-tui" ~/.local/bin/   # or sudo install ... /usr/local/bin/
+  rm -rf "$TMP"
+fi
 
 ai-usage-tui
 ```
+
+If the last line reports `command not found`, `~/.local/bin` is not on your
+`PATH`; add `export PATH="$HOME/.local/bin:$PATH"` to your shell's rc file.
 
 If OpenCode stores its database elsewhere:
 
@@ -114,8 +140,8 @@ ai-usage-tui --db /path/to/opencode.db
 OPENCODE_DB_PATH=/path/to/opencode.db ai-usage-tui
 ```
 
-See [Installation](#installation) for macOS and Windows archives, source
-builds, and packaging templates.
+See [Installation](#installation) for macOS and Windows archives, package
+managers, and source builds.
 
 ## Installation
 
@@ -144,10 +170,27 @@ macOS example (Apple Silicon — use `x86_64-macos` on an Intel Mac):
 
 ```sh
 VERSION=v0.5.0
+TMP="$(mktemp -d)"
 curl -fsSL "https://github.com/SophanaSok/ai-usage-tui/releases/download/${VERSION}/ai-usage-tui-${VERSION}-aarch64-macos.tar.gz" \
-  | tar xz
-install -m 755 ai-usage-tui /usr/local/bin/
+  | tar xz -C "$TMP"
+sudo install -m 755 "$TMP/ai-usage-tui" /usr/local/bin/
+rm -rf "$TMP"
 ```
+
+The archive carries `README.md` and `LICENSE` alongside the binary, so unpack it
+into a scratch directory as above rather than extracting it where you stand.
+
+**Gatekeeper.** The macOS binaries are neither signed nor notarized — the project
+has no Apple Developer ID. Downloading the archive *in a browser* marks it
+`com.apple.quarantine`, and the extracted binary is then refused with "cannot be
+opened because the developer cannot be verified". Clear it once:
+
+```sh
+xattr -d com.apple.quarantine /usr/local/bin/ai-usage-tui
+```
+
+Downloading with `curl`, as above, does not set the attribute, and needs no such
+step.
 
 Linux package example:
 
@@ -161,16 +204,43 @@ On Windows, extract the zip and add the directory containing
 
 ### Package managers
 
-Release packaging templates for Homebrew, Scoop, and Chocolatey live under
-[`packaging/`](packaging/). Use GitHub Releases until a formula or manifest is
-published to those registries.
+Homebrew and Scoop manifests are rendered at release time from the real artifact
+names and checksums, and pushed to a tap and a bucket:
+
+```sh
+brew install sophanasok/tap/ai-usage-tui        # macOS and Linux
+
+scoop bucket add sophanasok https://github.com/SophanaSok/scoop-bucket
+scoop install ai-usage-tui                      # Windows
+```
+
+> **Not published yet.** The tap and bucket are created by the maintainer as a
+> one-time step (see [`docs/release-process.md`](docs/release-process.md), *First
+> publish*). Until then the rendered `ai-usage-tui.rb` and `ai-usage-tui.json`
+> are attached to each release and can be used directly —
+> `brew install --formula <url>` and `scoop install <url>` — or use
+> [`scripts/install.sh`](scripts/install.sh) above.
 
 ### Build or install from source
 
-Install the stable Rust toolchain with [rustup](https://rustup.rs/), clone this
-repository, and run one of:
+Install the stable Rust toolchain with [rustup](https://rustup.rs/), then:
 
 ```sh
+# From crates.io
+cargo install ai-usage-tui --locked
+
+# Prebuilt binary via crates.io metadata, without compiling
+cargo binstall ai-usage-tui
+```
+
+> **Not published yet.** `ai-usage-tui` is not on crates.io, so both commands
+> above will fail until the maintainer claims the name. Build from a clone in
+> the meantime:
+
+```sh
+git clone https://github.com/SophanaSok/ai-usage-tui
+cd ai-usage-tui
+
 # Install to Cargo's binary directory
 cargo install --path . --locked
 
@@ -183,7 +253,8 @@ cargo build --release --locked
 
 ```text
 OpenCode DB / Claude Code logs / Codex logs / Ollama journal
-        -> background collectors -> TUI or JSON/CSV export
+        -> one source registry -> background collectors -> TUI
+                               \-> one-shot read -> JSON / CSV / budgets
 ```
 
 ### OpenCode
@@ -217,36 +288,17 @@ printed — including secrets read from a `.env` — and none of that is read or
 retained. Usage is attributed to a session and a project (the working
 directory's last path segment).
 
-**Billing.** Claude Code writes identical transcripts whether it runs on an API
-key or a Pro/Max plan, and nothing on a usage line says which. Priced at list
-rates, a subscription's traffic reads as real spend and trips budgets on money
-that was never charged, so the collector decides how the account pays before
-pricing runs. In order: an explicit `billing` setting; then, if any of
-`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, or
-`CLAUDE_CODE_USE_VERTEX` is set in the environment, per-token; then, if Claude
-Code's own `~/.claude.json` has an `oauthAccount` block, subscription, with the
-plan named from its rate-limit tier (`default_claude_max_20x` → "Max 20x");
-then the plan label in Omarchy's record for the agent, if Omarchy's agents
-panel is present (see [Subscription limits](#subscription-limits-omarchy)),
-subscription; otherwise per-token, with a visible "billing unknown" hint. Per-token rows are
-priced `estimated` as before. Subscription rows carry `cost_status = quota`,
-`cost = null`, and the list-rate figure as `api_equivalent_cost`.
+**Billing.** Claude Code and Codex write identical transcripts on an API key and on a
+subscription, and nothing on a usage line says which — so a plan's traffic priced at list
+rates would read as real spend and trip budgets on money that was never charged. The
+collector decides how the account pays before pricing runs, from the `billing` setting, the
+environment, the agent's own config document and Omarchy's record, in that order. Override
+it with `--claude-billing` / `--codex-billing` or `[collectors.<id>] billing`. Full rules and
+the exact signals: [`docs/provider-support.md`](docs/provider-support.md#billing-detection).
 
-Force the answer with `[collectors.claude_code] billing = "subscription"` or
-`"api"` (default `"auto"`), or `--claude-billing MODE` on the command line. If
-`~/.claude.json` is not at the default location — it follows `CLAUDE_CONFIG_DIR`,
-and an overridden `claude_dir` derives it from two levels above the session-log
-root — point at it with `config_json`. The decision is printed on the source
-line so a wrong guess is visible: `Claude Code: ~/.claude/projects (N sessions)
-· subscription Max 20x`, `· api billing`, or `· billing unknown — set
-[collectors.claude_code] billing`.
-
-Two caveats. The decision is made once per source, not per request, and it
-applies to every Claude Code row in the window, including history from before
-the plan or key changed. And a plan with *extra usage* enabled is dollar-billed
-at API rates once it passes its limits, and those requests look exactly like
-the ones inside the plan, so `api_equivalent_cost` is a ceiling on what such an
-account was charged, not a spend figure.
+The decision is printed on the source line, and by `--doctor`, so a wrong guess
+is visible rather than silent: `· subscription Max 20x`, `· api billing`, or
+`· billing unknown — set [collectors.claude_code] billing`.
 
 ### Codex CLI
 
@@ -281,22 +333,6 @@ estimates are skipped. A forked thread copies its ancestor's history into the
 new file, timestamps and all, so event identity is content-based
 (`timestamp + call tokens + running total`) and the copy deduplicates against
 the original.
-
-**Billing.** As with Claude Code, a rollout looks the same on an API key and on
-a ChatGPT plan. In order: an explicit `billing` setting; then, if
-`OPENAI_API_KEY` or `CODEX_API_KEY` is set in the environment, per-token;
-then the plan label in Omarchy's record for the agent, if Omarchy's agents
-panel is present, subscription; otherwise per-token, with a visible "billing
-unknown" hint. No Codex config
-document is read — `~/.codex/auth.json` is a credential file and is never
-opened — so `config_json` is rejected under `[collectors.codex]`. Force the
-answer with `[collectors.codex] billing = "subscription"` or `"api"` (default
-`"auto"`), or `--codex-billing MODE`. The decision is printed on the source
-line: `Codex: ~/.codex (N sessions) · api billing` or `· billing unknown — set
-[collectors.codex] billing`. The same line appends `· N token events disagree
-with running totals` when the CLI's cumulative counter did not advance by a
-call's own figure, so a change in what the CLI emits is visible rather than a
-silent under-count.
 
 Rows are `openai` / `PAID` and priced `estimated` from the bundled table, which
 covers the `gpt-5`, `gpt-5.1`, `gpt-5.2`, `gpt-5.3-codex`, `gpt-5.4`, `gpt-5.5`,
@@ -410,142 +446,14 @@ project, and no per-token price, is shown as `quota` rather than as `$0.00`.
 
 </details>
 
-### Subscription limits (Omarchy)
+### Subscription limits and publishing (Omarchy)
 
-[Omarchy](https://omarchy.org) is an Arch/Hyprland desktop whose bar has an
-Agents panel that meters every AI coding subscription on the machine. Omarchy 4
-writes one JSON record per agent under
-`${XDG_STATE_HOME:-~/.local/state}/omarchy/agents/usage/` (`claude.json`,
-`codex.json`, `fireworks.json`), fetched from the vendors' own rate-limit
-endpoints with the agents' saved sign-ins. `l` shows those finished records:
-one row per rate-limit window (`AGENT | WINDOW | bar | USED | RESETS IN |
-TIER`), then one line per agent — `Claude Code · Max 20x · updated 12m ago`.
-The header names the fullest fresh window beside the pricing-coverage figure
-(`claude session 92%`).
+On [Omarchy](https://omarchy.org) — an Arch/Hyprland desktop whose bar meters every AI coding
+subscription on the machine — the `l` panel shows each subscription's rate-limit windows, and
+`--omarchy-record` can publish this tool's own usage back into that panel. Both directions are
+opt-in, and on any other machine they are silently idle.
 
-Only six fields of each record are read: `id`, `name`, `updatedAt`, `ready`,
-`tierLabel`, `usageStatusText`, and the `limits` list (`label`, `title`,
-`percent`, `resetsAt`). Never read: the agents' credentials, Omarchy's probe
-cache (`~/.cache/omarchy/agent-usage`), the network, the record's
-`authHelpText`, and its token tallies (`modelUsage`, `recentDays`, …). The
-reader writes nothing there; the only write is the opt-in `--omarchy-record`
-action described next.
-
-The display rules follow Omarchy's panel. A window at or above 90 % is drawn in
-the alarm colour, in the panel and in the header; a window whose reset time has
-passed shows `reset passed` and does not alarm. A record whose `updatedAt` is
-older than 45 minutes (three of Omarchy's 15-minute refreshes) or missing is
-stale: its rows are dimmed and never alarm, and the header ignores it. A record
-with no windows but a status text (`Sign-in expired`) is shown as a status row;
-a record with neither, such as Fireworks' balance record, is skipped. A file
-that does not parse is listed as `unreadable: <file>: <error>` in the panel and
-on the status line, and the header shows degraded.
-
-The reader is on by default and idle on any machine without the directory: the
-panel says so, and one INFO line goes to `AI_USAGE_LOG` when set. Disable it
-with `[omarchy] limits = false`, or point it elsewhere with `[omarchy] dir` or
-`--omarchy-dir PATH`. `--json` carries the same data under a top-level
-`limits` array — present and empty when disabled or absent:
-
-```json
-"limits": [{
-  "agent": "claude", "name": "Claude Code", "tier": "Max 20x", "status": "",
-  "updated_at": 1755950400, "age_secs": 720, "stale": false,
-  "windows": [{ "label": "Session (5-hour)", "percent_used": 92.0,
-                "resets_at": 1755961200, "resets_in_secs": 10080 }]
-}]
-```
-
-`percent_used` is 0–100, like `--check-budgets`' `pct`; `updated_at` and
-`resets_at` are Unix seconds or `null`. CSV output is unchanged. The record's
-plan label (`tierLabel`) is also a billing signal for the Claude Code and Codex
-collectors — see [Claude Code billing](#claude-code).
-
-### Publishing to Omarchy's agents panel
-
-The reverse direction is opt-in. `ai-usage-tui --omarchy-record` writes this
-tool's own usage and budgets as a record into the same directory, so the bar's
-Agents panel gains a tab for the sources Omarchy cannot meter itself. It is a
-one-shot action, mutually exclusive with the other actions: it writes
-`<id>.json`, prints `Wrote Omarchy record <path> (N requests, M budget
-meters)`, and exits non-zero on failure. Nothing else in this tool writes
-there — the dashboard and the exports never do, and a test asserts it.
-
-```toml
-[omarchy]
-records = ["opencode"]            # ids to write: opencode (default), ollama
-balance = false                   # also draw a budget as the panel's prepaid ledger
-balance_budget = "global/monthly" # which budget, as <scope>/<period>
-```
-
-- `opencode` is every OpenCode row, all providers, priced; `ollama` is the
-  journal's Ollama rows. `claude`, `codex` and `fireworks` are refused: those
-  are Omarchy's own files and a record so named would overwrite them.
-- Claude Code and Codex rows are never included — Omarchy's own tabs cover
-  those logs. Omarchy's `claude` and `codex` collectors also fold OpenCode's
-  anthropic/openai rows into their tabs, so such a row can appear in both the
-  `opencode` tab and Omarchy's. Tabs are never summed, so this is display
-  overlap, not double counting.
-- Every configured budget becomes a meter in the record's `limits` list
-  (`Monthly budget` / `Daily budget`, the scope in the label, `percent` =
-  spend/limit clamped to 1, `resetsAt` the next local midnight or first of
-  next month), so the bar glyph alarms at 90 % like a rate limit and the
-  panel shows a reset countdown. The spend is the figure `--check-budgets`
-  reports — computed over all sources, not the tab's rows alone.
-- `balance = true` additionally draws one budget as the panel's prepaid
-  ledger (`remaining`, `funded`, `spent`, `USD`, `estimated: true`).
-  `balance_budget` picks it; a missing match falls back to `global/monthly`,
-  then `global/daily`, then the first budget. Off by default because the
-  panel labels it "Prepaid credits … funded", which describes a soft budget
-  loosely.
-- `tierLabel` reads `Budget $50/month` or `Pay as you go`. When billable
-  rows lack a price the status reads `Spend partly unpriced` and
-  `authHelpText` carries the count.
-- The record carries token counts, model ids, request and session counts,
-  and dollar figures — never content, never a path. The write is atomic
-  (temporary `.<id>.<pid>.tmp`, then rename), mode 0600, and no temporary
-  file is left on failure.
-
-Schedule it with the bundled user units (Omarchy's own collectors refresh
-every 15 minutes; the timer matches):
-
-```bash
-cp contrib/systemd/user/ai-usage-omarchy.{service,timer} ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now ai-usage-omarchy.timer
-```
-
-The service runs `%h/.cargo/bin/ai-usage-tui` at `Nice=19` with idle IO;
-edit `ExecStart` if the binary lives elsewhere (`command -v ai-usage-tui`).
-See [`contrib/systemd/user/README.md`](contrib/systemd/user/README.md).
-
-The tab first appears at Omarchy's next rescan — its updater runs every
-`refreshIntervalSec` (900 s by default) — or at once after
-`omarchy-shell omarchy.agents refresh`; afterwards the panel watches the file.
-The panel never reads `updatedAt`, so if the timer stops the tab keeps showing
-its last numbers: check `systemctl --user status ai-usage-omarchy.timer`. To
-remove the tab, disable the timer and
-`rm ~/.local/state/omarchy/agents/usage/opencode.json` (one file per id).
-Linux/Omarchy only — the action has no meaning elsewhere.
-
-| Key | Action |
-| --- | --- |
-| `1` | Show today (local calendar day) |
-| `2` | Show the trailing 7 days |
-| `3` | Show the trailing 30 days |
-| `4` | Show all history |
-| `r` | Refresh now |
-| `b` | Toggle the budgets panel |
-| `t` | Toggle routing analytics |
-| `p` | Toggle the project cost panel |
-| `g` | Toggle spend over time |
-| `w` | Toggle the burn-rate panel |
-| `s` | Toggle the sessions panel |
-| `l` | Toggle the subscription-limits panel (Omarchy) |
-| `?` | Key reference overlay |
-| `j` / `Down` | Select the next model |
-| `k` / `Up` | Select the previous model |
-| `q` / `Esc` / `Ctrl-C` | Quit |
+See [`docs/omarchy.md`](docs/omarchy.md).
 
 ## Non-interactive output
 
@@ -567,7 +475,7 @@ ai-usage-tui --json --all --provider opencode --model gpt-5.6-sol
 
 `--json` and `--csv` imply `--once`. JSON includes the source description,
 selected range, usage rows, and a `limits` array of Omarchy subscription
-windows (see [Subscription limits](#subscription-limits-omarchy); empty when
+windows (see [Subscription limits](docs/omarchy.md#subscription-limits); empty when
 there are none); each usage row also carries `project` and `session_id`
 (`null` when unknown). Usage CSV columns are:
 
@@ -742,6 +650,7 @@ does not load it automatically.
 | `--json` | Collect once and print usage JSON |
 | `--csv PATH` | Collect once and write usage CSV |
 | `--config PATH` | Load a specific TOML config file |
+| `--doctor` | Report where each data source was looked for, what was found there, and how billing was decided, then exit |
 | `--db PATH` | Override the OpenCode database path |
 | `--journal PATH` | Override the local journal path |
 | `--claude-dir PATH` | Override the Claude Code session-log directory |
@@ -849,6 +758,19 @@ Default local storage paths (when the corresponding XDG variable is unset):
 
 ## Troubleshooting
 
+**Start with `ai-usage-tui --doctor`.** It reports every source, the exact path it was looked
+for at, how many rows it produced, how billing was decided, and — where a source is absent —
+the flag or environment variable that points it elsewhere. It reads what a normal collection
+reads and writes nothing.
+
+```text
+SOURCES
+  opencode     absent               ~/.local/share/opencode/opencode.db
+                                    point elsewhere with --db PATH or OPENCODE_DB_PATH
+  claude_code  found     4087 rows  ~/.claude/projects
+                                    subscription Max 20x
+```
+
 - **No OpenCode rows:** check that the database exists at the displayed source
   path, or pass `--db PATH`.
 - **No Ollama rows:** first pipe a completed response containing `done: true`
@@ -858,6 +780,10 @@ Default local storage paths (when the corresponding XDG variable is unset):
   remains unavailable by design.
 - **Config not applied:** verify TOML syntax and the path shown above. A custom
   `--config PATH` fails immediately when the file does not exist.
+- **macOS refuses to run the binary** ("cannot be opened because the developer
+  cannot be verified"): the release binaries are unsigned. Run `xattr -d
+  com.apple.quarantine /path/to/ai-usage-tui`, or install with `curl` rather
+  than a browser download, which never sets the attribute.
 - **`could not determine a home directory`:** set `HOME` (or `USERPROFILE` on
   Windows), or pass explicit paths with `--db`, `--journal`, `--claude-dir`, and
   `--codex-dir`.
@@ -892,6 +818,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution guidelines.
 
 - [`docs/provider-support.md`](docs/provider-support.md) — provider support matrix
 - [`docs/routing-analytics.md`](docs/routing-analytics.md) — routing analytics
+- [`docs/omarchy.md`](docs/omarchy.md) — reading and publishing Omarchy agents-panel records
 
 **Contributor docs**
 
@@ -899,10 +826,8 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution guidelines.
 - [`docs/background-collectors.md`](docs/background-collectors.md) — collector design
 - [`docs/data-model.md`](docs/data-model.md) — data model and schema
 - [`docs/release-process.md`](docs/release-process.md) — release process
-- [`docs/phase-status.md`](docs/phase-status.md) — implementation status
 - [`docs/roadmap.md`](docs/roadmap.md) — outstanding findings, conventions, and next steps
-- [`docs/execution-log.md`](docs/execution-log.md) — development history
-- [`MODEL_ROUTING.md`](MODEL_ROUTING.md) — development agent-routing policy
+- [`docs/model-routing.md`](docs/model-routing.md) — the maintainer's development-time model policy
 - [`SECURITY.md`](SECURITY.md) — security policy
 - [`CHANGELOG.md`](CHANGELOG.md) — release notes
 

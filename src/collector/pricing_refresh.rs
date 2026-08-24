@@ -2,7 +2,14 @@ use std::{fs, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result};
 
+use crate::collector::background::Collector;
+use crate::model::Usage;
 use crate::utils::data_dir;
+
+/// This source's canonical id: the `Collector::name()` it reports, the
+/// `[collectors.<id>]` table that configures it, and its key in the source registry.
+/// One constant so those can never drift apart.
+pub const ID: &str = "zen_pricing";
 
 pub fn pricing_cache_path() -> Option<PathBuf> {
     Some(data_dir()?.join("zen-pricing.toml"))
@@ -340,6 +347,58 @@ fn strip_tier_suffix(display_name: &str) -> &str {
     } else {
         trimmed
     }
+}
+
+pub struct ZenPricingCollector {
+    pub interval_secs: u64,
+}
+
+impl Collector for ZenPricingCollector {
+    fn name(&self) -> &str {
+        ID
+    }
+    fn interval(&self) -> Duration {
+        Duration::from_secs(self.interval_secs)
+    }
+    fn poll(&mut self) -> Result<Vec<Usage>> {
+        refresh_pricing()?;
+        Ok(Vec::new())
+    }
+}
+
+/// One-shot read for the source registry.
+///
+/// Not a usage source: the cached catalog only enriches pricing. It is reported anyway, because
+/// "why is this row unpriced" is often answered by whether this file is there.
+pub(crate) fn read(
+    _roots: &crate::collector::SourceRoots,
+) -> crate::collector::registry::SourceRead {
+    let path = crate::collector::zen::zen_cache_path();
+    let present = path.as_deref().is_some_and(std::path::Path::exists);
+    Ok((
+        crate::collector::SourceReport {
+            id: ID,
+            present,
+            status: match (&path, present) {
+                (Some(path), true) => {
+                    format!("Zen catalog: cached (informational) at {}", path.display())
+                }
+                _ => "Zen catalog: not cached".to_string(),
+            },
+            path,
+            rows: 0,
+            detail: None,
+        },
+        Vec::new(),
+    ))
+}
+
+/// A background collector for the same source.
+pub(crate) fn collector(
+    _roots: &crate::collector::SourceRoots,
+    interval_secs: u64,
+) -> Box<dyn Collector> {
+    Box::new(ZenPricingCollector { interval_secs })
 }
 
 #[cfg(test)]

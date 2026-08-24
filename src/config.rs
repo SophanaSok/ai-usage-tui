@@ -8,7 +8,12 @@ use crate::cli::Cli;
 use crate::collector::billing::BillingSetting;
 use crate::model::Range;
 
+/// `deny_unknown_fields` throughout this file, and in `budget.rs`: a key the parser does not
+/// recognise is a typo, and silently dropping it is how `# webhook` under the wrong table
+/// disabled every budget while the dashboard went on looking healthy. `load_config` already
+/// treats a malformed *value* as fatal; an unrecognised *key* now gets the same policy.
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConfigFile {
     pub db: Option<String>,
     pub journal: Option<String>,
@@ -25,6 +30,7 @@ pub struct ConfigFile {
 
 /// Omarchy's agents panel: where its records are, and whether to read them.
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OmarchyConfig {
     pub dir: Option<String>,
     /// Read the rate-limit windows and plan labels. Default true; the directory being absent
@@ -40,16 +46,24 @@ pub struct OmarchyConfig {
     pub balance_budget: Option<String>,
 }
 
+/// Per-source settings, keyed by the source's registry id.
+///
+/// This was a fixed struct with one field per source, which meant adding a provider meant
+/// editing this file too, and a mistyped table name -- `[collectors.opencodee]` -- parsed into
+/// a field nobody read. Keyed off `collector::registry` instead: `validate` rejects an id that
+/// is not a source and names the ones that are.
 #[derive(Debug, Default, Deserialize)]
-pub struct CollectorsConfig {
-    pub opencode: Option<CollectorConfig>,
-    pub claude_code: Option<CollectorConfig>,
-    pub codex: Option<CollectorConfig>,
-    pub journal: Option<CollectorConfig>,
-    pub zen_pricing: Option<CollectorConfig>,
+#[serde(transparent)]
+pub struct CollectorsConfig(pub std::collections::BTreeMap<String, CollectorConfig>);
+
+impl CollectorsConfig {
+    pub fn get(&self, id: &str) -> Option<&CollectorConfig> {
+        self.0.get(id)
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CollectorConfig {
     pub enabled: Option<bool>,
     pub interval: Option<u64>,
@@ -79,18 +93,18 @@ impl ConfigFile {
         let Some(collectors) = &self.collectors else {
             return Ok(());
         };
-        for (name, cfg) in [
-            ("opencode", &collectors.opencode),
-            ("journal", &collectors.journal),
-            ("zen_pricing", &collectors.zen_pricing),
-        ] {
-            if let Some(cfg) = cfg {
-                if cfg.billing.is_some() || cfg.config_json.is_some() {
-                    return Err(anyhow::anyhow!(
-                        "[collectors.{name}] does not support `billing` or `config_json`; \
-                         they apply to [collectors.claude_code] and [collectors.codex]"
-                    ));
-                }
+        for (name, cfg) in &collectors.0 {
+            let Some(spec) = crate::collector::registry::find(name) else {
+                return Err(anyhow::anyhow!(
+                    "[collectors.{name}] is not a data source; the sources are {}",
+                    crate::collector::registry::ids().join(", ")
+                ));
+            };
+            if !spec.supports_billing && (cfg.billing.is_some() || cfg.config_json.is_some()) {
+                return Err(anyhow::anyhow!(
+                    "[collectors.{name}] does not support `billing` or `config_json`; \
+                     they apply to [collectors.claude_code] and [collectors.codex]"
+                ));
             }
         }
         Ok(())
@@ -152,7 +166,7 @@ pub fn apply_config(mut cli: Cli) -> Result<(Cli, ConfigFile)> {
     if let Some(claude) = config
         .collectors
         .as_ref()
-        .and_then(|collectors| collectors.claude_code.as_ref())
+        .and_then(|collectors| collectors.get(crate::collector::claude_code::ID))
     {
         if !cli.claude_billing_set {
             if let Some(billing) = claude.billing {
@@ -177,7 +191,7 @@ pub fn apply_config(mut cli: Cli) -> Result<(Cli, ConfigFile)> {
     if let Some(codex) = config
         .collectors
         .as_ref()
-        .and_then(|collectors| collectors.codex.as_ref())
+        .and_then(|collectors| collectors.get(crate::collector::codex::ID))
     {
         if codex.config_json.is_some() {
             return Err(anyhow::anyhow!(
@@ -207,6 +221,16 @@ pub fn apply_config(mut cli: Cli) -> Result<(Cli, ConfigFile)> {
                 return Err(anyhow::anyhow!("config days must be greater than zero"));
             }
             cli.range = Range::Days(days);
+        }
+    }
+    // `[collectors.<id>] enabled` now governs the one-shot paths too, not just the dashboard's
+    // background collectors: `--json` used to emit rows from a source the config had switched
+    // off. Carried on the Cli so every `SourceRoots::from_cli` site sees it.
+    if let Some(collectors) = config.collectors.as_ref() {
+        for (id, cfg) in &collectors.0 {
+            if let Some(enabled) = cfg.enabled {
+                cli.source_enabled.insert(id.clone(), enabled);
+            }
         }
     }
     if cli.provider_filter.is_none() {
@@ -261,7 +285,12 @@ mod tests {
         let (cli, config) = apply_config(cli_with_config(&path)).unwrap();
         assert_eq!(cli.range.label(), "14 DAYS");
         assert_eq!(
-            config.collectors.unwrap().opencode.unwrap().enabled,
+            config
+                .collectors
+                .unwrap()
+                .get(crate::collector::opencode::ID)
+                .unwrap()
+                .enabled,
             Some(false)
         );
         assert_eq!(
@@ -349,6 +378,48 @@ mod tests {
     }
 
     #[test]
+    fn a_misspelled_key_is_an_error_rather_than_a_key_that_does_nothing() {
+        // Every one of these parsed cleanly and did nothing before `deny_unknown_fields`. The
+        // shipped example config carries a comment warning about exactly the `[budgets]` case,
+        // because a `webhook` line under the wrong table once disabled every budget silently.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        for (contents, needle) in [
+            ("dayz = 14\n", "dayz"),
+            ("[budgets]\nwebook = \"https://example.invalid/hook\"\n", "webook"),
+            ("[[budgets.entry]]\nscope = \"global\"\nperiod = \"monthly\"\nlimit = 1.0\nwarnn = 50.0\n", "warnn"),
+            // `[collectors.*]` is a map keyed by source id, so an unknown table is caught by
+            // `validate` rather than by serde -- and the message names the real sources.
+            ("[collectors.opencodee]\nenabled = false\n", "opencodee"),
+            ("[collectors.opencode]\nenabledd = false\n", "enabledd"),
+            ("[omarchy]\nlimit = false\n", "limit"),
+        ] {
+            fs::write(&path, contents).unwrap();
+            let error = match load_config(&cli_with_config(&path)) {
+                Ok(_) => panic!("an unknown key parsed silently: {contents:?}"),
+                Err(error) => error.to_string(),
+            };
+            assert!(
+                error.contains(needle),
+                "the error should name the offending key {needle:?}: {error}"
+            );
+        }
+
+        // The unknown-source message must be actionable, not just a refusal.
+        fs::write(&path, "[collectors.opencodee]\nenabled = false\n").unwrap();
+        let error = load_config(&cli_with_config(&path))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("is not a data source"), "{error}");
+        for id in crate::collector::registry::ids() {
+            assert!(
+                error.contains(id),
+                "the error should list {id:?} as a valid source: {error}"
+            );
+        }
+    }
+
+    #[test]
     fn billing_under_a_collector_that_cannot_use_it_is_rejected_not_ignored() {
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("config.toml");
@@ -375,7 +446,8 @@ mod tests {
             Some(std::path::Path::new("/x/codex"))
         );
         assert_eq!(cli.codex_billing, BillingSetting::Api);
-        let codex = config.collectors.unwrap().codex.unwrap();
+        let collectors = config.collectors.unwrap();
+        let codex = collectors.get(crate::collector::codex::ID).unwrap();
         assert_eq!(codex.enabled, Some(false));
         assert_eq!(codex.interval, Some(45));
 
