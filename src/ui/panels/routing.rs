@@ -44,17 +44,10 @@ pub fn draw_routing(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    // Cheapest per delivered result first — that ordering *is* the answer. Agents with nothing
-    // passing sort last rather than appearing free.
-    let mut ranked: Vec<&RoutingAggregates> = aggregates.iter().collect();
-    ranked.sort_by(|a, b| {
-        cost_per_success(a)
-            .unwrap_or(f64::INFINITY)
-            .partial_cmp(&cost_per_success(b).unwrap_or(f64::INFINITY))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    let rows = ranked.iter().map(|agg| {
+    // Ordering moved to `App::apply_sorts` — cheapest per delivered result is still the default,
+    // but it is now a sort the user can change, and it is no longer recomputed on every frame.
+    // The dashboard redraws several times a second and nothing on the render path may compute.
+    let rows = aggregates.iter().map(|agg| {
         Row::new(vec![
             Cell::from(agg.agent.clone()),
             Cell::from(short_model(&agg.model)),
@@ -68,18 +61,8 @@ pub fn draw_routing(frame: &mut Frame, area: Rect, app: &App) {
         ])
     });
 
-    let header = Row::new(vec![
-        "AGENT",
-        "MODEL",
-        "$/SUCCESS",
-        "PASS",
-        "RETRY",
-        "ESC",
-        "DEFECT",
-        "TOKENS",
-        "TASKS",
-    ])
-    .style(Style::default().fg(MUTED).add_modifier(Modifier::BOLD));
+    let header = Row::new(super::sorted_header(app, crate::ui::app::Panel::Routing))
+        .style(Style::default().fg(MUTED).add_modifier(Modifier::BOLD));
 
     frame.render_widget(
         Table::new(

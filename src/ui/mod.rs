@@ -149,6 +149,9 @@ pub fn run(
                 match action {
                     Some(keys::Action::Quit) => break,
                     Some(keys::Action::Search) => app.begin_search(),
+                    Some(keys::Action::SortNext) => app.cycle_sort_column(true),
+                    Some(keys::Action::SortPrev) => app.cycle_sort_column(false),
+                    Some(keys::Action::SortReverse) => app.reverse_sort(),
                     Some(keys::Action::DrillIn) => {
                         app.drill_into_selected_project();
                     }

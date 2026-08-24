@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Sortable columns.** `<` and `>` (or `,` and `.`) move the sort to the previous or next column
+  of the visible panel, `o` reverses it, and the sorted column carries a marker in its header so
+  the order is never a mystery. Models, projects, sessions and routing each keep their own sort —
+  a column index means different things on different panels.
+
+  The defaults reproduce the orders these lists have always had, so nothing moves until a key is
+  pressed. Unknown cost sorts to one end rather than being interleaved as `$0.00`: a row whose
+  price is unknown is not a cheap row.
+
+### Changed
+
+- **The routing panel no longer re-sorts inside its draw call.** It ranked by cost per delivered
+  result on every frame — computation on the render path, which the dashboard forbids, and which
+  would have silently discarded the new sort. That ranking is now the panel's default sort,
+  computed once per refresh. The visible order is unchanged.
+
+- **The sessions list orders by the time column it displays.** It ordered by `last_seen` while
+  showing `first_seen`, so the column a reader saw was not the column the rows were in. Sorting
+  by STARTED now means what it says. Sessions that started earlier but ran longer will move; a
+  test distinguishes the two orders rather than assuming they agree.
+
+### Fixed
+
+- **Leaving a project drilldown finds the project by name, not by the row number it was at.**
+  Sorting, a `/` filter or a refresh that adds a project can all move it while the user is
+  inside, and returning them to whatever now sits at the old index would put the cursor on the
+  wrong project without saying so.
+
+
 ## 0.8.0 - 2026-08-24
 
 ### Added

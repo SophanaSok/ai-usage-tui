@@ -67,10 +67,8 @@ pub fn draw_sessions(frame: &mut Frame, area: Rect, app: &App) {
         .style(style)
     });
 
-    let header = Row::new(vec![
-        "STARTED", "RAN", "PROJECT", "MODEL", "TOKENS", "COST", "REQS",
-    ])
-    .style(Style::default().fg(MUTED).add_modifier(Modifier::BOLD));
+    let header = Row::new(super::sorted_header(app, crate::ui::app::Panel::Sessions))
+        .style(Style::default().fg(MUTED).add_modifier(Modifier::BOLD));
 
     // `TableState` so a selection below the fold scrolls into view. Sessions accumulate without
     // bound — projects top out in dozens, this list only grows.

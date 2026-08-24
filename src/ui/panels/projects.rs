@@ -40,7 +40,7 @@ pub fn draw_projects(frame: &mut Frame, area: Rect, app: &App) {
             Cell::from(p.sessions.to_string()),
         ])
     });
-    let header = Row::new(vec!["PROJECT", "TOKENS", "COST", "REQS", "SESS"])
+    let header = Row::new(super::sorted_header(app, crate::ui::app::Panel::Projects))
         .style(Style::default().fg(MUTED).add_modifier(Modifier::BOLD));
     let widths = [
         Constraint::Min(24),

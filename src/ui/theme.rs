@@ -60,3 +60,21 @@ pub fn cost_display(usage: &Usage) -> String {
         CostStatus::Unavailable => "UNKNOWN COST".into(),
     }
 }
+
+/// The figure `cost_display` puts in the cell, or `None` where it shows no figure at all.
+///
+/// Lives beside `cost_display` because the two have to agree. Sorting a COST column by a number
+/// the cell never shows is how `ON QUOTA` ends up ranked as the cheapest work on the machine --
+/// the cell saying the cost is unknown while the ordering says it is $0.00, about the same row.
+///
+/// `Free` and `Local` genuinely are zero and sort as zero. `Quota` and `Unavailable` are costs
+/// this tool refuses to invent, and refusing to invent one is not the same as knowing it is zero.
+/// Matched exhaustively on purpose: a new `CostStatus` should not be able to acquire a sort
+/// position by falling through a wildcard.
+pub fn cost_sort_key(usage: &Usage) -> Option<f64> {
+    match usage.cost_status {
+        CostStatus::Free | CostStatus::Local => Some(0.0),
+        CostStatus::Quota | CostStatus::Unavailable => None,
+        CostStatus::ProviderReported | CostStatus::Calculated | CostStatus::Estimated => usage.cost,
+    }
+}
