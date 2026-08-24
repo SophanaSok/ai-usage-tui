@@ -28,8 +28,13 @@ use serde::Deserialize;
 use crate::model::Billing;
 
 /// The user's instruction, from config or `--claude-billing`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+/// `ValueEnum` as well as `Deserialize`, so `--claude-billing api` and
+/// `billing = "api"` in config accept exactly the same three words and reject the same
+/// fourth. Two spellings of one vocabulary was how a config value could mean something a flag
+/// could not.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
+#[value(rename_all = "lowercase")]
 pub enum BillingSetting {
     #[default]
     Auto,

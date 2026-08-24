@@ -53,6 +53,17 @@ run *ARGS:
 doctor:
     cargo run --locked -- --doctor
 
+# Generate the man page and shell completions into dist/. Needed before `cargo deb`/`cargo
+# generate-rpm`, which list them as assets; the release workflow runs this itself.
+assets:
+    cargo build --release --locked
+    mkdir -p dist/completions
+    ./target/release/ai-usage-tui --man > dist/ai-usage-tui.1
+    ./target/release/ai-usage-tui --completions bash > dist/completions/ai-usage-tui.bash
+    ./target/release/ai-usage-tui --completions zsh  > dist/completions/_ai-usage-tui
+    ./target/release/ai-usage-tui --completions fish > dist/completions/ai-usage-tui.fish
+    @echo "wrote dist/"
+
 # Regenerate pricing/litellm.tsv from LiteLLM's community table. Needs network.
 pricing:
     scripts/refresh-litellm-pricing.py

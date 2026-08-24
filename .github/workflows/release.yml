@@ -93,13 +93,34 @@ jobs:
       # release-process.md requires the binary, README and LICENSE in every artifact, and the
       # MIT terms ask that the licence accompany copies. Through v0.4.0 the archives held the
       # binary alone -- the .deb and .rpm were the only artifacts getting this right.
+      # Generated from a *host* build, not the cross-compiled one: a man page and completion
+      # scripts are architecture-independent, and an aarch64 binary cannot be executed on the
+      # x86_64 runner that produced it.
+      - name: Generate man page and completions
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          cargo build --release --locked
+          mkdir -p dist/completions
+          ./target/release/ai-usage-tui --man > dist/ai-usage-tui.1
+          for sh in bash zsh fish; do
+            case "$sh" in
+              bash) out=dist/completions/ai-usage-tui.bash ;;
+              zsh)  out=dist/completions/_ai-usage-tui ;;
+              fish) out=dist/completions/ai-usage-tui.fish ;;
+            esac
+            ./target/release/ai-usage-tui --completions "$sh" > "$out"
+            test -s "$out" || { echo "::error::$out is empty"; exit 1; }
+          done
+
       - name: Package (unix)
         if: runner.os != 'Windows'
         run: |
           set -euo pipefail
           STAGE="$(mktemp -d)"
           cp "target/${{ matrix.target }}/release/ai-usage-tui" README.md LICENSE "$STAGE/"
-          tar czf "$ARTIFACT.tar.gz" -C "$STAGE" ai-usage-tui README.md LICENSE
+          cp -r dist/ai-usage-tui.1 dist/completions "$STAGE/"
+          tar czf "$ARTIFACT.tar.gz" -C "$STAGE" ai-usage-tui README.md LICENSE ai-usage-tui.1 completions
 
       - name: Package (windows)
         if: runner.os == 'Windows'
@@ -155,6 +176,19 @@ jobs:
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
 
+      # `[package.metadata.deb] assets` lists dist/, and cargo-deb fails on a missing asset --
+      # deliberately, so a package cannot quietly lose its completions. Generated from a host
+      # build for the same reason as above.
+      - name: Generate man page and completions
+        run: |
+          set -euo pipefail
+          cargo build --release --locked
+          mkdir -p dist/completions
+          ./target/release/ai-usage-tui --man > dist/ai-usage-tui.1
+          ./target/release/ai-usage-tui --completions bash > dist/completions/ai-usage-tui.bash
+          ./target/release/ai-usage-tui --completions zsh  > dist/completions/_ai-usage-tui
+          ./target/release/ai-usage-tui --completions fish > dist/completions/ai-usage-tui.fish
+
       - name: Build .deb
         run: cargo deb --no-build --target ${{ matrix.target }} --output "ai-usage-tui-${{ inputs.tag || github.ref_name }}-${{ matrix.slug }}.deb"
 
@@ -171,6 +205,10 @@ jobs:
           rpm -qlp "ai-usage-tui-${{ inputs.tag || github.ref_name }}-${{ matrix.slug }}.rpm" | tee /tmp/rpm.txt
           grep -q "/usr/bin/ai-usage-tui" /tmp/rpm.txt \
             || { echo "::error::.rpm does not contain the binary"; exit 1; }
+          for path in "usr/share/man/man1/ai-usage-tui.1" "bash-completion/completions/ai-usage-tui"; do
+            grep -q "$path" /tmp/deb.txt || { echo "::error::.deb is missing $path"; exit 1; }
+            grep -q "$path" /tmp/rpm.txt || { echo "::error::.rpm is missing $path"; exit 1; }
+          done
 
       - uses: actions/upload-artifact@v7
         with:

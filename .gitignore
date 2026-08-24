@@ -17,3 +17,6 @@ Thumbs.db
 # Python bytecode from scripts/
 __pycache__/
 *.pyc
+
+# Generated man page and completions (just assets)
+dist/

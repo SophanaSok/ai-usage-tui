@@ -2,6 +2,54 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Shell completions and a man page.** `--completions SHELL` (bash, zsh, fish, elvish,
+  powershell) and `--man` generate from the same `Command` that parses the arguments, so they
+  cannot describe a flag that does not exist. The `.deb` and `.rpm` install them into
+  `usr/share/man/man1/`, `usr/share/bash-completion/completions/`, `usr/share/zsh/site-functions/`
+  and `usr/share/fish/vendor_completions.d/`; the release archives carry them too. `just assets`
+  produces them locally, and the release job generates them from a **host** build — a man page is
+  architecture-independent and an aarch64 binary cannot be run on the x86_64 runner that built it.
+
+### Changed
+
+- **The CLI is parsed by `clap` instead of a hand-rolled loop.** The 33-flag `match` in
+  `parse_cli` is gone. `clap` handles `--help`/`--version`, reports unknown flags with a
+  suggestion, lists the valid values for `--claude-billing` rather than only naming them in prose,
+  and expresses the eleven-way action exclusion as a group instead of a hand-counted loop.
+
+  `parse_cli` keeps its signature and still returns the same `Cli`, so `main.rs`, `config.rs`,
+  `SourceRoots::from_cli`, the exporters and the UI are untouched. The command line is a separate
+  `Args` struct converted into `Cli`, because clap's natural shape is `Option<T>` while `Cli`
+  carries the `*_set` booleans `apply_config` reads to decide whether a config value may fill a
+  field.
+
+  `tests/docs.rs` now **queries** the parser for its flags rather than regexing `src/cli.rs` for
+  `"--flag" =>` match arms. The companion guard comparing `--help` to the parser is deleted: clap
+  generates the help from the same definitions, so that invariant is structural rather than
+  tested.
+
+  Three behaviours were preserved deliberately, each with a test, because clap's defaults differ:
+
+  - **A repeated flag takes the last value.** Clap rejects repeats by default, which would break
+    layering a default in an alias and overriding it — and broke the test harness, which passes
+    `--omarchy-dir` itself and again per test.
+  - **Range flags combine, last one wins.** A clap `group` would reject `--week --today`, and a
+    fixed priority would make `--week --today` and `--today --week` mean the same thing. Neither
+    matches a parser that simply assigned as it walked the arguments.
+  - **`--once --refresh-pricing` is still accepted.** The old exclusion was two rules, and the
+    second omitted `--refresh-pricing`. Transcribed rather than tidied: a group covering all
+    eleven would have silently "fixed" an asymmetry that has always worked.
+
+  Two error messages changed wording, and their assertions now check substance rather than
+  phrasing: an unknown flag ("unexpected argument" rather than "unknown option", now pointing at
+  `--help`) and an invalid billing mode (which now lists the three valid values).
+
+  Costs +1.1 MB to the release binary (9.6 → 10.7 MB) and +18 KB to the packaged crate. Startup is
+  unchanged at 10 ms. `clap` and friends need Rust 1.85, under the 1.88 already pinned.
+
+
 ### Changed
 
 - **Aggregators and clouds are classified as `PAID` rather than `UNKNOWN`.** OpenRouter, Bedrock,

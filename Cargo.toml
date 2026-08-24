@@ -16,11 +16,14 @@ readme = "README.md"
 # and `src/pricing.rs` includes `pricing/zen.toml` at compile time -- so a packaged crate has to
 # carry all three to build and test. What is left is 670KB of README screenshots, which crates.io
 # resolves against the repository anyway, and CI/dev scripts nobody consuming the crate needs.
-exclude = ["docs/assets/*", ".github/*", "scripts/*"]
+exclude = ["docs/assets/*", ".github/*", "scripts/*", "dist/*"]
 
 [dependencies]
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+clap = { version = "4.6.6", features = ["derive"] }
+clap_complete = "4.6.9"
+clap_mangen = "0.3.3"
 crossterm = "0.29"
 ratatui = "0.30"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
@@ -72,10 +75,17 @@ license-file = ["LICENSE", "4"]
 depends = "$auto"
 section = "utils"
 priority = "optional"
+# `dist/` is generated -- `just assets`, and the release workflow does it before packaging.
+# cargo-deb fails if a listed asset is missing, which is the behaviour we want: a package that
+# silently lost its completions would be discovered by a user, not by CI.
 assets = [
     ["target/release/ai-usage-tui", "usr/bin/", "755"],
     ["README.md", "usr/share/doc/ai-usage-tui/", "644"],
     ["LICENSE", "usr/share/doc/ai-usage-tui/", "644"],
+    ["dist/ai-usage-tui.1", "usr/share/man/man1/", "644"],
+    ["dist/completions/ai-usage-tui.bash", "usr/share/bash-completion/completions/ai-usage-tui", "644"],
+    ["dist/completions/_ai-usage-tui", "usr/share/zsh/site-functions/_ai-usage-tui", "644"],
+    ["dist/completions/ai-usage-tui.fish", "usr/share/fish/vendor_completions.d/ai-usage-tui.fish", "644"],
 ]
 
 [package.metadata.generate-rpm]
@@ -86,4 +96,8 @@ assets = [
     { source = "target/release/ai-usage-tui", dest = "/usr/bin/ai-usage-tui", mode = "755" },
     { source = "README.md", dest = "/usr/share/doc/ai-usage-tui/README.md", mode = "644" },
     { source = "LICENSE", dest = "/usr/share/licenses/ai-usage-tui/LICENSE", mode = "644" },
+    { source = "dist/ai-usage-tui.1", dest = "/usr/share/man/man1/ai-usage-tui.1", mode = "644" },
+    { source = "dist/completions/ai-usage-tui.bash", dest = "/usr/share/bash-completion/completions/ai-usage-tui", mode = "644" },
+    { source = "dist/completions/_ai-usage-tui", dest = "/usr/share/zsh/site-functions/_ai-usage-tui", mode = "644" },
+    { source = "dist/completions/ai-usage-tui.fish", dest = "/usr/share/fish/vendor_completions.d/ai-usage-tui.fish", mode = "644" },
 ]

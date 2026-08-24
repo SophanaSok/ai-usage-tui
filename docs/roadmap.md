@@ -147,21 +147,25 @@ Remaining:
 
 ### P3 — Polish
 
-- Migrate to `clap` derive with subcommands (`daily`, `monthly`, `session`, `blocks`, `live`) and
-  generated shell completions. The hand-rolled parser already strains under manual
-  mutual-exclusion checks — there are now eleven mutually exclusive one-shot actions checked by
-  hand in `parse_cli`.
+- **Resolved, except the subcommands — which should not be done as described.** The parser is
+  `clap` derive now, and shell completions and a man page ship with it: `--completions SHELL`
+  and `--man` generate from the same `Command` that parses the arguments, the `.deb`/`.rpm`
+  install them, and `just assets` produces them locally.
 
-  This is also what blocks **shell completions and a man page**, which is why neither shipped in
-  v0.6.0: both fall out of a declarative flag table almost for free, and hand-writing them would
-  be a sixth copy of the CLI surface. `[package.metadata.deb] assets` and
-  `[package.metadata.generate-rpm]` would each need a `usr/share/man/man1/` and a completion
-  entry once they exist.
+  `clap` also replaced the hand-rolled eleven-way mutual-exclusion count with a declarative
+  group, and `tests/docs.rs` now *queries* the parser instead of regexing `src/cli.rs` for
+  `"--flag" =>` match arms. The guard that compared `--help` against the parser is gone
+  deliberately: clap generates the help from the argument definitions, so they cannot disagree —
+  that invariant is structural now rather than tested.
 
-  Two things reduce the urgency, and are worth keeping whatever happens here: `tests/docs.rs`
-  now diffs the README's CLI table, `parse_cli`'s match arms **and** the `--help` text against
-  each other in both directions, and the `KEYS` block in `--help` is generated from
-  `ui::keys::BINDINGS` rather than hand-written.
+  **The subcommands (`daily`, `monthly`, `session`, `blocks`, `live`) are a separate question,
+  and the case for them is weaker than this entry implied.** Everything it offered them as the
+  means to is already delivered without them: the mutual exclusion is declarative, and
+  completions and the man page shipped. What is left would be a UX redesign that breaks every
+  documented invocation, the systemd unit in `contrib/`, and the CLI reference table — for a
+  vocabulary that partly collides with the existing range flags (`daily`/`monthly` against
+  `--today`/`--month`) and partly has no referent here at all (`blocks`). If it is done, it wants
+  its own design pass and a major version, not a rider on a parser swap.
 - **Resolved and shipped.** `ai-usage-tui` is published on crates.io as of v0.6.0, so
   `cargo install ai-usage-tui` and `cargo binstall ai-usage-tui` both work. `Cargo.toml` carries
   `readme`, an `exclude` that drops the 670KB of screenshots (the packaged crate is 267KB

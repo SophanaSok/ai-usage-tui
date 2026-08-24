@@ -206,6 +206,22 @@ sudo rpm -i ai-usage-tui-v0.6.0-amd64.rpm       # Fedora/RHEL
 On Windows, extract the zip and add the directory containing
 `ai-usage-tui.exe` to your `PATH`.
 
+### Shell completions and the man page
+
+The `.deb` and `.rpm` install both. From a tarball or `cargo install`, generate
+them yourself — they come from the parser itself, so they cannot describe a flag
+that does not exist:
+
+```sh
+ai-usage-tui --completions bash > ~/.local/share/bash-completion/completions/ai-usage-tui
+ai-usage-tui --completions zsh  > ~/.zfunc/_ai-usage-tui
+ai-usage-tui --completions fish > ~/.config/fish/completions/ai-usage-tui.fish
+
+ai-usage-tui --man > ~/.local/share/man/man1/ai-usage-tui.1
+```
+
+`bash`, `zsh`, `fish`, `elvish` and `powershell` are supported.
+
 ### Package managers
 
 Homebrew and Scoop manifests are rendered at release time from the real artifact
@@ -697,6 +713,8 @@ does not load it automatically.
 | `--csv PATH` | Collect once and write usage CSV |
 | `--config PATH` | Load a specific TOML config file |
 | `--doctor` | Report where each data source was looked for, what was found there, and how billing was decided, then exit |
+| `--completions SHELL` | Print a shell completion script (`bash`, `zsh`, `fish`, `elvish`, `powershell`) and exit |
+| `--man` | Print the man page in roff and exit |
 | `--db PATH` | Override the OpenCode database path |
 | `--journal PATH` | Override the local journal path |
 | `--claude-dir PATH` | Override the Claude Code session-log directory |

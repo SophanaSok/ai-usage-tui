@@ -67,6 +67,7 @@ what you think it reads, and the first thing to ask a bug reporter for.
 | --- | --- |
 | `src/collector/` | One module per data source, plus the supervisor that polls them |
 | `src/collector/registry.rs` | The one list of sources; both read paths iterate it |
+| `src/cli.rs` | The clap parser. `Args` is the command line; `Cli` is what the rest of the app takes |
 | `src/pricing.rs` | The pricing table, model-id resolution, and cost estimation |
 | `src/classify.rs` | Deciding whether usage is local, free, paid, cloud, or unknown |
 | `src/model.rs` | `Usage`, `CostStatus`, `Category` — the shared vocabulary |
@@ -109,7 +110,7 @@ the build if a source is only half wired. `[collectors.yours]` needs no code: th
 keyed off the registry, and an id that is not a source is rejected with the real ones named.
 
 If your source needs a path override, add the field to `SourceRoots` (`src/collector/mod.rs`) and
-a flag in `src/cli.rs`; `tests/docs.rs` will then require a row in the README's CLI reference
+a field to `Args` in `src/cli.rs` (plus the line that copies it into `Cli`); `tests/docs.rs` will then require a row in the README's CLI reference
 table and, if you read an environment variable, a row in its environment table.
 
 Read `src/collector/claude_code.rs` first — it is the fullest example, including incremental
