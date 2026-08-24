@@ -53,6 +53,15 @@ run *ARGS:
 doctor:
     cargo run --locked -- --doctor
 
+# Regenerate pricing/litellm.tsv from LiteLLM's community table. Needs network.
+pricing:
+    scripts/refresh-litellm-pricing.py
+
+# Fail if the committed pricing snapshot has drifted from upstream. Not in CI: upstream changes
+# constantly and a red build on someone else's commit is noise, not signal.
+pricing-check:
+    scripts/refresh-litellm-pricing.py --check
+
 # Release pre-flight. Takes the version without the leading v: `just release 0.6.0`.
 release VERSION:
     scripts/release.sh {{VERSION}}

@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Added
+
+- **LiteLLM is now the base pricing source: 60 models priced to 1,491.** `pricing/litellm.tsv`
+  ships in the binary — ~3,450 keys across 88 providers, generated from
+  [LiteLLM's community table](https://github.com/BerriAI/litellm) by
+  `scripts/refresh-litellm-pricing.py` (`just pricing`). The curated `pricing/zen.toml` is applied
+  on top of it for Zen-specific and stealth models, 13 of which appear in no community table, and
+  a refreshed cache on top of that. No network is needed and the existing "an overlay never
+  replaces" invariant is unchanged. Costs +35KB to the packaged crate and +5ms to startup.
+
+- **Pricing keys can be provider-qualified, and the provider on the usage row is used.** The same
+  model bills differently at Bedrock, `bedrock_converse` and the aggregators — 20% apart for
+  Claude Sonnet 4.5 — and that is now priced correctly instead of resolved by bare name. Where
+  providers disagree on a name (180 of them) the generated table publishes **no bare key at all**,
+  so a model whose provider is not recognised stays `UNKNOWN COST` rather than borrowing another
+  provider's rate. Long-context tiers come through too, including the 200k and 272k ones.
+
+  Layering still outranks specificity: a hand-checked rate in `zen.toml` wins over a
+  provider-qualified community one, and the dated `period` records only the curated table carries
+  are never bypassed.
+
+
 ### Fixed
 
 - **`tests/cli.rs::hermetic()` was not hermetic: it never pinned `--journal`.** It pinned the
