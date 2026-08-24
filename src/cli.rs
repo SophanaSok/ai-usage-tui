@@ -28,6 +28,10 @@ pub struct Cli {
     pub codex_dir: Option<PathBuf>,
     pub codex_billing: BillingSetting,
     pub codex_billing_set: bool,
+    /// Gemini CLI's home; defaults to `~/.gemini`. Its telemetry log is read from beneath it.
+    pub gemini_dir: Option<PathBuf>,
+    pub gemini_billing: BillingSetting,
+    pub gemini_billing_set: bool,
     /// Omarchy's agents-panel records; defaults to the XDG state location.
     pub omarchy_dir: Option<PathBuf>,
     pub limits_enabled: bool,
@@ -69,6 +73,9 @@ impl Default for Cli {
             codex_dir: None,
             codex_billing: BillingSetting::Auto,
             codex_billing_set: false,
+            gemini_dir: None,
+            gemini_billing: BillingSetting::Auto,
+            gemini_billing_set: false,
             omarchy_dir: None,
             limits_enabled: true,
             omarchy_record: false,
@@ -199,6 +206,19 @@ where
                     .ok_or_else(|| anyhow::anyhow!("--omarchy-dir requires a path"))?;
                 cli.omarchy_dir = Some(PathBuf::from(value));
             }
+            "--gemini-dir" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--gemini-dir requires a path"))?;
+                cli.gemini_dir = Some(PathBuf::from(value));
+            }
+            "--gemini-billing" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--gemini-billing requires a mode"))?;
+                cli.gemini_billing = parse_billing("--gemini-billing", &value)?;
+                cli.gemini_billing_set = true;
+            }
             "--codex-billing" => {
                 let value = args
                     .next()
@@ -322,6 +342,10 @@ OPTIONS:
                             sessions/ and archived_sessions/ are read beneath it
     --codex-billing MODE    How Codex usage is billed: auto (default), subscription,
                             or api. Overrides [collectors.codex]
+    --gemini-dir PATH       Override the Gemini CLI home (default: ~/.gemini); its
+                            telemetry log is read from beneath it
+    --gemini-billing MODE   How Gemini CLI usage is billed: auto (default), subscription,
+                            or api. Overrides [collectors.gemini]
     --omarchy-dir PATH      Override where Omarchy's agents panel keeps its usage
                             records (default $XDG_STATE_HOME/omarchy/agents/usage)
 

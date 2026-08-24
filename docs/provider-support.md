@@ -68,6 +68,38 @@ the bundled table — `gpt-5`, `gpt-5.1`, `gpt-5.2`, `gpt-5.3-codex`, `gpt-5.4`,
 **Privacy:** rollouts hold prompts, tool-call arguments and outputs, and reasoning summaries; none
 of it is parsed or retained. `~/.codex/auth.json` is a credential file and is never opened.
 
+## Gemini CLI
+
+| | |
+| --- | --- |
+| Source | OpenTelemetry log file, **opt-in** |
+| Default path | `~/.gemini/telemetry.json` (override: `--gemini-dir`, or Gemini's own `GEMINI_TELEMETRY_OUTFILE`) |
+| Enabled by | `{"telemetry":{"enabled":true,"target":"local","outfile":"..."}}` in `~/.gemini/settings.json` |
+| Format | Concatenated **pretty-printed** JSON objects — not JSONL |
+| Record | `attributes["event.name"] == "gemini_cli.api_response"` |
+| Identity | `prompt_id` + `event.timestamp` + `total_token_count` |
+| Billing signal | `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `GOOGLE_GENAI_USE_VERTEXAI`, else Omarchy's record |
+| Project attribution | None — Gemini's telemetry records no working directory |
+
+Gemini CLI persists no usage without that setting: session totals live in UI state and are lost
+on exit, and saved chats under `<project temp>/chats` hold conversation history and an auth type
+with no token counts. `--doctor` reports the source as absent with the setting to add.
+
+**Token buckets.** Google reports `cachedContentTokenCount` as a *subset* of `promptTokenCount`,
+unlike Anthropic which reports cache reads alongside input. The collector subtracts it so the
+buckets stay disjoint and a cached token is not billed as fresh input as well. `toolUsePromptTokenCount`
+is likewise already inside the prompt count and is deliberately not added again.
+`thoughtsTokenCount` *is* separate from `candidatesTokenCount` and maps to the reasoning bucket.
+
+**Identity.** One `prompt_id` covers a whole tool-use loop, so several `api_response` records
+share it. Keying on it alone would deduplicate real requests away and under-report spend, so the
+timestamp and total are part of the key.
+
+**Format caveat.** The exporter is `JSON.stringify(record, 2) + "\n"`, so records are
+pretty-printed and concatenated. The file cannot be split on newlines, and a poll can land
+mid-record while the CLI is writing — the reader consumes only complete top-level objects and
+advances its offset to the end of the last one.
+
 ## Ollama
 
 Ollama response metrics expose prompt and output token counts, but Ollama does not provide a complete historical usage database. `--record-ollama` provides an opt-in local journal for requests made after tracking is enabled.

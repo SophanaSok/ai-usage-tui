@@ -442,6 +442,12 @@ fn absence_hint(id: &str) -> Option<&'static str> {
         "opencode" => Some("point elsewhere with --db PATH or OPENCODE_DB_PATH"),
         "claude_code" => Some("point elsewhere with --claude-dir PATH or CLAUDE_PROJECTS_DIR"),
         "codex" => Some("point elsewhere with --codex-dir PATH or CODEX_HOME"),
+        // The only source that records nothing until the user turns it on, so this hint is the
+        // difference between "empty" and "unusable".
+        "gemini" => Some(concat!(
+            "records nothing until Gemini CLI's telemetry is on. In ~/.gemini/settings.json: ",
+            r#"{"telemetry":{"enabled":true,"target":"local","outfile":"~/.gemini/telemetry.json"}}"#,
+        )),
         "journal" => {
             Some("written by --record-ollama and --record-routing; nothing to do if unused")
         }

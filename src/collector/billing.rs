@@ -116,6 +116,13 @@ pub fn api_env_vars(agent: &str) -> &'static [&'static str] {
             "CLAUDE_CODE_USE_VERTEX",
         ],
         "codex" => &["OPENAI_API_KEY", "CODEX_API_KEY"],
+        // Gemini CLI bills per token on an API key and against a plan on OAuth. These are the
+        // variables it checks itself before falling back to a browser sign-in.
+        "gemini" => &[
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GOOGLE_GENAI_USE_VERTEXAI",
+        ],
         _ => &[],
     }
 }

@@ -19,6 +19,7 @@ pub struct ConfigFile {
     pub journal: Option<String>,
     pub claude_dir: Option<String>,
     pub codex_dir: Option<String>,
+    pub gemini_dir: Option<String>,
     pub refresh_interval: Option<u64>,
     pub days: Option<u64>,
     pub provider: Option<String>,
@@ -186,6 +187,20 @@ pub fn apply_config(mut cli: Cli) -> Result<(Cli, ConfigFile)> {
         }
         if let Some(limits) = omarchy.limits {
             cli.limits_enabled = limits;
+        }
+    }
+    if cli.gemini_dir.is_none() {
+        cli.gemini_dir = config.gemini_dir.take().map(PathBuf::from);
+    }
+    if let Some(gemini) = config
+        .collectors
+        .as_ref()
+        .and_then(|collectors| collectors.get(crate::collector::gemini::ID))
+    {
+        if !cli.gemini_billing_set {
+            if let Some(billing) = gemini.billing {
+                cli.gemini_billing = billing;
+            }
         }
     }
     if let Some(codex) = config

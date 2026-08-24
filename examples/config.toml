@@ -31,6 +31,14 @@ enabled = true
 interval = 30
 # billing = "auto"   # auto | subscription | api; auto reads OPENAI_API_KEY / CODEX_API_KEY only
 
+# Gemini CLI. Reads its OpenTelemetry log, which Gemini only writes when you enable it:
+#   ~/.gemini/settings.json -> {"telemetry":{"enabled":true,"target":"local","outfile":"..."}}
+# `ai-usage-tui --doctor` prints that line when the file is missing.
+[collectors.gemini]
+enabled = true
+interval = 30
+# billing = "auto"   # auto | subscription | api; auto reads GEMINI_API_KEY / GOOGLE_API_KEY
+
 [collectors.journal]
 enabled = true
 interval = 60
