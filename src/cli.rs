@@ -360,6 +360,8 @@ ENVIRONMENT:
     XDG_CONFIG_HOME     Base directory for the default config path
     XDG_DATA_HOME       Base directory for default database, journal, and
                         cache paths
+    XDG_STATE_HOME      Base directory for Omarchy's agents-panel records
+                        (omarchy/agents/usage beneath it)
 
 KEYS:
     1              Today

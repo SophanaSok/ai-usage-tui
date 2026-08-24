@@ -8,6 +8,31 @@ use std::collections::BTreeSet;
 
 const README: &str = include_str!("../README.md");
 const CLI_SOURCE: &str = include_str!("../src/cli.rs");
+/// Every file that reads the environment. A new `env::var` elsewhere must be listed here.
+const ENV_SOURCES: &[&str] = &[
+    include_str!("../src/utils.rs"),
+    include_str!("../src/logging.rs"),
+    include_str!("../src/collector/claude_code.rs"),
+    include_str!("../src/collector/codex.rs"),
+    include_str!("../src/collector/billing.rs"),
+];
+/// Read by the code but deliberately not rows in the README table: the Windows stand-ins for
+/// `HOME` and the XDG directories are described in the sentence under the table, and the
+/// agents' own API-key variables are documented where billing detection is.
+const ENV_NOT_IN_TABLE: &[&str] = &[
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LOCALAPPDATA",
+    "APPDATA",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "OPENAI_API_KEY",
+    "CODEX_API_KEY",
+];
 
 /// Every `VERSION=vX.Y.Z` and `ai-usage-tui-vX.Y.Z` literal in the README must name the crate
 /// version being built. Deleting the examples cannot make this pass: at least one pin must exist.
@@ -115,4 +140,61 @@ fn parser_long_flags() -> BTreeSet<String> {
         rest = &after_open[close + 1..];
     }
     flags
+}
+
+/// The README's environment-variable table must name every variable the code reads, apart from
+/// the documented exceptions, and nothing the code does not read.
+#[test]
+fn readme_env_table_matches_the_code() {
+    let start = README
+        .find("Environment variables")
+        .expect("README.md has an environment-variable table");
+    let section = &README[start..];
+    let end = section.find("\n## ").unwrap_or(section.len());
+    let documented: BTreeSet<String> = section[..end]
+        .lines()
+        .filter(|line| line.starts_with("| `"))
+        .filter_map(|line| line.split('`').nth(1))
+        .filter(|name| name.chars().all(|c| c.is_ascii_uppercase() || c == '_'))
+        .map(str::to_string)
+        .collect();
+
+    let mut read: BTreeSet<String> = BTreeSet::new();
+    for source in ENV_SOURCES {
+        let mut rest = *source;
+        while let Some(at) = rest.find("var") {
+            let after = &rest[at..];
+            let literal = after
+                .strip_prefix("var_os(\"")
+                .or_else(|| after.strip_prefix("var(\""));
+            if let Some(literal) = literal {
+                let name: String = literal
+                    .chars()
+                    .take_while(|c| c.is_ascii_uppercase() || *c == '_')
+                    .collect();
+                if !name.is_empty() {
+                    read.insert(name);
+                }
+            }
+            rest = &rest[at + 3..];
+        }
+    }
+    // The detector names its variables in a list rather than reading them one by one.
+    for name in ENV_NOT_IN_TABLE {
+        read.remove(*name);
+    }
+
+    let undocumented: Vec<_> = read.difference(&documented).collect();
+    let phantom: Vec<_> = documented.difference(&read).collect();
+    assert!(
+        undocumented.is_empty() && phantom.is_empty(),
+        "README environment table and the code disagree.\n\
+         read by the code but missing from the table: {undocumented:?}\n\
+         in the table but never read: {phantom:?}"
+    );
+    assert!(
+        documented.len() >= 8,
+        "only {} variables found; marker moved?",
+        documented.len()
+    );
 }
