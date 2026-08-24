@@ -113,10 +113,25 @@ pub fn run(
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
-                // Ctrl-C and the non-character aliases first; everything else comes from the
-                // one binding table in `ui::keys`.
+                // Ctrl-C first, and it works even mid-search: a user who cannot get out of a
+                // text field is stuck in a full-screen program.
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     break;
+                }
+                // While a `/` filter is being typed every printable key belongs to it, not to
+                // the dashboard -- otherwise typing "budget" toggles four panels and quits.
+                if app.is_typing_search() {
+                    match key.code {
+                        KeyCode::Esc => app.cancel_search(),
+                        KeyCode::Enter => app.accept_search(),
+                        KeyCode::Backspace => app.search_backspace(),
+                        KeyCode::Char(c) => {
+                            app.search_key(c);
+                        }
+                        _ => {}
+                    }
+                    app.pulse = app.pulse.wrapping_add(1);
+                    continue;
                 }
                 let action = match key.code {
                     KeyCode::Char(c) => keys::action_for(c),
@@ -133,12 +148,16 @@ pub fn run(
                 };
                 match action {
                     Some(keys::Action::Quit) => break,
+                    Some(keys::Action::Search) => app.begin_search(),
                     Some(keys::Action::DrillIn) => {
                         app.drill_into_selected_project();
                     }
-                    // Nothing to leave means the key keeps its old meaning: Esc quits.
+                    // Innermost thing first: clear a filter, then leave a drilldown, and only
+                    // quit when there is nothing left to back out of.
                     Some(keys::Action::Back) => {
-                        if !app.leave_drilldown() {
+                        if app.search_status().is_some() {
+                            app.cancel_search();
+                        } else if !app.leave_drilldown() {
                             break;
                         }
                     }
@@ -197,7 +216,7 @@ pub(super) fn draw(frame: &mut Frame, app: &App) {
         Panel::Limits => draw_limits(frame, body[1], app),
         Panel::Models => draw_models(frame, body[1], app),
     }
-    frame.render_widget(footer(area.width), chunks[4]);
+    frame.render_widget(footer(area.width, app.search_status()), chunks[4]);
     if app.show_help {
         draw_help(frame, area);
     }
@@ -209,8 +228,26 @@ pub(super) fn draw(frame: &mut Frame, app: &App) {
 /// panels were added, after which the tail — including how to quit — was simply cut off, because
 /// a `Paragraph` truncates without saying so. Below 120 columns this shows a compact form and
 /// leans on `?` for the rest.
-pub(super) fn footer<'a>(width: u16) -> Paragraph<'a> {
+pub(super) fn footer<'a>(width: u16, search: Option<(&str, usize, usize)>) -> Paragraph<'a> {
     let key = |k: &'a str| Span::styled(k, Style::default().fg(CYAN).add_modifier(Modifier::BOLD));
+
+    // A filter replaces the hints while it is on. Rows disappearing with nothing on screen to
+    // say why is the whole failure mode this line exists to prevent, and it carries the counts
+    // so a shortened list is never mistaken for a shrunken bill.
+    if let Some((query, shown, total)) = search {
+        return Paragraph::new(Line::from(vec![
+            Span::styled(
+                format!(" /{query}"),
+                Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!("   showing {shown} of {total} rows   ")),
+            Span::styled("Enter", Style::default().fg(CYAN)),
+            Span::raw(" keep  "),
+            Span::styled("Esc", Style::default().fg(CYAN)),
+            Span::raw(" clear"),
+        ]))
+        .style(Style::default().fg(MUTED));
+    }
     let spans = if width >= 120 {
         vec![
             key(" 1-4 "),

@@ -4,6 +4,21 @@
 
 ### Added
 
+- **`/` filters the rows a panel lists.** Matches model and provider names, project paths,
+  session ids and the models a session used, case-insensitively. `Enter` keeps the filter and
+  hands the keyboard back; `Esc` clears it; `Backspace` shortens it and, once empty, leaves.
+
+  It changes **what is listed, never what was spent** — the header totals, the pricing-coverage
+  figure and the budgets stay computed from the whole range, because "which rows am I looking at"
+  and "what did I spend" are different questions and answering the second with the first is how
+  two views of one range end up disagreeing about money. `--provider` and `--model` still narrow
+  the data itself. The footer carries the query and a "showing N of M", so a shortened list is
+  never mistaken for a smaller bill.
+
+  While a filter is being typed every printable key belongs to it rather than the dashboard —
+  otherwise typing `budget` toggles four panels and quits. `Ctrl-C` still works mid-search.
+  `Esc` now backs out one step at a time: clear a filter, leave a project, then quit.
+
 - **Drill from a project into its sessions.** `Enter` on a project row scopes the sessions view
   to that project; `Backspace` (or `Esc`) goes back to the row it started from. The panel title
   names the project it is scoped to, so a project's spend cannot be misread as the whole

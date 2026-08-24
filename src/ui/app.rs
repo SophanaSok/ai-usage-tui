@@ -55,6 +55,8 @@ pub struct App {
     /// App rather than in the panel so `recompute` can narrow the session list once per refresh
     /// instead of the draw call filtering on every frame.
     pub(super) drilldown: Option<Drilldown>,
+    /// The `/` row filter. See [`Search`].
+    pub(super) search: Search,
     /// Whether the key reference is open. There are more bindings than fit on one footer line,
     /// and a truncated footer hides them without saying so.
     pub show_help: bool,
@@ -91,6 +93,42 @@ pub enum Panel {
     Limits,
 }
 
+/// The row filter typed with `/`.
+///
+/// Filters what the visible panel *lists*; it never narrows the data the totals are computed
+/// from. Those are two different questions — "which rows am I looking at" and "what did I
+/// spend" — and answering the second with the first is how a header and a panel end up
+/// disagreeing about the same range. The footer says how many rows of how many are showing, so
+/// no count is ever presented without its scope.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Search {
+    pub query: String,
+    /// While true, every printable key appends here instead of acting on the dashboard.
+    pub typing: bool,
+}
+
+impl Search {
+    fn matches(&self, haystack: &str) -> bool {
+        self.query.is_empty()
+            || haystack
+                .to_ascii_lowercase()
+                .contains(&self.query.to_ascii_lowercase())
+    }
+
+    fn is_filtering(&self) -> bool {
+        !self.query.is_empty()
+    }
+}
+
+/// Row counts before the `/` filter, so the footer can say "3 of 12" rather than just "3".
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct SearchTotals {
+    pub rows: usize,
+    pub projects: usize,
+    pub sessions: usize,
+    pub routing: usize,
+}
+
 /// Where the sessions view is scoped, and where to return to.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Drilldown {
@@ -116,6 +154,7 @@ pub struct DerivedView {
     coverage: Coverage,
     escalations: Escalations,
     limits: LimitsReport,
+    search_totals: SearchTotals,
 }
 
 /// How much of the visible usage the pricing engine could actually price.
@@ -172,6 +211,7 @@ impl App {
             panel: Panel::Models,
             budget_engine,
             drilldown: None,
+            search: Search::default(),
             show_help: false,
             pricing: PricingEngine::load(),
             alerts: Vec::new(),
@@ -286,6 +326,8 @@ impl App {
         self.view.rows = grouped.into_values().collect();
         self.view.rows.sort_by_key(|u| Reverse(u.total_tokens()));
 
+        self.apply_search();
+
         // Clamped against the panel that is actually showing, not the model table. This read
         // `self.view.rows.len()` unconditionally, so on a machine with three model groups and
         // ten projects the cursor could never reach the fourth project — and once Enter acts on
@@ -339,6 +381,101 @@ impl App {
         } else {
             panel
         };
+    }
+
+    /// Narrow what each panel lists to the `/` query, recording what each had before.
+    ///
+    /// Applied to the display lists only. `view.filtered` — which every total, the coverage
+    /// figure and the escalations are computed from — is deliberately untouched: `/` answers
+    /// "which rows am I looking at", not "what did I spend".
+    fn apply_search(&mut self) {
+        let totals = SearchTotals {
+            rows: self.view.rows.len(),
+            projects: self.view.projects.len(),
+            sessions: self.view.sessions.len(),
+            routing: self.view.routing.len(),
+        };
+        self.view.search_totals = totals;
+        if !self.search.is_filtering() {
+            return;
+        }
+
+        let search = self.search.clone();
+        self.view
+            .rows
+            .retain(|row| search.matches(&format!("{} {}", row.provider, row.model)));
+        self.view
+            .projects
+            .retain(|project| search.matches(&project.project));
+        self.view.sessions.retain(|session| {
+            search.matches(&session.session_id)
+                || session
+                    .project
+                    .as_deref()
+                    .is_some_and(|p| search.matches(p))
+                || session.models.iter().any(|model| search.matches(model))
+        });
+        self.view.routing.retain(|aggregate| {
+            search.matches(&aggregate.agent)
+                || search.matches(&aggregate.model)
+                || search.matches(&aggregate.provider)
+        });
+
+        // The cursor can easily be past the end of a list that just got shorter.
+        self.selected = self.selected.min(self.visible_rows().saturating_sub(1));
+    }
+
+    /// Start typing a `/` filter.
+    pub fn begin_search(&mut self) {
+        self.search.typing = true;
+    }
+
+    /// Feed a keystroke to the filter. Returns false when the key was not consumed.
+    pub fn search_key(&mut self, key: char) -> bool {
+        if !self.search.typing {
+            return false;
+        }
+        self.search.query.push(key);
+        self.recompute();
+        true
+    }
+
+    /// Remove the last character, or leave the filter when it is already empty.
+    pub fn search_backspace(&mut self) {
+        if self.search.query.pop().is_none() {
+            self.search.typing = false;
+        }
+        self.recompute();
+    }
+
+    /// Keep the filter but stop capturing keys, so the dashboard's bindings work again.
+    pub fn accept_search(&mut self) {
+        self.search.typing = false;
+    }
+
+    /// Abandon the filter entirely.
+    pub fn cancel_search(&mut self) {
+        self.search = Search::default();
+        self.recompute();
+    }
+
+    pub fn is_typing_search(&self) -> bool {
+        self.search.typing
+    }
+
+    /// The filter and how much it is hiding, for the footer. `None` when nothing is filtered.
+    pub fn search_status(&self) -> Option<(&str, usize, usize)> {
+        if !self.search.typing && !self.search.is_filtering() {
+            return None;
+        }
+        let totals = self.view.search_totals;
+        let total = match self.panel {
+            Panel::Projects => totals.projects,
+            Panel::Sessions => totals.sessions,
+            Panel::Routing => totals.routing,
+            _ => totals.rows,
+        };
+        Some((self.search.query.as_str(), self.visible_rows(), total))
     }
 
     /// Scope the sessions view to the project under the cursor, if the cursor is on one.
