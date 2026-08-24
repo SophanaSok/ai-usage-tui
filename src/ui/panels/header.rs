@@ -34,6 +34,7 @@ pub fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         ),
         Span::raw("   "),
         coverage_span(app),
+        limits_span(app),
         Span::raw("   "),
         Span::styled(
             format!(
@@ -51,6 +52,32 @@ pub fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     ]))
     .style(Style::default().bg(Color::Rgb(10, 18, 24)));
     frame.render_widget(title, area);
+}
+
+/// The fullest subscription window Omarchy reports, when one is fresh. The bar's own glyph
+/// does this for Omarchy users; here it sits beside the cost figure the window constrains.
+fn limits_span<'a>(app: &App) -> Span<'a> {
+    match app.limits().binding_window() {
+        Some((snapshot, window)) => {
+            let text = format!(
+                "   {} {} {:.0}%",
+                snapshot.agent,
+                window
+                    .label
+                    .to_lowercase()
+                    .split(' ')
+                    .next()
+                    .unwrap_or("window"),
+                window.percent_used()
+            );
+            if window.is_alarming() {
+                Span::styled(text, Style::default().fg(RED).add_modifier(Modifier::BOLD))
+            } else {
+                Span::styled(text, Style::default().fg(MUTED))
+            }
+        }
+        None => Span::raw(""),
+    }
 }
 
 /// How much of the visible spend actually carries a known price.

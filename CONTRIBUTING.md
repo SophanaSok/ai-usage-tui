@@ -39,12 +39,12 @@ another. CI passes it on every command above, which also makes a dependency PR t
 
 ```sh
 cargo run --locked -- --json --db tests/fixtures/opencode_test.db --all \
-  --claude-dir /nonexistent --codex-dir /nonexistent
+  --claude-dir /nonexistent --codex-dir /nonexistent --omarchy-dir /nonexistent
 ```
 
 The fixture database has 2023-era timestamps, so `--today` and `--week` show nothing. Use
-`--all`. Pass `--claude-dir` and `--codex-dir` explicitly or you will read your own
-`~/.claude/projects` and `~/.codex`.
+`--all`. Pass `--claude-dir`, `--codex-dir` and `--omarchy-dir` explicitly or you will read
+your own `~/.claude/projects`, `~/.codex` and Omarchy records.
 
 ## Where things live
 
@@ -115,6 +115,8 @@ that looked right.
   `~/.codex` — and their real `~/.claude.json` for the billing decision. The config document is
   derived from `claude_dir`, so a fixture root resolves to a file that does not exist; pass
   `claude_json` to plant one. Codex reads no config document; `--codex-dir /nonexistent` suffices.
+  The billing decision also reads Omarchy's records, so pass `--omarchy-dir /nonexistent` too
+  (`tests/cli.rs` `hermetic()` does; lib tests set `omarchy_dir`).
 - **Tests must discriminate.** A regression test that also passes against the buggy code is
   worse than no test. Restore the bug in a scratch copy and confirm the test fails.
 

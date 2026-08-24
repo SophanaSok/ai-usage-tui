@@ -226,7 +226,9 @@ pricing runs. In order: an explicit `billing` setting; then, if any of
 `CLAUDE_CODE_USE_VERTEX` is set in the environment, per-token; then, if Claude
 Code's own `~/.claude.json` has an `oauthAccount` block, subscription, with the
 plan named from its rate-limit tier (`default_claude_max_20x` → "Max 20x");
-otherwise per-token, with a visible "billing unknown" hint. Per-token rows are
+then the plan label in Omarchy's record for the agent, if Omarchy's agents
+panel is present (see [Subscription limits](#subscription-limits-omarchy)),
+subscription; otherwise per-token, with a visible "billing unknown" hint. Per-token rows are
 priced `estimated` as before. Subscription rows carry `cost_status = quota`,
 `cost = null`, and the list-rate figure as `api_equivalent_cost`.
 
@@ -283,7 +285,9 @@ the original.
 **Billing.** As with Claude Code, a rollout looks the same on an API key and on
 a ChatGPT plan. In order: an explicit `billing` setting; then, if
 `OPENAI_API_KEY` or `CODEX_API_KEY` is set in the environment, per-token;
-otherwise per-token, with a visible "billing unknown" hint. No Codex config
+then the plan label in Omarchy's record for the agent, if Omarchy's agents
+panel is present, subscription; otherwise per-token, with a visible "billing
+unknown" hint. No Codex config
 document is read — `~/.codex/auth.json` is a credential file and is never
 opened — so `config_json` is rejected under `[collectors.codex]`. Force the
 answer with `[collectors.codex] billing = "subscription"` or `"api"` (default
@@ -373,6 +377,7 @@ key.
 | Spend over time | `g` | What does the trend look like day by day |
 | Burn rate | `w` | At this rate, when do I hit my budget |
 | Sessions | `s` | Which individual runs cost the most |
+| Limits | `l` | Subscription windows from Omarchy's agents panel: % used and reset countdown |
 
 <details>
 <summary>Screenshots of each panel</summary>
@@ -405,6 +410,56 @@ project, and no per-token price, is shown as `quota` rather than as `$0.00`.
 
 </details>
 
+### Subscription limits (Omarchy)
+
+[Omarchy](https://omarchy.org) is an Arch/Hyprland desktop whose bar has an
+Agents panel that meters every AI coding subscription on the machine. Omarchy 4
+writes one JSON record per agent under
+`${XDG_STATE_HOME:-~/.local/state}/omarchy/agents/usage/` (`claude.json`,
+`codex.json`, `fireworks.json`), fetched from the vendors' own rate-limit
+endpoints with the agents' saved sign-ins. `l` shows those finished records:
+one row per rate-limit window (`AGENT | WINDOW | bar | USED | RESETS IN |
+TIER`), then one line per agent — `Claude Code · Max 20x · updated 12m ago`.
+The header names the fullest fresh window beside the pricing-coverage figure
+(`claude session 92%`).
+
+Only six fields of each record are read: `id`, `name`, `updatedAt`, `ready`,
+`tierLabel`, `usageStatusText`, and the `limits` list (`label`, `title`,
+`percent`, `resetsAt`). Never read: the agents' credentials, Omarchy's probe
+cache (`~/.cache/omarchy/agent-usage`), the network, the record's
+`authHelpText`, and its token tallies (`modelUsage`, `recentDays`, …). Nothing
+is written into the directory.
+
+The display rules follow Omarchy's panel. A window at or above 90 % is drawn in
+the alarm colour, in the panel and in the header; a window whose reset time has
+passed shows `reset passed` and does not alarm. A record whose `updatedAt` is
+older than 45 minutes (three of Omarchy's 15-minute refreshes) or missing is
+stale: its rows are dimmed and never alarm, and the header ignores it. A record
+with no windows but a status text (`Sign-in expired`) is shown as a status row;
+a record with neither, such as Fireworks' balance record, is skipped. A file
+that does not parse is listed as `unreadable: <file>: <error>` in the panel and
+on the status line, and the header shows degraded.
+
+The reader is on by default and idle on any machine without the directory: the
+panel says so, and one INFO line goes to `AI_USAGE_LOG` when set. Disable it
+with `[omarchy] limits = false`, or point it elsewhere with `[omarchy] dir` or
+`--omarchy-dir PATH`. `--json` carries the same data under a top-level
+`limits` array — present and empty when disabled or absent:
+
+```json
+"limits": [{
+  "agent": "claude", "name": "Claude Code", "tier": "Max 20x", "status": "",
+  "updated_at": 1755950400, "age_secs": 720, "stale": false,
+  "windows": [{ "label": "Session (5-hour)", "percent_used": 92.0,
+                "resets_at": 1755961200, "resets_in_secs": 10080 }]
+}]
+```
+
+`percent_used` is 0–100, like `--check-budgets`' `pct`; `updated_at` and
+`resets_at` are Unix seconds or `null`. CSV output is unchanged. The record's
+plan label (`tierLabel`) is also a billing signal for the Claude Code and Codex
+collectors — see [Claude Code billing](#claude-code).
+
 | Key | Action |
 | --- | --- |
 | `1` | Show today (local calendar day) |
@@ -418,6 +473,7 @@ project, and no per-token price, is shown as `quota` rather than as `$0.00`.
 | `g` | Toggle spend over time |
 | `w` | Toggle the burn-rate panel |
 | `s` | Toggle the sessions panel |
+| `l` | Toggle the subscription-limits panel (Omarchy) |
 | `?` | Key reference overlay |
 | `j` / `Down` | Select the next model |
 | `k` / `Up` | Select the previous model |
@@ -442,8 +498,10 @@ ai-usage-tui --json --all --provider opencode --model gpt-5.6-sol
 ```
 
 `--json` and `--csv` imply `--once`. JSON includes the source description,
-selected range, and usage rows; each row also carries `project` and
-`session_id` (`null` when unknown). Usage CSV columns are:
+selected range, usage rows, and a `limits` array of Omarchy subscription
+windows (see [Subscription limits](#subscription-limits-omarchy); empty when
+there are none); each usage row also carries `project` and `session_id`
+(`null` when unknown). Usage CSV columns are:
 
 ```text
 provider,model,category,cost_status,requests,input_tokens,output_tokens,
@@ -487,6 +545,10 @@ billing = "auto"                        # auto | subscription | api
 [collectors.journal]
 enabled = true
 interval = 60
+
+[omarchy]
+# dir = "/home/user/.local/state/omarchy/agents/usage"
+limits = true                           # read Omarchy's agents-panel records
 
 [[budgets.entry]]
 scope = "global"
@@ -615,6 +677,7 @@ does not load it automatically.
 | `--claude-billing MODE` | How Claude Code usage is billed: `auto` (default), `subscription`, or `api`; overrides `[collectors.claude_code] billing` |
 | `--codex-dir PATH` | Override the Codex home (`$CODEX_HOME`, else `~/.codex`); `sessions/` and `archived_sessions/` are read beneath it |
 | `--codex-billing MODE` | How Codex usage is billed: `auto` (default), `subscription`, or `api`; overrides `[collectors.codex] billing` |
+| `--omarchy-dir PATH` | Override where Omarchy's agents panel keeps its usage records (default `$XDG_STATE_HOME/omarchy/agents/usage`) |
 | `--today` | Use today (local calendar day) |
 | `--week` | Use the trailing 7 days (default) |
 | `--month` | Use the trailing 30 days |
@@ -647,6 +710,7 @@ Environment variables:
 | `AI_USAGE_LOG` | Write diagnostics to a file — `1` for the default location, or a path. Off when unset. |
 | `XDG_CONFIG_HOME` | Base directory for the default config path |
 | `XDG_DATA_HOME` | Base directory for default database, journal, and cache paths |
+| `XDG_STATE_HOME` | Base directory for Omarchy's agents-panel records (`omarchy/agents/usage` beneath it) |
 
 On Windows, `USERPROFILE` (or `HOMEDRIVE` + `HOMEPATH`) stands in for `HOME`,
 `LOCALAPPDATA` for `XDG_DATA_HOME`, and `APPDATA` for `XDG_CONFIG_HOME`.
@@ -675,6 +739,11 @@ On Windows, `USERPROFILE` (or `HOMEDRIVE` + `HOMEPATH`) stands in for `HOME`,
   Claude Code. `~/.codex/auth.json` is a credential file and is never opened;
   the environment is checked only for the presence of `OPENAI_API_KEY` and
   `CODEX_API_KEY`.
+- Omarchy's agents-panel records are read-only display data: six fields per
+  record (`id`, `name`, `updatedAt`, `ready`, `tierLabel`, `usageStatusText`,
+  `limits`). The agents' credentials, Omarchy's probe cache, the record's
+  `authHelpText` and token tallies are never read, no network request is made,
+  and nothing is written into the directory.
 - Per-project attribution records the **working directory path** of each
   session, so `~/a/build` and `~/b/build` stay separate projects. The dashboard
   shows only the shortest name that distinguishes them, but `--json` and
@@ -691,6 +760,7 @@ Default local storage paths (when the corresponding XDG variable is unset):
 | OpenCode usage, read-only | `~/.local/share/opencode/opencode.db` |
 | Claude Code config document, read-only (billing only) | `~/.claude.json` |
 | Codex session logs, read-only | `~/.codex/sessions`, `~/.codex/archived_sessions` |
+| Omarchy agents-panel records, read-only | `~/.local/state/omarchy/agents/usage` |
 | Ollama and routing journal | `~/.local/share/ai-usage-tui/usage.db` |
 | Zen pricing cache | `~/.local/share/ai-usage-tui/zen-pricing.toml` |
 | Zen model catalog | `~/.local/share/ai-usage-tui/zen-models.json` |

@@ -121,6 +121,11 @@ fn build_collectors(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Option
 
     let collectors_cfg = config.collectors.as_ref();
     let mut collectors: Vec<Box<dyn Collector>> = Vec::new();
+    // Omarchy's records, when present, name the plan each agent runs on; that is a billing
+    // signal the collectors consult without touching any credential.
+    let omarchy_dir = SourceRoots::from_cli(cli, journal.clone())
+        .omarchy_usage_dir()
+        .filter(|_| cli.limits_enabled);
 
     let opencode_cfg = collector_cfg(collectors_cfg, |c| c.opencode.as_ref());
     if opencode_cfg.enabled.unwrap_or(true) {
@@ -141,6 +146,7 @@ fn build_collectors(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Option
             offsets: Default::default(),
             billing: cli.claude_billing,
             claude_json: cli.claude_json.clone(),
+            omarchy_dir: omarchy_dir.clone(),
             decision: None,
         }));
     }
@@ -154,6 +160,7 @@ fn build_collectors(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Option
             interval_secs: codex_cfg.interval.unwrap_or(30),
             cursors: Default::default(),
             billing: cli.codex_billing,
+            omarchy_dir: omarchy_dir.clone(),
             decision: None,
         }));
     }

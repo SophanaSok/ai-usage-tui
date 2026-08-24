@@ -104,7 +104,12 @@ fn test_app(usages: Vec<Usage>) -> App {
         pulse: 0,
         refresh_interval: Duration::from_secs(30),
         refreshed_at: Instant::now(),
-        roots: crate::collector::SourceRoots::new(PathBuf::from("/tmp/unused-journal.db")),
+        roots: crate::collector::SourceRoots {
+            // Never the machine's real records: the tests below plant their own.
+            omarchy_dir: Some(PathBuf::from("/nonexistent/omarchy")),
+            ..crate::collector::SourceRoots::new(PathBuf::from("/tmp/unused-journal.db"))
+        },
+        limits_absence_logged: false,
         provider_filter: None,
         model_filter: None,
         collector: None,
@@ -227,7 +232,12 @@ fn rows_do_not_mix_cost_provenance() {
         pulse: 0,
         refresh_interval: Duration::from_secs(30),
         refreshed_at: Instant::now(),
-        roots: crate::collector::SourceRoots::new(PathBuf::from("/tmp/unused-journal.db")),
+        roots: crate::collector::SourceRoots {
+            // Never the machine's real records: the tests below plant their own.
+            omarchy_dir: Some(PathBuf::from("/nonexistent/omarchy")),
+            ..crate::collector::SourceRoots::new(PathBuf::from("/tmp/unused-journal.db"))
+        },
+        limits_absence_logged: false,
         provider_filter: None,
         model_filter: None,
         collector: None,
@@ -1361,7 +1371,7 @@ fn the_quit_binding_is_visible_on_an_eighty_column_terminal() {
     // test rendered the whole dashboard at any width, which is why nothing caught it.
     use ratatui::{backend::TestBackend, Terminal};
 
-    for width in [80u16, 100, 120] {
+    for width in [80u16, 100, 110, 116, 120] {
         let mut app = test_app(vec![usage(None, None, Some(1.0), 100)]);
         app.recompute();
         let mut terminal = Terminal::new(TestBackend::new(width, 30)).expect("backend");
@@ -1415,6 +1425,7 @@ fn the_help_overlay_lists_every_panel_binding() {
         "spend over time",
         "burn",
         "sessions",
+        "subscription limits",
     ] {
         assert!(
             rendered.contains(expected),
@@ -1657,4 +1668,170 @@ fn an_escalation_onto_a_subscription_model_is_not_zero_dollars_after() {
     let rendered = render_routing(&app, 84, 12);
     assert!(rendered.contains("on quota after"), "{rendered}");
     assert!(!rendered.contains("$0.00 after"), "{rendered}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Subscription limits, read from Omarchy's agents panel.
+// ---------------------------------------------------------------------------------------------
+
+/// The fixture records, evaluated ten minutes after they were written.
+fn fixture_limits(stale: bool) -> crate::omarchy::LimitsReport {
+    let dir = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/omarchy"
+    ));
+    let now = 1_787_479_800 + if stale { 3 * 3600 } else { 0 };
+    crate::omarchy::load_limits(&dir, now, crate::omarchy::STALE_AFTER_SECS)
+}
+
+fn render_limits(app: &App, w: u16, h: u16) -> String {
+    render_panel(w, h, |frame, area| {
+        crate::ui::panels::limits::draw_limits(frame, area, app)
+    })
+}
+
+/// The foreground colour of the cell holding the first character of `needle`, or `None` when
+/// the text is not on screen. Used where the colour *is* the assertion.
+fn colour_of(
+    w: u16,
+    h: u16,
+    draw: impl FnOnce(&mut ratatui::Frame, ratatui::layout::Rect),
+    needle: &str,
+) -> Option<ratatui::style::Color> {
+    use ratatui::{backend::TestBackend, Terminal};
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("backend");
+    terminal
+        .draw(|frame| draw(frame, frame.area()))
+        .expect("draw");
+    let buffer = terminal.backend().buffer();
+    let text: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
+    let index = text.find(needle)?;
+    let column = text[..index].chars().count();
+    buffer.content().get(column).and_then(|cell| cell.fg.into())
+}
+
+#[test]
+fn the_limits_panel_renders_windows_bars_countdowns_and_the_tier() {
+    let mut app = test_app(Vec::new());
+    app.set_limits_for_test(fixture_limits(false));
+    let rendered = render_limits(&app, 100, 12);
+    for expected in [
+        "Session (5-hour)",
+        "92%",
+        "2h 03m",
+        "Weekly (7-day)",
+        "41%",
+        "Max 20x",
+        "█",
+        "Claude Code · Max 20x · updated 10m ago",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "missing {expected:?}:\n{rendered}"
+        );
+    }
+    assert!(
+        !rendered.contains("Unknown window"),
+        "a negative percent is Omarchy's unknown and must not be drawn:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("codex"),
+        "a record with no windows and no status has no row"
+    );
+}
+
+#[test]
+fn a_nearly_full_window_is_drawn_in_the_alarm_colour_and_a_stale_one_is_not() {
+    let mut app = test_app(Vec::new());
+    app.set_limits_for_test(fixture_limits(false));
+    assert_eq!(
+        colour_of(
+            100,
+            12,
+            |f, a| crate::ui::panels::limits::draw_limits(f, a, &app),
+            "92%"
+        ),
+        Some(crate::model::RED)
+    );
+    assert_ne!(
+        colour_of(
+            100,
+            12,
+            |f, a| crate::ui::panels::limits::draw_limits(f, a, &app),
+            "41%"
+        ),
+        Some(crate::model::RED)
+    );
+
+    let mut app = test_app(Vec::new());
+    app.set_limits_for_test(fixture_limits(true));
+    let rendered = render_limits(&app, 100, 12);
+    assert!(rendered.contains("stale"), "{rendered}");
+    assert_ne!(
+        colour_of(
+            100,
+            12,
+            |f, a| crate::ui::panels::limits::draw_limits(f, a, &app),
+            "92%"
+        ),
+        Some(crate::model::RED),
+        "a stale 92% describes some earlier moment and must not alarm"
+    );
+}
+
+#[test]
+fn the_limits_panel_says_why_it_is_empty() {
+    let mut app = test_app(Vec::new());
+    app.set_limits_for_test(crate::omarchy::LimitsReport {
+        dir: PathBuf::from("/nonexistent/omarchy"),
+        present: false,
+        ..Default::default()
+    });
+    let rendered = render_limits(&app, 100, 8);
+    assert!(rendered.contains("No Omarchy usage records"), "{rendered}");
+    assert!(rendered.contains("/nonexistent/omarchy"), "{rendered}");
+
+    app.set_limits_for_test(crate::omarchy::LimitsReport {
+        dir: PathBuf::from("/x"),
+        present: true,
+        problems: vec!["claude.json: expected value at line 1".into()],
+        ..Default::default()
+    });
+    let rendered = render_limits(&app, 100, 8);
+    assert!(
+        rendered.contains("none carry rate-limit windows"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("unreadable: claude.json"), "{rendered}");
+
+    app.roots.limits_enabled = false;
+    let rendered = render_limits(&app, 100, 8);
+    assert!(rendered.contains("disabled in config"), "{rendered}");
+}
+
+#[test]
+fn the_header_names_the_binding_window_only_when_it_is_fresh() {
+    let mut app = test_app(vec![usage(None, None, Some(1.0), 100)]);
+    app.recompute();
+    app.set_limits_for_test(fixture_limits(false));
+    let colour = colour_of(
+        120,
+        3,
+        |f, a| crate::ui::panels::header::draw_header(f, a, &app),
+        "claude session 92%",
+    );
+    assert_eq!(
+        colour,
+        Some(crate::model::RED),
+        "the fullest window sits beside the cost figure, in the alarm colour"
+    );
+
+    app.set_limits_for_test(fixture_limits(true));
+    let colour = colour_of(
+        120,
+        3,
+        |f, a| crate::ui::panels::header::draw_header(f, a, &app),
+        "claude session",
+    );
+    assert_eq!(colour, None, "a stale window is not a fact about now");
 }

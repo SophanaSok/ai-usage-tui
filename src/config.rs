@@ -20,6 +20,16 @@ pub struct ConfigFile {
     pub model: Option<String>,
     pub collectors: Option<CollectorsConfig>,
     pub budgets: Option<BudgetsConfig>,
+    pub omarchy: Option<OmarchyConfig>,
+}
+
+/// Omarchy's agents panel: where its records are, and whether to read them.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct OmarchyConfig {
+    pub dir: Option<String>,
+    /// Read the rate-limit windows and plan labels. Default true; the directory being absent
+    /// is already silent.
+    pub limits: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -136,6 +146,14 @@ pub fn apply_config(mut cli: Cli) -> Result<(Cli, ConfigFile)> {
     }
     if cli.codex_dir.is_none() {
         cli.codex_dir = config.codex_dir.take().map(PathBuf::from);
+    }
+    if let Some(omarchy) = config.omarchy.as_ref() {
+        if cli.omarchy_dir.is_none() {
+            cli.omarchy_dir = omarchy.dir.clone().map(PathBuf::from);
+        }
+        if let Some(limits) = omarchy.limits {
+            cli.limits_enabled = limits;
+        }
     }
     if let Some(codex) = config
         .collectors
@@ -353,5 +371,27 @@ mod tests {
             Err(error) => error.to_string(),
         };
         assert!(error.contains("[collectors.codex]"), "{error}");
+    }
+
+    #[test]
+    fn the_omarchy_table_sets_the_records_dir_and_can_disable_limits() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[omarchy]\ndir = \"/x/usage\"\nlimits = false\n").unwrap();
+        let (cli, _) = apply_config(cli_with_config(&path)).unwrap();
+        assert_eq!(
+            cli.omarchy_dir.as_deref(),
+            Some(std::path::Path::new("/x/usage"))
+        );
+        assert!(!cli.limits_enabled);
+        let flagged = Cli {
+            omarchy_dir: Some(PathBuf::from("/flag")),
+            ..cli_with_config(&path)
+        };
+        let (cli, _) = apply_config(flagged).unwrap();
+        assert_eq!(
+            cli.omarchy_dir.as_deref(),
+            Some(std::path::Path::new("/flag"))
+        );
     }
 }

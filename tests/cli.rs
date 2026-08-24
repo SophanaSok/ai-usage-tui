@@ -32,6 +32,11 @@ fn hermetic(command: &mut Command) -> &mut Command {
             "{}/tests/fixtures/no-such-codex-home",
             env!("CARGO_MANIFEST_DIR")
         ))
+        .arg("--omarchy-dir")
+        .arg(format!(
+            "{}/tests/fixtures/no-such-omarchy-dir",
+            env!("CARGO_MANIFEST_DIR")
+        ))
         .arg("--all")
 }
 
@@ -149,6 +154,8 @@ fn claude_billing_decides_whether_transcript_rows_carry_dollars() {
             .arg(&projects)
             .arg("--codex-dir")
             .arg(temp.join("no-codex-home"))
+            .arg("--omarchy-dir")
+            .arg(temp.join("no-omarchy"))
             .args(extra);
         // The detector consults these; a developer's shell must not decide the test.
         for name in [
@@ -213,6 +220,11 @@ fn codex_rollouts_are_exported_with_split_buckets_and_no_content() {
         ))
         .arg("--codex-dir")
         .arg(&codex_home)
+        .arg("--omarchy-dir")
+        .arg(format!(
+            "{}/tests/fixtures/no-such-omarchy-dir",
+            env!("CARGO_MANIFEST_DIR")
+        ))
         .arg("--codex-billing")
         .arg("api");
     for name in ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_HOME"] {
@@ -264,4 +276,42 @@ fn codex_rollouts_are_exported_with_split_buckets_and_no_content() {
         "{}",
         json["source"]
     );
+}
+
+#[test]
+fn json_carries_omarchy_limits_and_nothing_else_from_the_records() {
+    let fixtures = format!("{}/tests/fixtures/omarchy", env!("CARGO_MANIFEST_DIR"));
+    let output = hermetic(bin().arg("--json"))
+        .arg("--omarchy-dir")
+        .arg(&fixtures)
+        .output()
+        .expect("run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for forbidden in ["authHelpText", "claude auth login", "modelUsage", "345678"] {
+        assert!(
+            !stdout.contains(forbidden),
+            "{forbidden} reached the export:\n{stdout}"
+        );
+    }
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let limits = json["limits"].as_array().expect("limits array");
+    assert_eq!(limits.len(), 1, "{limits:#?}");
+    assert_eq!(limits[0]["agent"], "claude");
+    assert_eq!(limits[0]["tier"], "Max 20x");
+    assert_eq!(limits[0]["windows"][0]["label"], "Session (5-hour)");
+    assert_eq!(limits[0]["windows"][0]["percent_used"], 92.0);
+    assert_eq!(
+        limits[0]["stale"], true,
+        "the fixture is dated 2026-08-23 and this is later"
+    );
+
+    // Present and empty when there is nothing to read, so a consumer can key on it.
+    let output = hermetic(bin().arg("--json")).output().expect("run");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(json["limits"], serde_json::json!([]));
 }

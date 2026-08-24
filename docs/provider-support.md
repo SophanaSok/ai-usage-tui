@@ -84,6 +84,18 @@ These rows carry `cost_status = quota`, not `unavailable`. The distinction matte
 
 Zen usage can be read from OpenCode history. `--refresh-pricing` scrapes the live Zen pricing table from the docs page with retry/backoff and caches it at `~/.local/share/ai-usage-tui/zen-pricing.toml`. The background `ZenPricingCollector` refreshes hourly when enabled via the `enabled` key under `[collectors.zen_pricing]`. Pricing snapshots are applied to historical events for cost calculation.
 
+## Omarchy (subscription limits)
+
+Not a provider: Omarchy 4's Agents panel writes one JSON record per agent under
+`${XDG_STATE_HOME:-~/.local/state}/omarchy/agents/usage/`, and the `l` panel reads
+them (`src/omarchy/mod.rs`). `claude.json` and `codex.json` carry rate-limit windows
+(`limits`: label, percent 0..1, `resetsAt`) and a plan label (`tierLabel`); `fireworks.json`
+carries a balance, not limits, and is skipped. Six fields per record are read; credentials,
+Omarchy's probe cache, `authHelpText` and token tallies are not, and no request is made.
+The `tierLabel` is the last billing signal for the Claude Code and Codex collectors, after
+the explicit setting, the API-key environment variables, and `~/.claude.json`. Override the
+directory with `--omarchy-dir` or `[omarchy] dir`; `[omarchy] limits = false` disables it.
+
 ## Background Collectors
 
 - OpenCode collector: polls OpenCode DB every 30s (configurable), resuming from a

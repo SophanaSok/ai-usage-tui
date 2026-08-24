@@ -19,7 +19,7 @@ pub fn print_once(cli: &Cli) -> Result<()> {
                 "could not determine a home directory; pass an explicit path (see --help)"
             )
         })?;
-    let (usages, source) = load_usage(&SourceRoots::from_cli(cli, journal))?;
+    let (usages, source) = load_usage(&SourceRoots::from_cli(cli, journal.clone()))?;
     let filter = UsageFilter::new(cli);
     if let Some(path) = &cli.csv_path {
         let mut csv = String::from(
@@ -61,6 +61,8 @@ pub fn print_once(cli: &Cli) -> Result<()> {
             source
         ))?;
     } else if cli.json {
+        let roots = SourceRoots::from_cli(cli, journal.clone());
+        let limits = limits_json(&roots);
         let rows: Vec<_> = usages
             .iter()
             .filter(|usage| filter.matches(usage))
@@ -85,9 +87,14 @@ pub fn print_once(cli: &Cli) -> Result<()> {
                 })
             })
             .collect();
-        print_line(&serde_json::to_string_pretty(
-            &serde_json::json!({"source": source, "range": cli.range.label(), "usage": rows}),
-        )?)?;
+        print_line(&serde_json::to_string_pretty(&serde_json::json!({
+            "source": source,
+            "range": cli.range.label(),
+            "usage": rows,
+            // Present and empty rather than absent when disabled or not on Omarchy, so a
+            // consumer can key on it.
+            "limits": limits,
+        }))?)?;
     } else {
         print_line(&format!("{} ({})", source, cli.range.label()))?;
         for usage in usages.iter().filter(|usage| filter.matches(usage)) {
@@ -101,6 +108,40 @@ pub fn print_once(cli: &Cli) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Omarchy's subscription windows, for scripts that want "session window at 92%" without
+/// scraping the dashboard. `percent_used` is on the 0..100 scale, like `--check-budgets` `pct`.
+fn limits_json(roots: &SourceRoots) -> Vec<serde_json::Value> {
+    if !roots.limits_enabled {
+        return Vec::new();
+    }
+    let Some(dir) = roots.omarchy_usage_dir() else {
+        return Vec::new();
+    };
+    let report =
+        crate::omarchy::load_limits(&dir, crate::utils::now(), crate::omarchy::STALE_AFTER_SECS);
+    report
+        .snapshots
+        .iter()
+        .map(|snapshot| {
+            serde_json::json!({
+                "agent": snapshot.agent,
+                "name": snapshot.name,
+                "tier": snapshot.tier,
+                "status": snapshot.status_text,
+                "updated_at": snapshot.updated_at,
+                "age_secs": snapshot.age_secs,
+                "stale": snapshot.stale,
+                "windows": snapshot.windows.iter().map(|window| serde_json::json!({
+                    "label": window.label,
+                    "percent_used": window.percent_used(),
+                    "resets_at": window.resets_at,
+                    "resets_in_secs": window.resets_in_secs,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect()
 }
 
 pub fn csv_field(value: &str) -> String {

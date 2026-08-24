@@ -53,8 +53,10 @@ installed?") and per-source enable/disable, which `CollectorsConfig` already mod
 ### P3 — Dashboard
 
 Shipped since the audit: the time-series panel (`g`), burn rate with budget projection (`w`), the
-per-project view (`p`), and per-session drill-down (`s`). `src/ui.rs` was split into `src/ui/`
-with one module per panel, which is what made each of those a small independent change.
+per-project view (`p`), per-session drill-down (`s`), and the subscription-limits panel (`l`),
+which reads Omarchy's agents-panel records read-only and also surfaces the fullest fresh window
+in the header. `src/ui.rs` was split into `src/ui/` with one module per panel, which is what
+made each of those a small independent change.
 
 Remaining:
 
@@ -150,11 +152,13 @@ cargo fmt --all -- --check
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-targets --locked && cargo test --doc --locked
 
-# Against the committed fixture. `--claude-dir` and `--codex-dir` matter: without them this
-# reads your real ~/.claude/projects and ~/.codex and stops being a fixture check.
+# Against the committed fixture. `--claude-dir`, `--codex-dir` and `--omarchy-dir` matter:
+# without them this reads your real ~/.claude/projects, ~/.codex and Omarchy records and
+# stops being a fixture check.
 cargo build --release --locked
 ./target/release/ai-usage-tui --json --all \
-  --db tests/fixtures/opencode_test.db --claude-dir /nonexistent --codex-dir /nonexistent
+  --db tests/fixtures/opencode_test.db --claude-dir /nonexistent --codex-dir /nonexistent \
+  --omarchy-dir /nonexistent
 
 # Against real Claude Code logs — the true end-to-end check.
 # Watch the unpriced count: it should be zero. Subscription rows are `quota` with
@@ -169,6 +173,8 @@ cargo build --release --locked
 ```
 
 Tests are hermetic — they never read the developer's real `~/.claude/projects`, `~/.claude.json`,
-or `~/.codex`. Keep it that way: pass an explicit `claude_dir` (the config document is derived from
-it) or `claude_json`, and an explicit `codex_dir` (`--codex-dir /nonexistent`), in any new test that
-goes through `load_usage` or `print_once`, and in any command in this file.
+`~/.codex`, or `~/.local/state/omarchy`. Keep it that way: pass an explicit `claude_dir` (the config
+document is derived from it) or `claude_json`, an explicit `codex_dir` (`--codex-dir /nonexistent`),
+and an explicit `omarchy_dir` (`--omarchy-dir /nonexistent`; the billing decision reads its
+`tierLabel`), in any new test that goes through `load_usage` or `print_once`, and in any command in
+this file.
