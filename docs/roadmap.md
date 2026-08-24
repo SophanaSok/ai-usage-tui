@@ -57,11 +57,23 @@ Numbering follows the original audit. Everything not listed here has shipped.
   invocation, a 9x startup regression; the compact form costs 5ms. The curated table stays TOML
   because humans edit it and it needs comments and `period` blocks.
 
-- **Still open: classifying aggregators as `PAID`.** This was blocked on provider-qualified keys
-  and no longer is. `classify.rs::FIRST_PARTY_PAID_PROVIDERS` still excludes OpenRouter, Bedrock
-  and Azure, and its comment still says "add them once provider-qualified model resolution
-  lands" — which it now has. The work is to decide per provider whether a price can actually be
-  produced, since being able to resolve a key is not the same as having one.
+- **Resolved.** Aggregators and clouds classify as `PAID`. `classify.rs::PAID_PROVIDERS` (was
+  `FIRST_PARTY_PAID_PROVIDERS`) now carries OpenRouter, Bedrock, Azure, Vertex, Fireworks,
+  DeepInfra, Together and Perplexity alongside the first-party names, and their rows both
+  classify and price — an OpenRouter row's `anthropic/claude-3.5-sonnet` reduces to a bare name
+  and re-qualifies against `openrouter/`.
+
+  Two things worth knowing if this list is ever touched again. **It never causes a row to be
+  priced**: pricing is the table's decision, and a row that gets a figure is promoted to `PAID`
+  regardless of this list. What the list decides is the category of rows we *cannot* price —
+  "real spend, rate unknown" rather than "no idea what this is", which keeps the gap visible in
+  the coverage figure instead of hidden in `UNKNOWN`.
+
+  And **deriving the list from the pricing table's key prefixes does not work**, though it looks
+  more principled. `google` has no keys at all (LiteLLM spells it `gemini` and `vertex_ai`),
+  `ollama` has 29 and is emphatically not billable, and LiteLLM's `fireworks_ai` does not match
+  the `fireworks-ai` a collector records. Reconciling those needs fuzzy token matching, and a
+  token like `ai` matches nearly anything. An explicit, reviewable list is the honest answer.
 
 ### P2 — Coverage
 

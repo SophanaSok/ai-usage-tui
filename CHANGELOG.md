@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Aggregators and clouds are classified as `PAID` rather than `UNKNOWN`.** OpenRouter, Bedrock,
+  Azure, Vertex, Fireworks, DeepInfra, Together and Perplexity all bill per token, and the bundled
+  pricing table now carries provider-qualified rates for them — 106 keys for OpenRouter, 111 for
+  Azure, 82 for Bedrock. An OpenRouter row's `anthropic/claude-3.5-sonnet` reduces to a bare name
+  and re-qualifies against `openrouter/`, so these rows both classify and price.
+
+  This never causes a row to be priced: pricing is the table's decision, and a row that gets a
+  figure was already promoted to `PAID`. What changed is the category of rows that *cannot* be
+  priced — "real spend, rate unknown" instead of "no idea what this is". Such a row keeps `cost`
+  unknown and counts against the pricing-coverage figure, so the gap stays visible rather than
+  hidden in `UNKNOWN`. The README's category table said `PAID` meant "usage with a known billable
+  cost"; it now says what the code does.
+
+
 ### Added
 
 - **Gemini CLI collector**, the first source added since the registry landed — a module plus one

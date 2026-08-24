@@ -1397,6 +1397,55 @@ mod tests {
         );
     }
 
+    /// The other half of classifying aggregators as billable: they must actually price.
+    ///
+    /// This is what the old `FIRST_PARTY_PAID_PROVIDERS` comment was waiting on — "add them once
+    /// provider-qualified model resolution lands". An aggregator namespaces its model ids
+    /// (`anthropic/claude-3.5-sonnet`), and the resolution chain reduces that to a bare name and
+    /// re-qualifies it with the row's own provider.
+    #[test]
+    fn aggregator_rows_resolve_against_their_own_providers_rates() {
+        let engine = PricingEngine::bundled();
+        for (provider, model) in [
+            ("openrouter", "anthropic/claude-3.5-sonnet"),
+            ("azure", "gpt-4o"),
+            ("bedrock", "anthropic.claude-sonnet-4-5-20250929-v1:0"),
+        ] {
+            let rate = base_input_rate(&engine, provider, model)
+                .unwrap_or_else(|| panic!("{provider} + {model} should price"));
+            assert!(rate > 0.0, "{provider}: got {rate}");
+        }
+    }
+
+    /// A row an aggregator bills but the table cannot price stays unpriced and billable.
+    ///
+    /// It must not acquire a dollar figure, and it must not be quietly dropped from the coverage
+    /// figure either — "billable, rate unknown" is a state this tool reports rather than hides.
+    #[test]
+    fn an_unpriceable_aggregator_row_is_billable_with_no_figure() {
+        let engine = PricingEngine::bundled();
+        let mut usages = vec![Usage {
+            provider: "openrouter".into(),
+            model: "some-model-nobody-publishes".into(),
+            category: crate::classify::classify("openrouter", "some-model-nobody-publishes"),
+            requests: 1,
+            input: 1_000,
+            ..Default::default()
+        }];
+        assert_eq!(usages[0].category, Category::Paid, "billable by provider");
+
+        apply_estimated_pricing(&mut usages, &engine);
+        assert_eq!(
+            usages[0].cost, None,
+            "no rate must mean no figure, never $0.00"
+        );
+        assert_eq!(usages[0].cost_status, CostStatus::Unavailable);
+
+        let coverage = crate::ui::aggregate::coverage(&usages);
+        assert_eq!(coverage.billable_requests, 1);
+        assert_eq!(coverage.priced_requests, 0, "the gap must be visible");
+    }
+
     /// The generated table must parse completely. A skipped line is a silently missing price.
     #[test]
     fn the_generated_community_table_parses_cleanly() {
