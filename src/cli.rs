@@ -24,6 +24,9 @@ pub struct Cli {
     pub codex_dir: Option<PathBuf>,
     pub codex_billing: BillingSetting,
     pub codex_billing_set: bool,
+    /// Omarchy's agents-panel records; defaults to the XDG state location.
+    pub omarchy_dir: Option<PathBuf>,
+    pub limits_enabled: bool,
     pub range: Range,
     pub range_set: bool,
     pub provider_filter: Option<String>,
@@ -58,6 +61,8 @@ impl Default for Cli {
             codex_dir: None,
             codex_billing: BillingSetting::Auto,
             codex_billing_set: false,
+            omarchy_dir: None,
+            limits_enabled: true,
             range: Range::Week,
             range_set: false,
             provider_filter: None,
@@ -177,6 +182,12 @@ where
                     .ok_or_else(|| anyhow::anyhow!("--codex-dir requires a path"))?;
                 cli.codex_dir = Some(PathBuf::from(value));
             }
+            "--omarchy-dir" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--omarchy-dir requires a path"))?;
+                cli.omarchy_dir = Some(PathBuf::from(value));
+            }
             "--codex-billing" => {
                 let value = args
                     .next()
@@ -293,6 +304,8 @@ OPTIONS:
                                         sessions/ and archived_sessions/ are read beneath it
     --codex-billing MODE                How Codex usage is billed: auto (default), subscription,
                                         or api. Overrides [collectors.codex]
+    --omarchy-dir PATH                  Override where Omarchy's agents panel keeps its usage
+                                        records (default $XDG_STATE_HOME/omarchy/agents/usage)
                   (default: ~/.claude/projects)
     --days N       Show the last N days
     --today        Show today
@@ -349,6 +362,7 @@ KEYS:
     g              Toggle the spend-over-time graph
     w              Toggle the burn-rate panel
     s              Toggle the sessions panel
+    l              Toggle the subscription-limits panel (Omarchy)
     j / Down       Select next model
     k / Up         Select previous model
     ?              Key reference overlay

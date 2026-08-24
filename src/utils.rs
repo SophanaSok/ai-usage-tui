@@ -97,6 +97,20 @@ pub fn config_root() -> Option<PathBuf> {
     Some(home_dir()?.join(".config"))
 }
 
+/// Root for user state, honouring `XDG_STATE_HOME`, then `~/.local/state`. Omarchy keeps its
+/// agents-panel records here; this tool only ever reads them.
+pub fn state_root() -> Option<PathBuf> {
+    if let Some(xdg) = env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(xdg));
+    }
+    Some(home_dir()?.join(".local").join("state"))
+}
+
+/// Where Omarchy's agents panel writes one JSON record per agent.
+pub fn omarchy_usage_dir() -> Option<PathBuf> {
+    Some(state_root()?.join("omarchy").join("agents").join("usage"))
+}
+
 pub fn db_path() -> Option<PathBuf> {
     if let Ok(path) = env::var("OPENCODE_DB_PATH") {
         return Some(PathBuf::from(path));
@@ -154,5 +168,18 @@ mod tests {
         );
         std::env::remove_var("OPENCODE_DB_PATH");
         std::env::remove_var("AI_USAGE_JOURNAL_PATH");
+    }
+
+    #[test]
+    fn the_omarchy_usage_dir_honours_xdg_state_home() {
+        std::env::set_var("XDG_STATE_HOME", "/tmp/xdg-state");
+        assert_eq!(
+            omarchy_usage_dir().unwrap(),
+            PathBuf::from("/tmp/xdg-state/omarchy/agents/usage")
+        );
+        std::env::remove_var("XDG_STATE_HOME");
+        assert!(omarchy_usage_dir()
+            .unwrap()
+            .ends_with(".local/state/omarchy/agents/usage"));
     }
 }

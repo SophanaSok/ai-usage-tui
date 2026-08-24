@@ -26,7 +26,7 @@ use crate::pricing::{apply_estimated_pricing, PricingEngine};
 ///
 /// Three functions took the same three paths as separate arguments and each grew a fourth
 /// when billing arrived. One struct, extended in one place, threaded everywhere.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct SourceRoots {
     pub db_path: Option<PathBuf>,
     pub journal: PathBuf,
@@ -38,6 +38,26 @@ pub struct SourceRoots {
     /// Codex's home; `None` means `$CODEX_HOME` or `~/.codex` (see `codex`).
     pub codex_dir: Option<PathBuf>,
     pub codex_billing: BillingSetting,
+    /// Omarchy's agents-panel records; `None` means the XDG state location (see `omarchy`).
+    pub omarchy_dir: Option<PathBuf>,
+    /// Whether to read those records at all. On by default: an absent directory is idle.
+    pub limits_enabled: bool,
+}
+
+impl Default for SourceRoots {
+    fn default() -> Self {
+        Self {
+            db_path: None,
+            journal: PathBuf::new(),
+            claude_dir: None,
+            claude_billing: BillingSetting::Auto,
+            claude_json: None,
+            codex_dir: None,
+            codex_billing: BillingSetting::Auto,
+            omarchy_dir: None,
+            limits_enabled: true,
+        }
+    }
 }
 
 impl SourceRoots {
@@ -46,6 +66,22 @@ impl SourceRoots {
             journal,
             ..Default::default()
         }
+    }
+
+    /// The Omarchy records directory in force: explicit, else the XDG state location.
+    pub fn omarchy_usage_dir(&self) -> Option<PathBuf> {
+        self.omarchy_dir
+            .clone()
+            .or_else(crate::utils::omarchy_usage_dir)
+    }
+
+    /// The plan label Omarchy already derived for an agent, when its record is here.
+    pub fn omarchy_tier(&self, agent: &str) -> Option<String> {
+        if !self.limits_enabled {
+            return None;
+        }
+        let dir = self.omarchy_usage_dir()?;
+        crate::omarchy::tier_label_for(&dir, agent)
     }
 
     pub fn from_cli(cli: &Cli, journal: PathBuf) -> Self {
@@ -57,6 +93,8 @@ impl SourceRoots {
             claude_json: cli.claude_json.clone(),
             codex_dir: cli.codex_dir.clone(),
             codex_billing: cli.codex_billing,
+            omarchy_dir: cli.omarchy_dir.clone(),
+            limits_enabled: cli.limits_enabled,
         }
     }
 
@@ -69,13 +107,14 @@ impl SourceRoots {
     /// Decide Codex's billing. Codex has no config document this tool will read — its
     /// `auth.json` is a credential file — so the signals are the setting and the environment.
     pub fn codex_decision(&self) -> Decision {
+        let tier = self.omarchy_tier("codex");
         detect(
             "codex",
             self.codex_billing,
             &Signals {
                 claude_json: None,
                 env_has: &crate::collector::billing::env_has,
-                omarchy_tier: None,
+                omarchy_tier: tier.as_deref(),
             },
         )
     }
@@ -83,13 +122,14 @@ impl SourceRoots {
     /// Decide Claude Code's billing from the evidence available right now.
     pub fn claude_decision(&self) -> Decision {
         let path = self.claude_json_path();
+        let tier = self.omarchy_tier("claude_code");
         detect(
             "claude_code",
             self.claude_billing,
             &Signals {
                 claude_json: path.as_deref(),
                 env_has: &crate::collector::billing::env_has,
-                omarchy_tier: None,
+                omarchy_tier: tier.as_deref(),
             },
         )
     }
@@ -265,4 +305,43 @@ pub fn build_test_journal(dir: &std::path::Path) -> std::path::PathBuf {
         .expect("seed journal fixture");
     }
     path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_omarchy_record_decides_billing_when_nothing_else_does() {
+        let fixtures = std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/omarchy"
+        ));
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut roots = SourceRoots {
+            claude_dir: Some(dir.path().join(".claude").join("projects")),
+            omarchy_dir: Some(fixtures),
+            ..Default::default()
+        };
+        // Only when no API-key variable intervenes; a developer's shell must not decide.
+        if crate::collector::billing::api_env_vars("claude_code")
+            .iter()
+            .chain(crate::collector::billing::api_env_vars("codex"))
+            .any(|name| crate::collector::billing::env_has(name))
+        {
+            return;
+        }
+        let claude = roots.claude_decision();
+        assert_eq!(claude.billing, crate::model::Billing::Subscription);
+        assert_eq!(claude.tier.as_deref(), Some("Max 20x"));
+        assert_eq!(claude.reason, "omarchy record");
+        assert_eq!(roots.codex_decision().tier.as_deref(), Some("plus"));
+
+        roots.limits_enabled = false;
+        assert_eq!(
+            roots.claude_decision().reason,
+            crate::collector::billing::Decision::REASON_UNKNOWN,
+            "disabling the Omarchy reader also removes it as a billing signal"
+        );
+    }
 }

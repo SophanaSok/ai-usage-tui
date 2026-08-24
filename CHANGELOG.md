@@ -4,6 +4,20 @@
 
 ### Added
 
+- **Subscription limits from Omarchy's agents panel.** Omarchy 4 meters every AI coding
+  subscription on the machine and writes one JSON record per agent under
+  `${XDG_STATE_HOME:-~/.local/state}/omarchy/agents/usage/`. A new `l` panel shows those
+  records — one row per rate-limit window with % used, a bar and the reset countdown, then a
+  line per agent with its plan label and record age — and the header names the fullest fresh
+  window beside the pricing-coverage figure (`claude session 92%`, alarm colour at 90 %).
+  `--json` gains a top-level `limits` array (present and empty when disabled or absent);
+  `[omarchy] dir` / `limits` and `--omarchy-dir` configure it. Six fields per record are read
+  (`id`, `name`, `updatedAt`, `ready`, `tierLabel`, `usageStatusText`, `limits`); the agents'
+  credentials, Omarchy's probe cache, `authHelpText` and the token tallies are never read, no
+  request is made, and nothing is written. Records older than 45 minutes are dimmed and never
+  alarm; unreadable ones are named on the status line. The record's `tierLabel` is now the
+  fourth billing signal for Claude Code and Codex, after the explicit setting, the API-key
+  variables and `~/.claude.json`. Off Omarchy the directory is absent and the panel is idle.
 - **Codex CLI collector.** Reads Codex's session logs ("rollouts") under `~/.codex/sessions` and
   `~/.codex/archived_sessions` — `$CODEX_HOME`, or `--codex-dir` / `codex_dir` — tailing each file
   by a cursor that also remembers the model, thread and directory in force there. Only

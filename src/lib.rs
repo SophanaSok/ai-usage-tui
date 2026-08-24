@@ -8,6 +8,7 @@ pub mod export;
 pub mod helpers;
 pub mod logging;
 pub mod model;
+pub mod omarchy;
 pub mod pricing;
 pub mod routing;
 pub mod ui;
@@ -42,6 +43,7 @@ mod integration_tests {
             journal: journal_path,
             claude_dir: Some(temp_dir.path().join("no-claude-logs")),
             codex_dir: Some(temp_dir.path().join("no-codex-home")),
+            omarchy_dir: Some(temp_dir.path().join("no-omarchy")),
             ..Default::default()
         };
         let (usages, _source) = load_usage(&roots).unwrap();
@@ -167,6 +169,7 @@ mod integration_tests {
             journal: journal_path,
             claude_dir: Some(temp_dir.path().join("no-claude-logs")),
             codex_dir: Some(temp_dir.path().join("no-codex-home")),
+            omarchy_dir: Some(temp_dir.path().join("no-omarchy")),
             ..Default::default()
         };
         let (usages, _source) = load_usage(&roots).unwrap();
@@ -180,6 +183,7 @@ mod integration_tests {
             db_path: Some(db_path),
             claude_dir: Some(temp_dir.path().join("no-claude-logs")),
             codex_dir: Some(temp_dir.path().join("no-codex-home")),
+            omarchy_dir: Some(temp_dir.path().join("no-omarchy")),
             ..Default::default()
         };
 
@@ -199,6 +203,7 @@ mod integration_tests {
             db_path: Some(db_path),
             claude_dir: Some(temp_dir.path().join("no-claude-logs")),
             codex_dir: Some(temp_dir.path().join("no-codex-home")),
+            omarchy_dir: Some(temp_dir.path().join("no-omarchy")),
             ..Default::default()
         };
 

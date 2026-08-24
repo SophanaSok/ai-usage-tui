@@ -58,8 +58,9 @@ pub use theme::cost_display;
 
 use panels::{
     alerts::draw_alert_banner, breakdown::draw_breakdown, budgets::draw_budgets, burn::draw_burn,
-    header::draw_header, metrics::draw_metrics, models::draw_models, projects::draw_projects,
-    routing::draw_routing, sessions::draw_sessions, timeseries::draw_timeseries,
+    header::draw_header, limits::draw_limits, metrics::draw_metrics, models::draw_models,
+    projects::draw_projects, routing::draw_routing, sessions::draw_sessions,
+    timeseries::draw_timeseries,
 };
 use theme::{panel, MUTED};
 
@@ -122,6 +123,7 @@ pub fn run(
                     KeyCode::Char('g') => app.toggle_panel(Panel::TimeSeries),
                     KeyCode::Char('w') => app.toggle_panel(Panel::Burn),
                     KeyCode::Char('s') => app.toggle_panel(Panel::Sessions),
+                    KeyCode::Char('l') => app.toggle_panel(Panel::Limits),
                     KeyCode::Char('1') => app.set_range(Range::Today),
                     KeyCode::Char('2') => app.set_range(Range::Week),
                     KeyCode::Char('3') => app.set_range(Range::Month),
@@ -176,6 +178,7 @@ pub(super) fn draw(frame: &mut Frame, app: &App) {
         Panel::TimeSeries => draw_timeseries(frame, body[1], app),
         Panel::Burn => draw_burn(frame, body[1], app),
         Panel::Sessions => draw_sessions(frame, body[1], app),
+        Panel::Limits => draw_limits(frame, body[1], app),
         Panel::Models => draw_models(frame, body[1], app),
     }
     frame.render_widget(footer(area.width), chunks[4]);
@@ -186,13 +189,13 @@ pub(super) fn draw(frame: &mut Frame, app: &App) {
 
 /// Key hints, sized to the terminal.
 ///
-/// The full list is 106 columns. It fit an 80-column terminal until the graph, burn and sessions
+/// The full list is 120 columns. It fit an 80-column terminal until the graph, burn and sessions
 /// panels were added, after which the tail — including how to quit — was simply cut off, because
-/// a `Paragraph` truncates without saying so. Below 110 columns this shows a compact form and
+/// a `Paragraph` truncates without saying so. Below 120 columns this shows a compact form and
 /// leans on `?` for the rest.
 pub(super) fn footer<'a>(width: u16) -> Paragraph<'a> {
     let key = |k: &'a str| Span::styled(k, Style::default().fg(CYAN).add_modifier(Modifier::BOLD));
-    let spans = if width >= 110 {
+    let spans = if width >= 120 {
         vec![
             key(" 1-4 "),
             Span::raw("range  "),
@@ -210,8 +213,10 @@ pub(super) fn footer<'a>(width: u16) -> Paragraph<'a> {
             Span::raw(" burn  "),
             key("s"),
             Span::raw(" sessions  "),
+            key("l"),
+            Span::raw(" limits  "),
             key("j/k"),
-            Span::raw(" navigate  "),
+            Span::raw(" move  "),
             key("?"),
             Span::raw(" help  "),
             key("q"),
@@ -223,7 +228,7 @@ pub(super) fn footer<'a>(width: u16) -> Paragraph<'a> {
             Span::raw("range  "),
             key("r"),
             Span::raw(" refresh  "),
-            key("btpgws"),
+            key("btpgwsl"),
             Span::raw(" panels  "),
             key("j/k"),
             Span::raw(" move  "),
@@ -250,6 +255,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         ("g", "spend over time"),
         ("w", "burn rate and time to budget"),
         ("s", "sessions"),
+        ("l", "subscription limits, from Omarchy's agents panel"),
         ("j / k", "move the selection (also arrow keys)"),
         ("?", "close this help"),
         ("q", "quit (also Esc, Ctrl-C)"),

@@ -241,6 +241,20 @@ CREATE TABLE usage_event (
 `event_id` carries a `UNIQUE` index and is what makes re-recording an event idempotent. There is a
 parallel `routing_event` table with the same identity treatment.
 
+## Subscription limits (Omarchy)
+
+Not a collector. Omarchy's agents-panel records (`${XDG_STATE_HOME:-~/.local/state}/omarchy/agents/usage/*.json`)
+are read in `App::refresh()`, beside the routing-table read, on every dashboard refresh: three
+files of about 1.5 KB each, so a thread and a high-water mark would cost more than they save.
+`src/omarchy::load_limits` is pure over `now`, deserialises six fields per record, and never
+writes. An absent directory is the normal state off Omarchy and is not degraded — the panel
+says so and one INFO line is logged. A record that fails to parse is degraded: it is named on
+the status line (`limits: claude.json: ...`) and as an `unreadable:` row in the panel. Records
+older than `STALE_AFTER_SECS` (45 min, three of Omarchy's 900 s refreshes) are dimmed and
+never alarm. The same records feed the billing decision: the Claude Code and Codex collectors
+take the record's `tierLabel` as a subscription signal after the explicit setting, the API-key
+environment variables, and `~/.claude.json`. `[omarchy] limits = false` turns both off.
+
 ## TUI integration
 
 The dashboard calls `snapshot()` on its refresh interval (default 30s, `--refresh-interval`). That

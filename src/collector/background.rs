@@ -438,6 +438,9 @@ pub struct ClaudeCodeCollector {
     pub billing: BillingSetting,
     /// Claude Code's `~/.claude.json`, when it is not at the default location.
     pub claude_json: Option<PathBuf>,
+    /// Omarchy's records directory, for the plan label its panel already derived; `None`
+    /// disables that signal.
+    pub omarchy_dir: Option<PathBuf>,
     /// The billing decision in force. Evidence, once found, is kept: Claude Code rewrites its
     /// config document constantly, and a poll that catches it half-written must not flip the
     /// rows it collects to a different status from the rows already merged.
@@ -450,13 +453,17 @@ impl ClaudeCodeCollector {
             self.claude_json.as_deref(),
             self.root.as_deref(),
         );
+        let tier = self
+            .omarchy_dir
+            .as_deref()
+            .and_then(|dir| crate::omarchy::tier_label_for(dir, "claude_code"));
         let fresh = detect(
             "claude_code",
             self.billing,
             &Signals {
                 claude_json: path.as_deref(),
                 env_has: &crate::collector::billing::env_has,
-                omarchy_tier: None,
+                omarchy_tier: tier.as_deref(),
             },
         );
         let decision = resolve_sticky("claude_code", self.decision.take(), fresh);
@@ -471,6 +478,7 @@ pub struct CodexCollector {
     /// Per-file cursors: byte offset plus the model, thread and directory in force there.
     pub cursors: crate::collector::codex::Cursors,
     pub billing: BillingSetting,
+    pub omarchy_dir: Option<PathBuf>,
     pub decision: Option<Decision>,
 }
 
@@ -482,13 +490,17 @@ impl Collector for CodexCollector {
         Duration::from_secs(self.interval_secs)
     }
     fn poll(&mut self) -> Result<Vec<Usage>> {
+        let tier = self
+            .omarchy_dir
+            .as_deref()
+            .and_then(|dir| crate::omarchy::tier_label_for(dir, "codex"));
         let fresh = detect(
             "codex",
             self.billing,
             &Signals {
                 claude_json: None,
                 env_has: &crate::collector::billing::env_has,
-                omarchy_tier: None,
+                omarchy_tier: tier.as_deref(),
             },
         );
         let decision = resolve_sticky("codex", self.decision.take(), fresh);
@@ -878,6 +890,7 @@ mod tests {
             offsets: Default::default(),
             billing: BillingSetting::Auto,
             claude_json: Some(config_json.clone()),
+            omarchy_dir: None,
             decision: None,
         };
         let rows = collector.poll().unwrap();

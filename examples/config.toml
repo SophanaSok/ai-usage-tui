@@ -59,3 +59,9 @@ scope = "model"
 name = "gpt-5.6-sol"
 period = "monthly"
 limit = 20.0
+
+# Omarchy's agents panel (Omarchy 4) writes one JSON record per agent with each
+# subscription's rate-limit windows and plan label. Read-only; idle when absent.
+[omarchy]
+# dir = "/home/user/.local/state/omarchy/agents/usage"   # default: $XDG_STATE_HOME/omarchy/agents/usage
+limits = true                            # `l` panel, header window, --json `limits`, billing signal

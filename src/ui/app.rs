@@ -13,6 +13,7 @@ use crate::model::{
     BurnRate, Category, CostStatus, DayTotals, ProjectTotals, Range, RoutingAggregates,
     SessionTotals, Totals, Usage,
 };
+use crate::omarchy::{self, LimitsReport};
 use crate::pricing::PricingEngine;
 use crate::utils::format_clock;
 
@@ -36,6 +37,9 @@ pub struct App {
     pub refreshed_at: Instant,
     /// Every source path and billing setting, for the collector-less refresh path.
     pub roots: SourceRoots,
+    /// Whether the absence of Omarchy's records has been logged. Once is information; every
+    /// thirty seconds is noise.
+    pub(super) limits_absence_logged: bool,
     pub provider_filter: Option<String>,
     pub model_filter: Option<String>,
     pub collector: Option<CollectorHandle>,
@@ -75,6 +79,7 @@ pub enum Panel {
     TimeSeries,
     Burn,
     Sessions,
+    Limits,
 }
 
 #[derive(Default)]
@@ -90,6 +95,7 @@ pub struct DerivedView {
     sessions: Vec<SessionTotals>,
     coverage: Coverage,
     escalations: Escalations,
+    limits: LimitsReport,
 }
 
 /// How much of the visible usage the pricing engine could actually price.
@@ -139,6 +145,7 @@ impl App {
             refresh_interval,
             refreshed_at: Instant::now(),
             roots,
+            limits_absence_logged: false,
             provider_filter,
             model_filter,
             collector,
@@ -333,6 +340,27 @@ impl App {
                 Vec::new()
             }
         };
+        // Omarchy's records: three small files, read here beside the routing table so the
+        // render path stays free of I/O. Absent on any machine without Omarchy.
+        if self.roots.limits_enabled {
+            if let Some(dir) = self.roots.omarchy_usage_dir() {
+                let report =
+                    omarchy::load_limits(&dir, crate::utils::now(), omarchy::STALE_AFTER_SECS);
+                if !report.present && !self.limits_absence_logged {
+                    crate::logging::info(
+                        "omarchy",
+                        &format!("no usage records at {}; limits panel idle", dir.display()),
+                    );
+                    self.limits_absence_logged = true;
+                }
+                if !report.problems.is_empty() {
+                    self.status =
+                        format!("{} | limits: {}", self.status, report.problems.join("; "));
+                    self.degraded = true;
+                }
+                self.view.limits = report;
+            }
+        }
         if !self.budget_engine.is_empty() {
             self.alerts = self.budget_engine.check(&self.usages);
             if let Some(sink) = &self.alert_sink {
@@ -367,6 +395,15 @@ impl App {
 
     pub fn escalations(&self) -> &Escalations {
         &self.view.escalations
+    }
+
+    pub fn limits(&self) -> &LimitsReport {
+        &self.view.limits
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_limits_for_test(&mut self, limits: LimitsReport) {
+        self.view.limits = limits;
     }
 
     #[cfg(test)]

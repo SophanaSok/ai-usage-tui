@@ -50,6 +50,9 @@
 - Codex CLI collector (`src/collector/codex.rs`): reads rollouts under `~/.codex/sessions` and
   `archived_sessions`, `openai` rows priced from the bundled table, billing from
   `[collectors.codex] billing` / `--codex-billing` / `OPENAI_API_KEY`, hermetic via `--codex-dir`
+- Subscription limits from Omarchy's agents panel (`src/omarchy/mod.rs`, `l` panel, header span,
+  `--json` `limits` array): read-only, six fields per record, `[omarchy]` / `--omarchy-dir`;
+  the record's `tierLabel` is Phase 1's fourth billing signal, now live
 
 ## Released in v0.4.1 (2026-08-20)
 
