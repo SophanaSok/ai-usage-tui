@@ -49,12 +49,13 @@ another. CI passes it on every command above, which also makes a dependency PR t
 
 ```sh
 cargo run --locked -- --json --db tests/fixtures/opencode_test.db --all \
-  --claude-dir /nonexistent --codex-dir /nonexistent --omarchy-dir /nonexistent
+  --claude-dir /nonexistent --codex-dir /nonexistent --omarchy-dir /nonexistent \
+  --journal /nonexistent/journal.db
 ```
 
 The fixture database has 2023-era timestamps, so `--today` and `--week` show nothing. Use
-`--all`. Pass `--claude-dir`, `--codex-dir` and `--omarchy-dir` explicitly or you will read
-your own `~/.claude/projects`, `~/.codex` and Omarchy records.
+`--all`. Pass `--claude-dir`, `--codex-dir`, `--omarchy-dir` and `--journal` explicitly or you
+will read your own `~/.claude/projects`, `~/.codex`, Omarchy records and usage journal.
 
 `--doctor` prints what every source resolved to — path searched, rows found, billing decision —
 without starting the dashboard. It is the fastest way to check that a collector change reads
@@ -151,8 +152,11 @@ that looked right.
   `~/.codex` — and their real `~/.claude.json` for the billing decision. The config document is
   derived from `claude_dir`, so a fixture root resolves to a file that does not exist; pass
   `claude_json` to plant one. Codex reads no config document; `--codex-dir /nonexistent` suffices.
-  The billing decision also reads Omarchy's records, so pass `--omarchy-dir /nonexistent` too
-  (`tests/cli.rs` `hermetic()` does; lib tests set `omarchy_dir`).
+  The billing decision also reads Omarchy's records, so pass `--omarchy-dir /nonexistent` too,
+  and `--journal` — the journal defaults to your own `$XDG_DATA_HOME/ai-usage-tui/usage.db`,
+  so without it a machine with any journaled Ollama usage sees `ollama` rows in a run meant
+  to be fixture-only (`tests/cli.rs` `hermetic()` pins all four; lib tests set them on
+  `SourceRoots`).
 - **`tests/docs.rs` is part of the build.** It fails when the README's CLI or environment tables
   disagree with `src/cli.rs`, when `--help` and the parser disagree, or when the README pins a
   release other than `Cargo.toml`'s. A doc-only PR can fail CI on it; the assertion names the

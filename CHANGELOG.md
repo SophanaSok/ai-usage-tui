@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`tests/cli.rs::hermetic()` was not hermetic: it never pinned `--journal`.** It pinned the
+  OpenCode database, the Claude Code root, the Codex home and the Omarchy directory, and left the
+  usage journal to resolve from the environment — `AI_USAGE_JOURNAL_PATH`, else
+  `$XDG_DATA_HOME/ai-usage-tui/usage.db`. Every CLI test therefore read whatever journal the
+  developer's own machine had. CI never caught it because a fresh runner has no journal.
+
+  It was not theoretical: with one journaled Ollama response present, a fixture-only `--json` run
+  returns 10 rows instead of 9, and `a_disabled_source_is_disabled_for_the_exports_too` — added in
+  v0.6.0 — fails outright. Any contributor with journaled Ollama usage would have hit it on their
+  first `cargo test`. The same omission was in the documented commands in `CONTRIBUTING.md`,
+  `docs/roadmap.md` and the `justfile`'s `run` recipe; all four now pin the journal.
+
+
 ## 0.6.0 - 2026-08-24
 
 ### Changed

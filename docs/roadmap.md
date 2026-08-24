@@ -1,6 +1,6 @@
 # Roadmap and Outstanding Findings
 
-Working state for continuing the audit-driven work started 2026-08-18, last updated 2026-08-20.
+Working state for continuing the audit-driven work started 2026-08-18, last updated 2026-08-24 (v0.6.0).
 Shipped items are in the versioned sections of `CHANGELOG.md` (new work goes under
 `[Unreleased]`); this file is the *remaining* work, with enough evidence attached that each item
 can be picked up cold.
@@ -8,8 +8,13 @@ can be picked up cold.
 ## Where things stand
 
 Tests (see the CI test job for the count), `cargo fmt --check` and `cargo clippy -D warnings`
-clean, CI across Linux / macOS / Windows with an MSRV job (1.88) and `cargo-deny` — six checks,
-all green on every branch since PR #5.
+clean, CI across Linux / macOS / Windows with an MSRV job (1.88), a docs job (`cargo doc -D
+warnings` plus a relative-link check across every Markdown file) and `cargo-deny` — seven checks,
+all green on every branch since PR #5. `cargo-deny` also runs weekly on a schedule: an advisory
+published against a dependency that has not changed produces neither a push nor a PR, so a
+push-only trigger never noticed it.
+
+`just check` runs exactly what CI runs, in CI's order. Use it before pushing.
 
 **Every P0 and P1 finding from the original audit has shipped.** What remains is P2 and P3 — depth
 and breadth, not correctness.
@@ -46,9 +51,22 @@ stealth models; vendor a snapshot via `include_str!` so offline still works.
 
 ### P2 — Coverage
 
-More agent CLIs behind the existing `Collector` trait, which is already the right seam.
-**Codex** shipped (`src/collector/codex.rs`); **Gemini CLI** is next. The trait needs auto-discovery ("which agent CLIs are
-installed?") and per-source enable/disable, which `CollectorsConfig` already models.
+More agent CLIs behind the source registry. **Codex** shipped (`src/collector/codex.rs`);
+**Gemini CLI** is next.
+
+This got materially cheaper in v0.6.0. Adding a source used to mean 9-16 edits across 7 files,
+because the set of sources was wired by hand in two independent places — `collector::load_usage`
+for the exports and `main::build_collectors` for the dashboard — and `CONTRIBUTING.md` documented
+only the second. It is now a module in `src/collector/` exposing `ID`, `read` and `collector`,
+plus one entry in `collector::registry::SOURCES`, with
+`every_source_is_reachable_from_both_paths` failing the build if a source is only half wired.
+`[collectors.<id>]` needs no code at all: the config table is keyed off the registry.
+
+Per-source enable/disable is done and genuinely applies everywhere — it previously governed the
+dashboard's background collectors and was ignored by `--json`/`--csv`/`--check-budgets`. What
+remains is **auto-discovery**: "which agent CLIs are installed?", so a first run finds sources
+without being told. `--doctor` already resolves and reports every registered source's path, which
+is most of the machinery.
 
 ### P3 — Dashboard
 
@@ -76,14 +94,35 @@ Remaining:
 
 - Migrate to `clap` derive with subcommands (`daily`, `monthly`, `session`, `blocks`, `live`) and
   generated shell completions. The hand-rolled parser already strains under manual
-  mutual-exclusion checks.
-- **Resolved.** crates.io publication is wired up: `Cargo.toml` carries `readme`, an `exclude`
-  that drops the 670KB of screenshots (the packaged crate is 247KB compressed, 91 files), and
-  `[package.metadata.binstall]` overrides mapping every target to its release archive. The
-  `publish-crate` job in `release.yml` publishes on a tag once `CARGO_REGISTRY_TOKEN` exists. The
-  fixtures were kept in deliberately: the `#[cfg(test)]` modules under `src/` read
-  `tests/fixtures/` at runtime, so excluding them would ship a crate whose own tests cannot run.
-  What is left is the account step — see `docs/release-process.md`, "First publish".
+  mutual-exclusion checks — there are now eleven mutually exclusive one-shot actions checked by
+  hand in `parse_cli`.
+
+  This is also what blocks **shell completions and a man page**, which is why neither shipped in
+  v0.6.0: both fall out of a declarative flag table almost for free, and hand-writing them would
+  be a sixth copy of the CLI surface. `[package.metadata.deb] assets` and
+  `[package.metadata.generate-rpm]` would each need a `usr/share/man/man1/` and a completion
+  entry once they exist.
+
+  Two things reduce the urgency, and are worth keeping whatever happens here: `tests/docs.rs`
+  now diffs the README's CLI table, `parse_cli`'s match arms **and** the `--help` text against
+  each other in both directions, and the `KEYS` block in `--help` is generated from
+  `ui::keys::BINDINGS` rather than hand-written.
+- **Resolved and shipped.** `ai-usage-tui` is published on crates.io as of v0.6.0, so
+  `cargo install ai-usage-tui` and `cargo binstall ai-usage-tui` both work. `Cargo.toml` carries
+  `readme`, an `exclude` that drops the 670KB of screenshots (the packaged crate is 267KB
+  compressed, 105 files) and `[package.metadata.binstall]` overrides mapping every target to its
+  release archive. The `publish-crate` job publishes on each tag and refuses to run when the tag
+  and `Cargo.toml` disagree.
+
+  The fixtures are kept in the package deliberately: the `#[cfg(test)]` modules under `src/` read
+  `tests/fixtures/` at runtime and `src/config.rs` includes `examples/config.toml`, so excluding
+  either would ship a crate whose own tests cannot run.
+
+  A Homebrew tap and Scoop bucket exist too (`SophanaSok/homebrew-tap`,
+  `SophanaSok/scoop-bucket`); the `update-taps` job pushes the rendered manifests on each tag.
+  Both that job and `publish-crate` skip with a notice if their secret is absent — including when
+  a fine-grained `TAP_TOKEN` **expires**, in which case the release still succeeds and the tap
+  silently stops updating. The job-log warning is the only signal.
 - **Resolved.** `docs/model-routing.md` no longer duplicates the agent-to-model table; that mapping
   lives in `~/.config/opencode/opencode.json` and `~/.config/opencode/ROUTING.md`, and the repo doc
   now carries only policy (tiers by role, privacy boundary, escalation, evaluation schema).
@@ -97,6 +136,23 @@ Remaining:
   `opencode/deepseek-v4-flash-free`. Both are free-cloud, so cost is unaffected, but note that
   `reviewer` and `reasoning` then share a model — which weakens rule 3 (prefer a reviewer on a
   different provider from the agent that wrote the code) when `reasoning` did the writing.
+
+### P3 — Small, known, unclaimed
+
+Each of these is an afternoon at most, and each is a reasonable first outside contribution.
+
+- **`src/collector/zen.rs` has no tests.** Thirty-two lines: a path join and a network fetch. The
+  join is trivially testable; the fetch wants the same fetch-from-parse split
+  `pricing_refresh.rs` already uses (`fetch_with_backoff` does the HTTP, `parse_pricing_html` is
+  pure and tested against committed fixtures).
+- **The README's "Data sources" section is the longest one left**, at roughly 140 lines. The two
+  provider billing essays already moved to `docs/provider-support.md`; the per-provider parsing
+  detail is the obvious next candidate, leaving a table and the paths.
+- **`src/ui/theme.rs` has no tests** and probably wants none — it is colour constants. Noted so
+  the next person does not re-derive that.
+- **Derived escalations are TUI-only** (also listed under Dashboard above): `--json` and `--csv`
+  carry usage rows only. This is the cheapest of the Dashboard items and the only one that
+  needs no new UI.
 
 ## Decisions worth knowing about
 
@@ -162,9 +218,15 @@ gh run watch
 ```
 
 A dispatch run builds every architecture, asserts each binary's arch with `file`, builds and
-inspects the `.deb`/`.rpm`, generates checksums, renders the packaging manifests and fails on any
-unsubstituted placeholder — then skips only the publish. Run it after any change to the release
-workflow, the packaging templates, or the build matrix.
+inspects the `.deb`/`.rpm`, generates checksums, renders the packaging manifests (asserting the
+Chocolatey pair keeps the `tools/` layout its nuspec glob needs) and fails on any unsubstituted
+placeholder — then skips only the publish. Run it after any change to the release workflow, the
+packaging templates, or the build matrix.
+
+**What a dispatch run does not cover:** `publish-crate` and `update-taps` are both gated on
+`github.event_name == 'push'`, so a dry run always skips them. Their first real execution is on a
+tag. That is deliberate — neither can be rehearsed without publishing — but it means a change to
+either job is unverified until a release, so keep them boring.
 
 ## How to verify a change end to end
 
@@ -173,13 +235,14 @@ cargo fmt --all -- --check
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-targets --locked && cargo test --doc --locked
 
-# Against the committed fixture. `--claude-dir`, `--codex-dir` and `--omarchy-dir` matter:
-# without them this reads your real ~/.claude/projects, ~/.codex and Omarchy records and
-# stops being a fixture check.
+# Against the committed fixture. All four overrides matter: without them this reads your real
+# ~/.claude/projects, ~/.codex, Omarchy records and usage journal, and stops being a fixture
+# check. `--journal` is the one that is easy to forget -- it defaults to
+# $XDG_DATA_HOME/ai-usage-tui/usage.db, so any journaled Ollama usage shows up as `ollama` rows.
 cargo build --release --locked
 ./target/release/ai-usage-tui --json --all \
   --db tests/fixtures/opencode_test.db --claude-dir /nonexistent --codex-dir /nonexistent \
-  --omarchy-dir /nonexistent
+  --omarchy-dir /nonexistent --journal /nonexistent/journal.db
 
 # Against real Claude Code logs — the true end-to-end check.
 # Watch the unpriced count: it should be zero. Subscription rows are `quota` with
@@ -194,8 +257,14 @@ cargo build --release --locked
 ```
 
 Tests are hermetic — they never read the developer's real `~/.claude/projects`, `~/.claude.json`,
-`~/.codex`, or `~/.local/state/omarchy`. Keep it that way: pass an explicit `claude_dir` (the config
-document is derived from it) or `claude_json`, an explicit `codex_dir` (`--codex-dir /nonexistent`),
-and an explicit `omarchy_dir` (`--omarchy-dir /nonexistent`; the billing decision reads its
-`tierLabel`), in any new test that goes through `load_usage` or `print_once`, and in any command in
-this file.
+`~/.codex`, `~/.local/state/omarchy`, or usage journal. Keep it that way: pass an explicit
+`claude_dir` (the config document is derived from it) or `claude_json`, an explicit `codex_dir`
+(`--codex-dir /nonexistent`), an explicit `omarchy_dir` (`--omarchy-dir /nonexistent`; the billing
+decision reads its `tierLabel`), and an explicit `journal`, in any new test that goes through
+`load_usage` or `print_once`, and in any command in this file.
+
+The journal is the one that was missed: `tests/cli.rs::hermetic()` pinned the other three and not
+this one, so every CLI test read `$XDG_DATA_HOME/ai-usage-tui/usage.db`. CI never caught it —
+a fresh runner has no journal — and it would have surfaced first as `ollama` rows appearing in a
+fixture-only assertion on a contributor's machine. Fixed in `hermetic()`; the lesson is that
+"hermetic" has to mean *every* source the registry lists, not the ones that were top of mind.
