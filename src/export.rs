@@ -63,9 +63,16 @@ pub fn print_once(cli: &Cli) -> Result<()> {
     } else if cli.json {
         let roots = SourceRoots::from_cli(cli, journal.clone());
         let limits = limits_json(&roots);
-        let rows: Vec<_> = usages
+        // Filtered once and reused: the escalation block must be derived from exactly the rows
+        // the export reports, or the two disagree about the same run.
+        let filtered: Vec<Usage> = usages
             .iter()
             .filter(|usage| filter.matches(usage))
+            .cloned()
+            .collect();
+        let escalations = escalations_json(&filtered);
+        let rows: Vec<_> = filtered
+            .iter()
             .map(|usage| {
                 serde_json::json!({
                     "provider": usage.provider,
@@ -94,6 +101,9 @@ pub fn print_once(cli: &Cli) -> Result<()> {
             // Present and empty rather than absent when disabled or not on Omarchy, so a
             // consumer can key on it.
             "limits": limits,
+            // Derived from the usage above, never from recorded routing events. Always present,
+            // for the same reason as `limits`.
+            "escalations": escalations,
         }))?)?;
     } else {
         print_line(&format!("{} ({})", source, cli.range.label()))?;
@@ -108,6 +118,45 @@ pub fn print_once(cli: &Cli) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Escalations derived from the usage in range — the routing panel's derived block, for scripts.
+///
+/// This was TUI-only: `--json` carried usage rows and nothing that answered "did sessions move
+/// to a pricier model, and what did that cost". Derived from the same filtered rows the export
+/// reports, with the same pricing table the dashboard ranks models by, so a script and the
+/// dashboard cannot disagree about one run.
+///
+/// Deliberately *not* merged into `--routing-json`. That export reads recorded `--record-routing`
+/// events from the journal and nothing else; these are inferred from usage. The dashboard shows
+/// them adjacent and labels them as different things, and a test asserts it — folding one into
+/// the other in an export would undo exactly that distinction.
+///
+/// `escalation_rate` is null rather than 0 when no session had enough information to examine: a
+/// rate over zero sessions is not a fact about anything.
+fn escalations_json(filtered: &[Usage]) -> serde_json::Value {
+    let engine = crate::pricing::PricingEngine::load();
+    let escalations = crate::escalation::derive(filtered, |model| engine.input_rate(model));
+    serde_json::json!({
+        "sessions_examined": escalations.sessions_examined,
+        "sessions_escalated": escalations.sessions_escalated,
+        "escalation_rate": escalations.rate(),
+        // Model changes that could not be ordered because a rate was missing on one side.
+        // Reported so a low escalation count is distinguishable from a blind one.
+        "unclassified_changes": escalations.unclassified_changes,
+        "transitions": escalations.transitions.iter().map(|transition| {
+            serde_json::json!({
+                "from": transition.from,
+                "to": transition.to,
+                "sessions": transition.sessions,
+                // Spend on models pricier than the one the session opened with. A floor, not a
+                // total, whenever `unpriced_after` or `quota_after` is non-zero.
+                "cost_after": transition.cost_after,
+                "unpriced_after": transition.unpriced_after,
+                "quota_after": transition.quota_after,
+            })
+        }).collect::<Vec<_>>(),
+    })
 }
 
 /// Omarchy's subscription windows, for scripts that want "session window at 92%" without

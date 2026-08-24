@@ -536,10 +536,35 @@ ai-usage-tui --json --all --provider opencode --model gpt-5.6-sol
 ```
 
 `--json` and `--csv` imply `--once`. JSON includes the source description,
-selected range, usage rows, and a `limits` array of Omarchy subscription
+selected range, usage rows, a `limits` array of Omarchy subscription
 windows (see [Subscription limits](docs/omarchy.md#subscription-limits); empty when
-there are none); each usage row also carries `project` and `session_id`
-(`null` when unknown). Usage CSV columns are:
+there are none), and an `escalations` object; each usage row also carries
+`project` and `session_id` (`null` when unknown).
+
+`escalations` is the routing panel's derived block — which sessions moved to a
+pricier model, and what that cost — for scripts:
+
+```json
+"escalations": {
+  "sessions_examined": 12,
+  "sessions_escalated": 1,
+  "escalation_rate": 8.33,
+  "unclassified_changes": 0,
+  "transitions": [
+    { "from": "claude-sonnet-5", "to": "claude-opus-5", "sessions": 1,
+      "cost_after": 9.7265, "unpriced_after": 0, "quota_after": 0 }
+  ]
+}
+```
+
+It is derived from the same rows the export reports, so a `--provider` filter
+narrows both. `escalation_rate` is `null` rather than `0` when no session had
+enough information to examine, and `cost_after` is a floor rather than a total
+whenever `unpriced_after` or `quota_after` is non-zero. These are *inferred*
+from usage and are deliberately kept apart from the recorded routing events
+`--routing-json` exports.
+
+Usage CSV columns are:
 
 ```text
 provider,model,category,cost_status,requests,input_tokens,output_tokens,

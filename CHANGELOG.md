@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Derived escalations are exported.** `--json` gains an `escalations` object — sessions
+  examined and escalated, the rate, unclassified changes, and each transition with the spend
+  after the move. This was the routing panel's derived block and was visible only in the
+  dashboard; `--json` carried usage rows and nothing answering "did sessions move to a pricier
+  model, and what did that cost".
+
+  Derived from the same filtered rows the export reports, so a `--provider` or `--days` filter
+  narrows both and a script cannot disagree with the dashboard about one run. `escalation_rate`
+  is `null` rather than `0` when no session had enough information to examine, and `cost_after`
+  is a floor rather than a total whenever `unpriced_after` or `quota_after` is non-zero. The
+  block is always present, like `limits`, so a consumer can key on it.
+
+  Not added to `--routing-json`, which reads recorded routing events and nothing else: these are
+  *inferred* from usage, and the dashboard labels the two as different things. Not added to
+  `--csv` either — the usage CSV is one flat table whose columns are appended-never-inserted, and
+  transitions are a different shape.
+
+
 ## 0.7.0 - 2026-08-24
 
 ### Added
