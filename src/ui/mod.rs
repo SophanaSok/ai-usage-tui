@@ -120,13 +120,28 @@ pub fn run(
                 }
                 let action = match key.code {
                     KeyCode::Char(c) => keys::action_for(c),
-                    KeyCode::Esc => Some(keys::Action::Quit),
+                    // Esc asks to go back, and `Action::Back` falls through to quitting when
+                    // there is nowhere to go. That keeps the documented "Esc quits" true
+                    // everywhere except inside a drilldown, where going back is what a reader
+                    // means by it.
+                    KeyCode::Esc => Some(keys::Action::Back),
+                    KeyCode::Enter => Some(keys::Action::DrillIn),
+                    KeyCode::Backspace => Some(keys::Action::Back),
                     KeyCode::Down => Some(keys::Action::SelectNext),
                     KeyCode::Up => Some(keys::Action::SelectPrev),
                     _ => None,
                 };
                 match action {
                     Some(keys::Action::Quit) => break,
+                    Some(keys::Action::DrillIn) => {
+                        app.drill_into_selected_project();
+                    }
+                    // Nothing to leave means the key keeps its old meaning: Esc quits.
+                    Some(keys::Action::Back) => {
+                        if !app.leave_drilldown() {
+                            break;
+                        }
+                    }
                     Some(keys::Action::ToggleHelp) => app.show_help = !app.show_help,
                     Some(keys::Action::Refresh) => app.refresh(),
                     Some(keys::Action::Panel(panel)) => app.toggle_panel(panel),

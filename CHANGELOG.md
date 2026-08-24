@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Drill from a project into its sessions.** `Enter` on a project row scopes the sessions view
+  to that project; `Backspace` (or `Esc`) goes back to the row it started from. The panel title
+  names the project it is scoped to, so a project's spend cannot be misread as the whole
+  machine's. Usage with no recorded project is filed under one row and drills in like any other.
+
+  This is the first *navigational* state any panel has had — every other answers "show me X" and
+  is stateless, while this one answers "show me X, inside Y". It is one field holding the project
+  and the row to return to, and the narrowing happens in `recompute`, not in the draw call, so
+  the render path stays free of computation.
+
+  `Esc` now means "back" when there is somewhere to go and "quit" otherwise. That is the one
+  documented binding whose meaning became contextual; `q` and `Ctrl-C` always quit.
+
+### Fixed
+
+- **The dashboard cursor was clamped by the model table on every panel.** `recompute` ended with
+  `selected.min(view.rows.len() - 1)` regardless of which panel was showing, so on a machine with
+  three model groups and ten projects the cursor could never reach the fourth project. Harmless
+  while nothing acted on the row under it, and not harmless once `Enter` drills into it. The
+  clamp and `visible_rows` are both panel-aware now.
+
+
 ### Fixed
 
 - **The Gemini telemetry format is validated against real output, and two things it got wrong are

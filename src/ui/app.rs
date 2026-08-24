@@ -17,7 +17,9 @@ use crate::omarchy::{self, LimitsReport};
 use crate::pricing::PricingEngine;
 use crate::utils::format_clock;
 
-use super::aggregate::{burn_rate, coverage, daily_totals, project_totals, session_totals};
+use super::aggregate::{
+    burn_rate, coverage, daily_totals, project_totals, session_totals, UNATTRIBUTED,
+};
 
 /// Trailing window for the burn-rate panel. One hour is long enough to smooth out a single
 /// large request and short enough to reflect what you are doing now.
@@ -46,6 +48,13 @@ pub struct App {
     /// Which view occupies the right-hand pane. This was two independent booleans, so
     /// "budgets on" and "routing on" could both be true and one silently won.
     pub panel: Panel,
+    /// The project the sessions view is scoped to, when the user drilled in from Projects.
+    ///
+    /// The first piece of *navigational* state any panel has had: every other panel answers
+    /// "show me X" and is stateless, while this one answers "show me X, inside Y". Kept on the
+    /// App rather than in the panel so `recompute` can narrow the session list once per refresh
+    /// instead of the draw call filtering on every frame.
+    pub(super) drilldown: Option<Drilldown>,
     /// Whether the key reference is open. There are more bindings than fit on one footer line,
     /// and a truncated footer hides them without saying so.
     pub show_help: bool,
@@ -80,6 +89,17 @@ pub enum Panel {
     Burn,
     Sessions,
     Limits,
+}
+
+/// Where the sessions view is scoped, and where to return to.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Drilldown {
+    /// The raw project value, as `Usage::project` records it. `project_totals` keys on the same
+    /// value — the display labels are applied at render time — so this matches directly.
+    pub project: String,
+    /// The Projects row the user came from, so leaving lands where they left rather than at the
+    /// top of a list they have to find their place in again.
+    pub from_row: usize,
 }
 
 #[derive(Default)]
@@ -151,6 +171,7 @@ impl App {
             collector,
             panel: Panel::Models,
             budget_engine,
+            drilldown: None,
             show_help: false,
             pricing: PricingEngine::load(),
             alerts: Vec::new(),
@@ -211,6 +232,17 @@ impl App {
         self.view.projects = project_totals(&self.view.filtered);
         self.view.daily = daily_totals(&self.view.filtered);
         self.view.sessions = session_totals(&self.view.filtered);
+        // Narrowed here, not in the draw call: the dashboard redraws several times a second and
+        // nothing on the render path may compute.
+        if let Some(drilldown) = &self.drilldown {
+            let wanted = drilldown.project.as_str();
+            self.view.sessions.retain(|session| match &session.project {
+                Some(project) => project == wanted,
+                // `project_totals` files usage with no project under this label, so a drilldown
+                // into it must match the sessions that have none.
+                None => wanted == UNATTRIBUTED,
+            });
+        }
         // Computed here, once per refresh, because `burn_rate` needs the clock and the render
         // path must not read it.
         self.view.burn = burn_rate(&self.usages, BURN_WINDOW_SECS, crate::utils::now());
@@ -254,7 +286,11 @@ impl App {
         self.view.rows = grouped.into_values().collect();
         self.view.rows.sort_by_key(|u| Reverse(u.total_tokens()));
 
-        self.selected = self.selected.min(self.view.rows.len().saturating_sub(1));
+        // Clamped against the panel that is actually showing, not the model table. This read
+        // `self.view.rows.len()` unconditionally, so on a machine with three model groups and
+        // ten projects the cursor could never reach the fourth project — and once Enter acts on
+        // the row under it, a cursor clamped to the wrong list is not just cosmetic.
+        self.selected = self.selected.min(self.visible_rows().saturating_sub(1));
     }
 
     pub fn projects(&self) -> &[ProjectTotals] {
@@ -276,6 +312,10 @@ impl App {
     pub fn visible_rows(&self) -> usize {
         match self.panel {
             Panel::Sessions => self.view.sessions.len(),
+            // Bounded by the project list, not the model table. Without this the cursor can sit
+            // past the last project — harmless while nothing acted on the row, and wrong the
+            // moment Enter drills into whatever is under it.
+            Panel::Projects => self.view.projects.len(),
             _ => self.view.rows.len(),
         }
     }
@@ -299,6 +339,46 @@ impl App {
         } else {
             panel
         };
+    }
+
+    /// Scope the sessions view to the project under the cursor, if the cursor is on one.
+    ///
+    /// Returns whether it drilled: the caller uses that to decide whether the key did anything,
+    /// and pressing Enter on a panel that has nothing to drill into must not change the view.
+    pub fn drill_into_selected_project(&mut self) -> bool {
+        if self.panel != Panel::Projects {
+            return false;
+        }
+        let Some(project) = self.view.projects.get(self.selected) else {
+            return false;
+        };
+        self.drilldown = Some(Drilldown {
+            project: project.project.clone(),
+            from_row: self.selected,
+        });
+        self.panel = Panel::Sessions;
+        self.selected = 0;
+        self.recompute();
+        true
+    }
+
+    /// Leave a drilldown, returning to the Projects row it started from.
+    ///
+    /// Returns whether it was in one — `Esc` quits the dashboard unless it has somewhere to go
+    /// back to, so the caller needs to know which happened.
+    pub fn leave_drilldown(&mut self) -> bool {
+        let Some(drilldown) = self.drilldown.take() else {
+            return false;
+        };
+        self.panel = Panel::Projects;
+        self.selected = drilldown.from_row;
+        self.recompute();
+        true
+    }
+
+    /// The project the sessions view is scoped to, if any.
+    pub fn drilldown_project(&self) -> Option<&str> {
+        self.drilldown.as_ref().map(|d| d.project.as_str())
     }
 
     /// Change the visible range and rebuild derived views.

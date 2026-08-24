@@ -117,9 +117,19 @@ publishes this tool's usage and budgets as a tab in Omarchy's panel (see Decisio
 
 Remaining:
 
-- **Drill from a project into its sessions.** `Enter` on a project row. Deliberately not done
-  with the flat session list: it introduces panel *state* — which project am I inside? — that no
-  panel currently has, and that is a larger change than any of the panels were.
+- **Resolved.** Drill from a project into its sessions: `Enter` on a project row scopes the
+  sessions view to it, `Backspace` (or `Esc`) returns to the row it started from, and the panel
+  title names the project so the two views cannot be confused.
+
+  The panel *state* this entry warned about is one field, `App::drilldown`, holding the project
+  and the row to return to. The narrowing happens in `recompute`, not in the draw call, so the
+  render path stays free of computation. `Esc` now means "back" when there is somewhere to go and
+  "quit" otherwise, which is the one documented binding whose meaning became contextual.
+
+  It also surfaced a bug that predated it: `recompute` clamped the cursor against the *model
+  table* whatever panel was showing, so on a machine with few model groups and many projects the
+  later projects were unreachable. Cosmetic while nothing acted on the row; wrong the moment
+  `Enter` did. Both the clamp and `visible_rows` are panel-aware now, with a regression test.
 - **Interactive depth** — `/` search, sortable columns, mouse support.
 - **Routing analytics still needs a harness for the half that matters.** Escalations are now
   derived from collected sessions, but pass/fail and retry counts cannot be inferred from usage

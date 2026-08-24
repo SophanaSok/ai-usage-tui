@@ -76,6 +76,7 @@ fn test_app(usages: Vec<Usage>) -> App {
         model_filter: None,
         collector: None,
         panel: Panel::Models,
+        drilldown: None,
         show_help: false,
         budget_engine: BudgetEngine::empty(),
         // Bundled, not loaded: a refreshed cache on the developer's machine must not change
