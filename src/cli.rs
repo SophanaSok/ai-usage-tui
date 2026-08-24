@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+use crate::collector::billing::BillingSetting;
 use crate::model::Range;
 
 pub struct Cli {
@@ -13,6 +14,12 @@ pub struct Cli {
     pub journal_path: Option<PathBuf>,
     /// Root of Claude Code's session logs; defaults to `~/.claude/projects`.
     pub claude_dir: Option<PathBuf>,
+    /// How Claude Code usage is billed: decided automatically unless overridden here or in
+    /// `[collectors.claude_code]`.
+    pub claude_billing: BillingSetting,
+    pub claude_billing_set: bool,
+    /// Claude Code's `~/.claude.json`, when it is not at the default location.
+    pub claude_json: Option<PathBuf>,
     pub range: Range,
     pub range_set: bool,
     pub provider_filter: Option<String>,
@@ -41,6 +48,9 @@ impl Default for Cli {
             db_path: None,
             journal_path: None,
             claude_dir: None,
+            claude_billing: BillingSetting::Auto,
+            claude_billing_set: false,
+            claude_json: None,
             range: Range::Week,
             range_set: false,
             provider_filter: None,
@@ -147,6 +157,22 @@ where
                     .ok_or_else(|| anyhow::anyhow!("--claude-dir requires a path"))?;
                 cli.claude_dir = Some(PathBuf::from(value));
             }
+            "--claude-billing" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--claude-billing requires a mode"))?;
+                cli.claude_billing = match value.as_str() {
+                    "auto" => BillingSetting::Auto,
+                    "subscription" => BillingSetting::Subscription,
+                    "api" => BillingSetting::Api,
+                    other => {
+                        return Err(anyhow::anyhow!(
+                            "invalid --claude-billing mode: {other} (expected auto, subscription, or api)"
+                        ))
+                    }
+                };
+                cli.claude_billing_set = true;
+            }
             "--days" => {
                 let value = args
                     .next()
@@ -239,6 +265,8 @@ OPTIONS:
                   Override the local usage journal path
     --claude-dir PATH
                   Override the Claude Code session-log directory
+    --claude-billing MODE               How Claude Code usage is billed: auto (default),
+                                        subscription, or api. Overrides [collectors.claude_code]
                   (default: ~/.claude/projects)
     --days N       Show the last N days
     --today        Show today
@@ -344,5 +372,30 @@ mod tests {
         let cli = parse_cli(["--week", "--refresh-interval", "30"]).unwrap();
         assert!(cli.range_set);
         assert!(cli.refresh_interval_set);
+    }
+
+    #[test]
+    fn claude_billing_accepts_the_three_modes_and_nothing_else() {
+        assert_eq!(
+            parse_cli(["--claude-billing", "subscription"])
+                .unwrap()
+                .claude_billing,
+            BillingSetting::Subscription
+        );
+        let api = parse_cli(["--claude-billing", "api"]).unwrap();
+        assert_eq!(api.claude_billing, BillingSetting::Api);
+        assert!(api.claude_billing_set);
+        assert_eq!(
+            parse_cli(["--claude-billing", "auto"])
+                .unwrap()
+                .claude_billing,
+            BillingSetting::Auto
+        );
+        let error = match parse_cli(["--claude-billing", "sometimes"]) {
+            Ok(_) => panic!("an unknown mode parsed"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("invalid --claude-billing mode"), "{error}");
+        assert!(parse_cli(["--claude-billing"]).is_err());
     }
 }

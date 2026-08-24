@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
+use crate::collector::billing::{detect, BillingSetting, Decision, Signals};
 use crate::collector::{usage_key, UsageKey};
 use crate::logging;
 use crate::model::Usage;
@@ -434,6 +435,48 @@ pub struct ClaudeCodeCollector {
     pub interval_secs: u64,
     /// Per-file byte offsets, so each poll tails only what was appended.
     pub offsets: crate::collector::claude_code::Offsets,
+    pub billing: BillingSetting,
+    /// Claude Code's `~/.claude.json`, when it is not at the default location.
+    pub claude_json: Option<PathBuf>,
+    /// The billing decision in force. Evidence, once found, is kept: Claude Code rewrites its
+    /// config document constantly, and a poll that catches it half-written must not flip the
+    /// rows it collects to a different status from the rows already merged.
+    pub decision: Option<Decision>,
+}
+
+impl ClaudeCodeCollector {
+    fn resolve_billing(&mut self) -> Decision {
+        let path = crate::collector::claude_code::config_json_path(
+            self.claude_json.as_deref(),
+            self.root.as_deref(),
+        );
+        let fresh = detect(
+            "claude_code",
+            self.billing,
+            &Signals {
+                claude_json: path.as_deref(),
+                env_has: &crate::collector::billing::env_has,
+                omarchy_tier: None,
+            },
+        );
+        let decision = match self.decision.take() {
+            Some(previous) if previous.is_evidenced() && !fresh.is_evidenced() => previous,
+            Some(previous) if previous == fresh => previous,
+            _ => {
+                logging::info(
+                    "billing",
+                    &format!(
+                        "claude_code: {} ({})",
+                        fresh.describe("collectors.claude_code"),
+                        fresh.reason
+                    ),
+                );
+                fresh
+            }
+        };
+        self.decision = Some(decision.clone());
+        decision
+    }
 }
 
 impl Collector for ClaudeCodeCollector {
@@ -444,9 +487,11 @@ impl Collector for ClaudeCodeCollector {
         Duration::from_secs(self.interval_secs)
     }
     fn poll(&mut self) -> Result<Vec<Usage>> {
+        let decision = self.resolve_billing();
         let (usages, _) = crate::collector::claude_code::load_claude_code(
             self.root.as_deref(),
             &mut self.offsets,
+            &decision,
         )?;
         Ok(usages)
     }
@@ -783,5 +828,48 @@ mod tests {
         });
         assert!(shutdown.sleep(Duration::from_secs(30)));
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_billing_decision_with_evidence_survives_a_half_written_config_document() {
+        // Claude Code rewrites ~/.claude.json constantly. A poll that catches it mid-write must
+        // not flip the rows it collects to per-token while the rows already merged stay quota.
+        let dir = tempfile::TempDir::new().unwrap();
+        let projects = dir.path().join(".claude").join("projects").join("p");
+        std::fs::create_dir_all(&projects).unwrap();
+        std::fs::write(
+            projects.join("s.jsonl"),
+            "{\"type\":\"assistant\",\"uuid\":\"u-1\",\"requestId\":\"req_1\",\"timestamp\":\"2026-08-18T10:00:00Z\",\"message\":{\"id\":\"msg_1\",\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}\n",
+        )
+        .unwrap();
+        let config_json = dir.path().join(".claude.json");
+        std::fs::write(
+            &config_json,
+            "{\"oauthAccount\":{\"organizationRateLimitTier\":\"default_claude_max_20x\"}}",
+        )
+        .unwrap();
+
+        let mut collector = ClaudeCodeCollector {
+            root: Some(dir.path().join(".claude").join("projects")),
+            interval_secs: 30,
+            offsets: Default::default(),
+            billing: BillingSetting::Auto,
+            claude_json: Some(config_json.clone()),
+            decision: None,
+        };
+        let rows = collector.poll().unwrap();
+        assert_eq!(rows[0].billing, crate::model::Billing::Subscription);
+        assert_eq!(
+            collector.decision.as_ref().and_then(|d| d.tier.as_deref()),
+            Some("Max 20x")
+        );
+
+        std::fs::write(&config_json, "{\"oauthAccount\":{\"organizationRateLimi").unwrap();
+        collector.poll().unwrap();
+        assert_eq!(
+            collector.decision.as_ref().map(|d| d.billing),
+            Some(crate::model::Billing::Subscription),
+            "evidence already found is kept over a momentary unreadable file"
+        );
     }
 }

@@ -91,9 +91,7 @@ fn main() -> ExitCode {
     };
 
     let mut app = App::new(
-        cli.db_path.clone(),
-        journal,
-        cli.claude_dir.clone(),
+        ai_usage_tui::collector::SourceRoots::from_cli(&cli, journal),
         cli.range,
         cli.refresh_interval,
         None,

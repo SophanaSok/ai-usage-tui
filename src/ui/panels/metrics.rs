@@ -35,7 +35,13 @@ pub fn draw_metrics(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(total, cols[0]);
     for (i, (category, cat)) in app.category_totals().iter().enumerate() {
         let subtitle = if *category == Category::Paid {
-            format!("${:.4}", cat.cost)
+            // Subscription work is PAID work with no per-request dollars; a zero here would
+            // contradict the tile's own label.
+            if cat.cost == 0.0 && cat.quota_requests > 0 && cat.unknown_requests == 0 {
+                format!("{} on quota", format_count(cat.quota_requests))
+            } else {
+                format!("${:.4}", cat.cost)
+            }
         } else {
             format!("{} tokens", format_count(cat.tokens()))
         };

@@ -104,13 +104,28 @@ output, and secrets; no message content is read or retained. A test plants a fak
 Claude Code reports no cost, so these rows arrive `Unavailable` and are priced by the pricing
 engine, or left explicitly unpriced.
 
+Before each poll the collector decides, on its own thread, whether the account bills per token or
+against a subscription (`src/collector/billing.rs`: `billing` override, then Anthropic API-key
+environment variables, then `oauthAccount` in `~/.claude.json`, else per-token and "billing
+unknown"), and stamps every row it returns. The decision is sticky: once evidence is found it is
+kept for the life of the process, so a poll that catches `~/.claude.json` half-written — Claude
+Code rewrites it constantly — cannot flip new rows to a different status from the rows already
+merged. An unknown decision is re-examined on the next poll. Subscription rows are turned into
+`quota` by the pricing engine, with the list-rate figure kept as `api_equivalent_cost`.
+
 ```toml
 [collectors.claude_code]
 enabled = true
 interval = 30
+billing = "auto"                        # auto | subscription | api
+# config_json = "/home/user/.claude.json"
 ```
 
 Override the root with `--claude-dir PATH`, the `claude_dir` config key, or `CLAUDE_PROJECTS_DIR`.
+`config_json` names Claude Code's config document when it is not at `~/.claude.json`; without it
+the path follows `CLAUDE_CONFIG_DIR`, or is derived from an overridden root as
+`<root>/../../.claude.json`. `billing` and `config_json` are rejected at parse time under any
+other collector table.
 
 ## Journal collector
 
@@ -150,6 +165,8 @@ interval = 30
 [collectors.claude_code]
 enabled = true
 interval = 30
+billing = "auto"                        # auto | subscription | api
+# config_json = "/home/user/.claude.json"
 
 [collectors.journal]
 enabled = true

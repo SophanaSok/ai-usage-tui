@@ -488,4 +488,44 @@ mod tests {
         )]);
         assert!(alerts.is_empty());
     }
+
+    #[test]
+    fn subscription_work_does_not_count_toward_spend() {
+        // Restore the bug by stamping the row Estimated with cost Some(50.0): spend becomes
+        // 51.0 and a $10 budget reads as exceeded on money that was never charged.
+        for scope in [BudgetScopeKind::Global, BudgetScopeKind::Provider] {
+            let config = BudgetsConfig {
+                entry: vec![BudgetEntry {
+                    scope,
+                    name: Some("anthropic".into()),
+                    period: BudgetPeriod::Monthly,
+                    limit: 10.0,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let engine = BudgetEngine::from_config(&config);
+            let usages = vec![
+                Usage {
+                    provider: "anthropic".into(),
+                    model: "claude-opus-5".into(),
+                    category: Category::Paid,
+                    cost_status: CostStatus::Quota,
+                    billing: crate::model::Billing::Subscription,
+                    cost: None,
+                    api_equivalent_cost: Some(50.0),
+                    created: crate::utils::now(),
+                    ..Default::default()
+                },
+                make_usage("anthropic", "claude-opus-5", 1.0, crate::utils::now()),
+            ];
+            let alerts = engine.check(&usages);
+            assert!(
+                (alerts[0].spend - 1.0).abs() < 1e-9,
+                "{scope:?}: {}",
+                alerts[0].spend
+            );
+            assert_eq!(alerts[0].level, AlertLevel::Ok);
+        }
+    }
 }

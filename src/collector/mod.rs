@@ -1,4 +1,5 @@
 pub mod background;
+pub mod billing;
 pub mod claude_code;
 pub mod journal;
 pub mod opencode;
@@ -6,31 +7,82 @@ pub mod pricing_refresh;
 pub mod zen;
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::collector::claude_code::{load_claude_code, Offsets};
+use crate::cli::Cli;
+use crate::collector::billing::{detect, BillingSetting, Decision, Signals};
+use crate::collector::claude_code::{config_json_path, load_claude_code, Offsets};
 use crate::collector::journal::load_journal;
 use crate::collector::opencode::load_opencode;
 use crate::collector::zen::zen_cache_path;
 use crate::model::Usage;
 use crate::pricing::{apply_estimated_pricing, PricingEngine};
 
+/// Where every source lives, and how its usage is billed.
+///
+/// Three functions took the same three paths as separate arguments and each grew a fourth
+/// when billing arrived. One struct, extended in one place, threaded everywhere.
+#[derive(Clone, Debug, Default)]
+pub struct SourceRoots {
+    pub db_path: Option<PathBuf>,
+    pub journal: PathBuf,
+    /// Root of Claude Code's session logs; `None` means the default (see `claude_code`).
+    pub claude_dir: Option<PathBuf>,
+    pub claude_billing: BillingSetting,
+    /// Claude Code's `~/.claude.json`, when the default location is not the right one.
+    pub claude_json: Option<PathBuf>,
+}
+
+impl SourceRoots {
+    pub fn new(journal: PathBuf) -> Self {
+        Self {
+            journal,
+            ..Default::default()
+        }
+    }
+
+    pub fn from_cli(cli: &Cli, journal: PathBuf) -> Self {
+        Self {
+            db_path: cli.db_path.clone(),
+            journal,
+            claude_dir: cli.claude_dir.clone(),
+            claude_billing: cli.claude_billing,
+            claude_json: cli.claude_json.clone(),
+        }
+    }
+
+    /// Where Claude Code's config document is for these roots. Derived from an overridden
+    /// session-log root, so a test that points at a fixture never resolves the developer's own.
+    pub fn claude_json_path(&self) -> Option<PathBuf> {
+        config_json_path(self.claude_json.as_deref(), self.claude_dir.as_deref())
+    }
+
+    /// Decide Claude Code's billing from the evidence available right now.
+    pub fn claude_decision(&self) -> Decision {
+        let path = self.claude_json_path();
+        detect(
+            "claude_code",
+            self.claude_billing,
+            &Signals {
+                claude_json: path.as_deref(),
+                env_has: &crate::collector::billing::env_has,
+                omarchy_tier: None,
+            },
+        )
+    }
+}
+
 /// One-shot read of every source.
 ///
-/// `claude_root` overrides Claude Code's session-log directory; production passes `None` to use
-/// the default, and tests pass an explicit path so they never read the developer's real
-/// transcripts.
-pub fn load_usage(
-    override_path: Option<&Path>,
-    journal: &Path,
-    claude_root: Option<&Path>,
-) -> Result<(Vec<Usage>, String)> {
-    let (mut usages, opencode_source) = load_opencode(override_path)?;
-    let journal_usages = load_journal(journal)?;
-    let journal_source = if journal.exists() {
-        format!("journal: {}", journal.display())
+/// Production passes the roots resolved from the CLI and config; tests pass explicit paths so
+/// they never read the developer's real transcripts or config.
+pub fn load_usage(roots: &SourceRoots) -> Result<(Vec<Usage>, String)> {
+    let (mut usages, opencode_source) = load_opencode(roots.db_path.as_deref())?;
+    let journal_usages = load_journal(&roots.journal)?;
+    let journal_source = if roots.journal.exists() {
+        format!("journal: {}", roots.journal.display())
     } else {
         "journal: not initialized".to_string()
     };
@@ -40,8 +92,10 @@ pub fn load_usage(
         }
         _ => "Zen catalog: not cached".to_string(),
     };
-    let (claude_usages, claude_source) = load_claude_code(claude_root, &mut Offsets::new())
-        .unwrap_or_else(|error| (Vec::new(), format!("Claude Code: unavailable ({})", error)));
+    let decision = roots.claude_decision();
+    let (claude_usages, claude_source) =
+        load_claude_code(roots.claude_dir.as_deref(), &mut Offsets::new(), &decision)
+            .unwrap_or_else(|error| (Vec::new(), format!("Claude Code: unavailable ({})", error)));
 
     let mut seen: HashSet<UsageKey> = usages.iter().map(usage_key).collect();
     for extra in journal_usages.into_iter().chain(claude_usages) {
@@ -117,7 +171,7 @@ pub fn setup_test_db() -> std::path::PathBuf {
 /// let the pipeline test pass while silently covering nothing. Constructing it here makes the
 /// fixture reproducible and the assertions real.
 #[cfg(test)]
-pub fn build_test_journal(dir: &Path) -> std::path::PathBuf {
+pub fn build_test_journal(dir: &std::path::Path) -> std::path::PathBuf {
     use rusqlite::params;
 
     let path = dir.join("journal.db");

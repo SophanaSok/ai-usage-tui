@@ -21,6 +21,7 @@ use ai_usage_tui::{
         load_usage,
         pricing_refresh::refresh_pricing,
         zen::refresh_zen_catalog,
+        SourceRoots,
     },
     config::CollectorConfig,
     config::{apply_config, ConfigFile},
@@ -138,6 +139,9 @@ fn build_collectors(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Option
             root: cli.claude_dir.clone(),
             interval_secs: claude_cfg.interval.unwrap_or(30),
             offsets: Default::default(),
+            billing: cli.claude_billing,
+            claude_json: cli.claude_json.clone(),
+            decision: None,
         }));
     }
 
@@ -168,13 +172,7 @@ fn collector_cfg(
     collectors: Option<&ai_usage_tui::config::CollectorsConfig>,
     pick: impl Fn(&ai_usage_tui::config::CollectorsConfig) -> Option<&CollectorConfig>,
 ) -> CollectorConfig {
-    collectors
-        .and_then(pick)
-        .map(|cfg| CollectorConfig {
-            enabled: cfg.enabled,
-            interval: cfg.interval,
-        })
-        .unwrap_or_default()
+    collectors.and_then(pick).cloned().unwrap_or_default()
 }
 
 fn run_tui(
@@ -234,7 +232,7 @@ fn check_budgets(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()
             )
         })?;
 
-    let (usages, _) = load_usage(cli.db_path.as_deref(), &journal, cli.claude_dir.as_deref())?;
+    let (usages, _) = load_usage(&SourceRoots::from_cli(cli, journal))?;
     let alerts = budget_engine.check(&usages);
     let has_alerts = alerts.iter().any(|a| a.is_actionable());
 
