@@ -36,18 +36,32 @@ Numbering follows the original audit. Everything not listed here has shipped.
 
 ### P2 — Pricing depth
 
-**Provider-blind pricing keys.** `pricing/zen.toml` keys on bare model id, so the same model at two
-providers with different rates is indistinguishable. This is also what blocks classifying
-aggregators (OpenRouter, Bedrock, Azure) as `PAID` — see the comment in
-`classify.rs::FIRST_PARTY_PAID_PROVIDERS`. Provider-qualified keys unblock both.
+- **Resolved.** LiteLLM is now the base pricing source. `pricing/litellm.tsv` is generated from
+  its community table by `scripts/refresh-litellm-pricing.py` (`just pricing`) and ships in the
+  binary: ~3,450 keys across 88 providers, against ~60 in the curated table. Together they price
+  1,491 distinct model names. `pricing/zen.toml` is applied on top for Zen-specific and stealth
+  models — 13 names it carries are in no community table — and a refreshed cache on top of that,
+  so the existing "an overlay never replaces" invariant is unchanged.
 
-**LiteLLM as the pricing source.** The scraper now discovers models rather than filtering them
-against a hardcoded list, so a new model on the Zen page gets priced without a release — but it
-still parses one vendor's HTML with `find("<table>")` and `split("<tr>")`, and that page is the
-only source. The bundled table is ~60 hand-maintained models. LiteLLM's
-`model_prices_and_context_window.json` is community-maintained at ~2,200 models and is what every
-competitor uses. Adopt it as primary with the Zen TOML kept as an overlay for Zen-specific and
-stealth models; vendor a snapshot via `include_str!` so offline still works.
+- **Resolved.** Pricing keys can be provider-qualified. `resolve` now takes the usage row's
+  provider and tries `<provider>/<model>` before the bare name, which is what lets the same model
+  bill differently at Bedrock, `bedrock_converse` and the aggregators. Where providers disagree
+  on a name — 180 of them — the generated table publishes no bare key at all, so an unrecognised
+  provider yields no price rather than borrowing another's rate.
+
+  Two things are worth not relearning. **Layering outranks specificity:** preferring the more
+  specific key let the community's `anthropic/claude-sonnet-5` beat a hand-checked bare
+  `claude-sonnet-5` and bypass the dated `period` records only the curated table carries. The
+  engine tracks which keys came from a layer above the generated table and searches that layer
+  first. And **the format is TSV, not TOML, on purpose:** ~3,450 TOML tables cost 38ms on every
+  invocation, a 9x startup regression; the compact form costs 5ms. The curated table stays TOML
+  because humans edit it and it needs comments and `period` blocks.
+
+- **Still open: classifying aggregators as `PAID`.** This was blocked on provider-qualified keys
+  and no longer is. `classify.rs::FIRST_PARTY_PAID_PROVIDERS` still excludes OpenRouter, Bedrock
+  and Azure, and its comment still says "add them once provider-qualified model resolution
+  lands" — which it now has. The work is to decide per provider whether a price can actually be
+  produced, since being able to resolve a key is not the same as having one.
 
 ### P2 — Coverage
 

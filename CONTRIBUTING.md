@@ -124,10 +124,29 @@ else needs to know it exists. Anything the panel needs should be computed once p
 
 ### Correct or add pricing
 
-Edit `pricing/zen.toml`. Rates are per million tokens. If a rate changed on a date, add a
+Two tables ship in the binary, and only one of them is hand-edited.
+
+| File | What it is | Edit it? |
+| --- | --- | --- |
+| `pricing/litellm.tsv` | ~3,450 keys generated from [LiteLLM's community table](https://github.com/BerriAI/litellm) | **No** — regenerate with `just pricing` |
+| `pricing/zen.toml` | ~60 curated models: Zen-specific ids, stealth models, and anything the community table gets wrong | Yes |
+
+`zen.toml` is applied *on top of* `litellm.tsv`, and a refreshed cache on top of that — so a rate
+you write by hand always wins over a community one, whichever is the more specific key. That
+ordering is load-bearing: preferring the more specific key instead let the community's
+`anthropic/claude-sonnet-5` outrank a hand-checked bare `claude-sonnet-5`, and bypassed the dated
+`period` records that only the curated table carries.
+
+Editing the curated table: rates are per million tokens. If a rate changed on a date, add a
 `[[model."x".period]]` block with a `through` date rather than overwriting — otherwise every
 historical event silently re-prices at the new rate. Cache rates are not independent: a read is
 0.1x input, a five-minute write is 1.25x.
+
+Keys may be bare (`claude-sonnet-5`) or provider-qualified (`bedrock/anthropic.claude-...`).
+Qualify one when providers genuinely charge differently for the same name — the generated table
+does this for the ~180 names where they do, and deliberately emits no bare key for those, so a
+row whose provider does not match stays `unavailable` rather than borrowing another provider's
+rate.
 
 ## Invariants
 

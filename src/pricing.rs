@@ -7,6 +7,15 @@ use crate::model::{Billing, Category, CostStatus, Usage};
 
 pub(crate) const BUNDLED_PRICING: &str = include_str!("../pricing/zen.toml");
 
+/// The community pricing table, generated from LiteLLM's by
+/// `scripts/refresh-litellm-pricing.py`.
+///
+/// This is the *base* layer; `BUNDLED_PRICING` is overlaid on top of it, and a refreshed cache
+/// on top of that. So a hand-checked or Zen-specific rate always wins over a community one, and
+/// the historical `period` records — which only the curated table carries — are never erased by
+/// the breadth layer.
+pub(crate) const LITELLM_PRICING: &str = include_str!("../pricing/litellm.tsv");
+
 /// How long a refreshed pricing cache is trusted before the bundled table wins again.
 ///
 /// The `zen_pricing` collector refreshes hourly when enabled, so anything approaching a month
@@ -59,18 +68,29 @@ pub struct PricingEngine {
     tiers: HashMap<String, Vec<(u64, ResolvedPricing)>>,
     /// Historical rates per model, ascending by end date.
     periods: HashMap<String, Vec<PricePeriod>>,
+    /// Keys that came from a layer above the generated community table — the curated
+    /// `pricing/zen.toml` and any refreshed cache.
+    ///
+    /// Needed because specificity and layering pull in opposite directions. A provider-qualified
+    /// key is the more specific answer, but the community table is the *lower* layer, so
+    /// preferring specificity alone lets `anthropic/claude-sonnet-5` from LiteLLM outrank a
+    /// hand-checked `claude-sonnet-5` in the curated table — along with the dated periods only
+    /// the curated table carries. Layer wins first, specificity decides within a layer.
+    curated: std::collections::HashSet<String>,
     warnings: Vec<String>,
 }
 
 impl PricingEngine {
+    /// The two tables that ship in the binary: LiteLLM's breadth, with the curated table on top.
     pub fn bundled() -> Self {
+        let mut engine = Self::parse_compact(LITELLM_PRICING);
         match Self::parse(BUNDLED_PRICING) {
-            Ok(engine) => engine,
-            Err(error) => Self {
-                warnings: vec![format!("bundled pricing table is invalid: {}", error)],
-                ..Default::default()
-            },
+            Ok(curated) => engine.overlay(curated),
+            Err(error) => engine
+                .warnings
+                .push(format!("bundled pricing table is invalid: {}", error)),
         }
+        engine
     }
 
     /// Whether the table keys this model id exactly, with no fallback resolution.
@@ -212,13 +232,123 @@ impl PricingEngine {
             models,
             tiers,
             periods,
+            curated: Default::default(),
             warnings,
         })
+    }
+
+    /// Parse the generated LiteLLM table.
+    ///
+    /// One entry per line, tab-separated: `<key>\t<field>=<rate>...`, with an optional
+    /// `tier=<tokens>` field marking a long-context tier for the key. `#` starts a comment.
+    ///
+    /// Deliberately not TOML, unlike the curated table: this file has ~3,450 entries and
+    /// parsing them as TOML tables cost 38ms on every invocation, a 9x startup regression.
+    /// Nobody hand-edits a generated file, so it does not need TOML's ergonomics.
+    ///
+    /// A malformed line is skipped and counted rather than failing the whole table: this ships
+    /// in the binary, so a single bad line must not be able to remove every price. One warning
+    /// carries the count and the first offender — silence would make a truncated table look
+    /// like a table of models nobody uses.
+    fn parse_compact(text: &str) -> Self {
+        let mut models: HashMap<String, ModelPricing> = HashMap::new();
+        let mut tiers: HashMap<String, Vec<(u64, ResolvedPricing)>> = HashMap::new();
+        let mut skipped = 0usize;
+        let mut first_bad: Option<String> = None;
+
+        for line in text.lines() {
+            let line = line.trim_end();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let mut parts = line.split('\t');
+            let Some(key) = parts.next().filter(|k| !k.is_empty()) else {
+                skipped += 1;
+                first_bad.get_or_insert_with(|| line.to_string());
+                continue;
+            };
+
+            let mut rates = ResolvedPricing::default();
+            let mut tier: Option<u64> = None;
+            let mut bad = false;
+            for field in parts {
+                let Some((name, value)) = field.split_once('=') else {
+                    bad = true;
+                    break;
+                };
+                if name == "tier" {
+                    match value.parse::<u64>() {
+                        Ok(threshold) => tier = Some(threshold),
+                        Err(_) => bad = true,
+                    }
+                    continue;
+                }
+                let Ok(rate) = value.parse::<f64>() else {
+                    bad = true;
+                    break;
+                };
+                match name {
+                    "input" => rates.input = Some(rate),
+                    "output" => rates.output = Some(rate),
+                    "cache_read" => rates.cache_read = Some(rate),
+                    "cache_write" => rates.cache_write = Some(rate),
+                    "reasoning" => rates.reasoning = Some(rate),
+                    _ => bad = true,
+                }
+            }
+            if bad {
+                skipped += 1;
+                first_bad.get_or_insert_with(|| line.to_string());
+                continue;
+            }
+
+            match tier {
+                Some(threshold) => tiers
+                    .entry(key.to_string())
+                    .or_default()
+                    .push((threshold, rates)),
+                None => {
+                    models.insert(
+                        key.to_string(),
+                        ModelPricing {
+                            free: None,
+                            input: rates.input,
+                            output: rates.output,
+                            cache_read: rates.cache_read,
+                            cache_write: rates.cache_write,
+                            reasoning: rates.reasoning,
+                        },
+                    );
+                }
+            }
+        }
+
+        for tier_list in tiers.values_mut() {
+            tier_list.sort_by_key(|b| std::cmp::Reverse(b.0));
+        }
+
+        let mut warnings = Vec::new();
+        if skipped > 0 {
+            warnings.push(format!(
+                "bundled LiteLLM pricing table: skipped {} malformed line(s), first: {}",
+                skipped,
+                first_bad.unwrap_or_default()
+            ));
+        }
+
+        Self {
+            models,
+            tiers,
+            periods: HashMap::new(),
+            curated: Default::default(),
+            warnings,
+        }
     }
 
     /// Apply `other` on top of `self`, per model id. Entries present only in `self` survive.
     fn overlay(&mut self, other: Self) {
         for (model_id, pricing) in other.models {
+            self.curated.insert(model_id.clone());
             self.models.insert(model_id.clone(), pricing);
             match other.tiers.get(&model_id) {
                 Some(tiers) => {
@@ -264,7 +394,11 @@ impl PricingEngine {
     /// differently. `None` for a free model and for one the table cannot price at all — a
     /// caller comparing two models must be able to tell "cheaper" from "unknown".
     pub fn input_rate(&self, model: &str) -> Option<f64> {
-        let (_, pricing) = self.resolve(model)?;
+        // No provider: the callers rank a model against another model, and an escalation is
+        // recorded by model name alone. Bare-name resolution is what this did before
+        // provider-qualified keys existed, and for ranking it is the right question — "how
+        // expensive is this model" is not a per-provider quantity.
+        let (_, pricing) = self.resolve("", model)?;
         if pricing.free == Some(true) {
             return None;
         }
@@ -279,14 +413,52 @@ impl PricingEngine {
     }
 
     /// Resolve a model id to its pricing entry, trying each candidate spelling in turn.
-    fn resolve(&self, model: &str) -> Option<(String, &ModelPricing)> {
-        model_candidates(model)
-            .into_iter()
-            .find_map(|candidate| self.models.get(&candidate).map(|p| (candidate, p)))
+    ///
+    /// Provider-qualified keys are tried first. The same bare model name bills differently at
+    /// different providers — Bedrock's regional variants and the aggregators are the common
+    /// case — so `<provider>/<model>` is the more specific answer wherever the table has one.
+    /// The generated table deliberately omits a bare key for the ~180 names where providers
+    /// disagree, which means a row whose provider does not match resolves to nothing and stays
+    /// `unavailable`. That is the intended outcome: picking one provider's rate for all of them
+    /// would be inventing a number.
+    fn resolve(&self, provider: &str, model: &str) -> Option<(String, &ModelPricing)> {
+        let candidates = model_candidates(model);
+        let provider = provider.trim().to_ascii_lowercase();
+
+        // Layer first, then specificity. Within the curated layer a qualified key still wins;
+        // what must not happen is a community rate beating a hand-checked one just for being
+        // more specific.
+        for curated_only in [true, false] {
+            if !provider.is_empty() {
+                for candidate in &candidates {
+                    // Candidates that are already namespaced carry their own provider;
+                    // qualifying them again only ever produces `anthropic/anthropic/...`.
+                    if candidate.contains('/') {
+                        continue;
+                    }
+                    let qualified = format!("{provider}/{candidate}");
+                    if curated_only && !self.curated.contains(&qualified) {
+                        continue;
+                    }
+                    if let Some(pricing) = self.models.get(&qualified) {
+                        return Some((qualified, pricing));
+                    }
+                }
+            }
+            for candidate in &candidates {
+                if curated_only && !self.curated.contains(candidate) {
+                    continue;
+                }
+                if let Some(pricing) = self.models.get(candidate) {
+                    return Some((candidate.clone(), pricing));
+                }
+            }
+        }
+        None
     }
 
     pub fn estimate_cost(&self, usage: &Usage) -> Option<(f64, CostStatus)> {
-        let (model_id, pricing) = self.resolve(&usage.model)?;
+        let (model_id, pricing) = self.resolve(&usage.provider, &usage.model)?;
 
         if pricing.free == Some(true) {
             return Some((0.0, CostStatus::Free));
@@ -1089,6 +1261,178 @@ mod tests {
         };
         assert!((cost("2026-08-31") - 2.00).abs() < 1e-9, "last intro day");
         assert!((cost("2026-09-01") - 3.00).abs() < 1e-9, "first list day");
+    }
+
+    /// The model's base input rate per million, at this provider.
+    ///
+    /// Deliberately priced at 100k tokens and scaled up, not at a million: a million is above
+    /// both the 128k and 200k long-context thresholds, so it returns the *tier* rate. The first
+    /// version of these tests did exactly that and read $6.00 for a $3.00 model.
+    fn base_input_rate(engine: &PricingEngine, provider: &str, model: &str) -> Option<f64> {
+        engine
+            .estimate_cost(&Usage {
+                provider: provider.into(),
+                model: model.into(),
+                input: 100_000,
+                ..Default::default()
+            })
+            .map(|(cost, _)| cost * 10.0)
+    }
+
+    /// The whole point of the community table: models the curated one never listed.
+    ///
+    /// The curated table is 68 Zen models. Before this, a Claude Code or Codex user's own
+    /// models were priced only where someone had hand-added them, and everything else was
+    /// `UNKNOWN COST`.
+    #[test]
+    fn the_community_table_prices_models_the_curated_one_never_had() {
+        let engine = PricingEngine::bundled();
+        for (provider, model, expected) in [
+            ("openai", "gpt-4o", 2.5),
+            ("gemini", "gemini-2.5-pro", 1.25),
+            ("anthropic", "claude-opus-4-1-20250805", 15.0),
+        ] {
+            assert!(
+                !PricingEngine::parse(BUNDLED_PRICING)
+                    .unwrap()
+                    .has_model(model),
+                "{model} is in the curated table; pick one that is not, or this proves nothing"
+            );
+            let cost = base_input_rate(&engine, provider, model)
+                .unwrap_or_else(|| panic!("{provider}/{model} should now be priceable"));
+            assert!(
+                (cost - expected).abs() < 1e-6,
+                "{provider}/{model}: expected ${expected}, got ${cost}"
+            );
+        }
+    }
+
+    /// A hand-checked rate must not lose to a community one just for being less specific.
+    ///
+    /// This is a real regression, caught by the period tests: the community table keys
+    /// `anthropic/claude-sonnet-5` and the curated table keys bare `claude-sonnet-5`, so
+    /// preferring the more specific key handed every Anthropic row the community rate — and
+    /// bypassed the dated `period` records, which only the curated table carries.
+    #[test]
+    fn a_curated_rate_outranks_a_more_specific_community_one() {
+        let engine = PricingEngine::bundled();
+        let community = PricingEngine::parse_compact(LITELLM_PRICING);
+        let qualified = community
+            .models
+            .get("anthropic/claude-sonnet-5")
+            .and_then(|p| p.input)
+            .expect("the community table keys this model by provider");
+        let curated = PricingEngine::parse(BUNDLED_PRICING)
+            .unwrap()
+            .models
+            .get("claude-sonnet-5")
+            .and_then(|p| p.input)
+            .expect("the curated table keys it bare");
+        assert!(
+            (qualified - curated).abs() > 1e-9,
+            "this test needs the two tables to disagree; they now both say {curated}"
+        );
+
+        let cost = base_input_rate(&engine, "anthropic", "claude-sonnet-5").expect("priced");
+        assert!(
+            (cost - curated).abs() < 1e-6,
+            "expected the curated ${curated}, got ${cost} — layering lost to specificity"
+        );
+    }
+
+    /// Where providers disagree on a name, the provider decides — and without one, we decline.
+    ///
+    /// `anthropic.claude-sonnet-4-5-20250929-v1:0` is $3.60/M on `bedrock` and $3.00/M on
+    /// `bedrock_converse`. The generated table emits no bare key for names like this, so an
+    /// unrecognised provider yields no price at all rather than a coin-flip between the two.
+    #[test]
+    fn providers_that_disagree_on_a_name_are_priced_apart_not_averaged() {
+        let engine = PricingEngine::bundled();
+        let model = "anthropic.claude-sonnet-4-5-20250929-v1:0";
+
+        let bedrock = base_input_rate(&engine, "bedrock", model).expect("bedrock is priced");
+        let converse = base_input_rate(&engine, "bedrock_converse", model)
+            .expect("bedrock_converse is priced");
+        assert!((bedrock - 3.6).abs() < 1e-6, "bedrock: got ${bedrock}");
+        assert!(
+            (converse - 3.0).abs() < 1e-6,
+            "bedrock_converse: got ${converse}"
+        );
+
+        // Unknown cost stays unknown: no bare key, so nothing to guess with.
+        assert_eq!(
+            base_input_rate(&engine, "some-reseller", model),
+            None,
+            "a provider the table does not know must not inherit another provider's rate"
+        );
+    }
+
+    /// Long-context tiers from the community table apply above the threshold.
+    ///
+    /// Worth pinning: the upstream key is `..._above_200k_tokens`, spelled in `k` rather than
+    /// digits. The generator first looked for `_above_200000_tokens`, matched nothing, and
+    /// dropped every tier — silently, because a missing tier just prices at the base rate.
+    #[test]
+    fn a_long_context_request_is_priced_at_the_tier_rate() {
+        let engine = PricingEngine::bundled();
+        let model = "claude-sonnet-4-5-20250929";
+
+        // 100k input: below the 200k threshold, so the base rate.
+        let base = base_input_rate(&engine, "anthropic", model).expect("priced");
+        assert!((base - 3.0).abs() < 1e-6, "base rate: got ${base}");
+
+        // 300k input: above it, so the long-context rate, which Anthropic doubles.
+        let (cost, _) = engine
+            .estimate_cost(&Usage {
+                provider: "anthropic".into(),
+                model: model.into(),
+                input: 300_000,
+                ..Default::default()
+            })
+            .expect("priced");
+        let per_million = cost / 0.3;
+        assert!(
+            (per_million - 6.0).abs() < 1e-6,
+            "long-context rate: expected $6.00/M, got ${per_million:.4}/M"
+        );
+    }
+
+    /// The generated table must parse completely. A skipped line is a silently missing price.
+    #[test]
+    fn the_generated_community_table_parses_cleanly() {
+        let engine = PricingEngine::parse_compact(LITELLM_PRICING);
+        assert!(
+            engine.warnings().is_empty(),
+            "the generated table did not parse cleanly: {:?}",
+            engine.warnings()
+        );
+        assert!(
+            engine.models.len() > 3_000,
+            "only {} models parsed; the generator or the format changed",
+            engine.models.len()
+        );
+        assert!(
+            !engine.tiers.is_empty(),
+            "no long-context tiers parsed — the upstream suffix is `_above_200k_tokens`, and \
+             getting it wrong drops every tier silently"
+        );
+    }
+
+    /// A malformed line is skipped and reported, not fatal: this table ships in the binary.
+    #[test]
+    fn a_malformed_line_is_skipped_rather_than_voiding_the_table() {
+        let engine = PricingEngine::parse_compact(
+            "# comment\ngood/model\tinput=1.0\nbad/model\tinput=not-a-number\nother/model\toutput=2.0\n",
+        );
+        assert!(engine.models.contains_key("good/model"));
+        assert!(engine.models.contains_key("other/model"));
+        assert!(!engine.models.contains_key("bad/model"));
+        assert_eq!(engine.warnings().len(), 1);
+        assert!(
+            engine.warnings()[0].contains("bad/model"),
+            "{:?}",
+            engine.warnings()
+        );
     }
 
     #[test]

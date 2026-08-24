@@ -14,3 +14,6 @@ tests/fixtures/*.db-shm
 
 # OS
 Thumbs.db
+# Python bytecode from scripts/
+__pycache__/
+*.pyc

@@ -369,10 +369,27 @@ same completed event does not duplicate it. The journal defaults to:
 Override it with `--journal PATH`, the `journal` config setting, or
 `AI_USAGE_JOURNAL_PATH`.
 
-### Zen catalog and pricing
+### Pricing tables
 
-The bundled Zen pricing table is used to estimate cost when authoritative cost
-is unavailable. These optional network commands update local caches and exit:
+When a provider reports no cost, it is estimated from the tables bundled in the
+binary — no network needed:
+
+| Table | Coverage |
+| --- | --- |
+| `pricing/litellm.tsv` | ~3,450 keys across 88 providers, generated from [LiteLLM's community table](https://github.com/BerriAI/litellm) |
+| `pricing/zen.toml` | ~60 curated models: OpenCode Zen ids, stealth models, and anything the community table gets wrong |
+
+Together they price **1,491 distinct model names**. The curated table is applied
+on top of the community one, and a refreshed cache on top of that, so a
+hand-checked rate always wins.
+
+Keys can be provider-qualified. Where providers genuinely charge differently for
+the same model name — Bedrock's variants, the aggregators — the rate follows the
+provider on the usage row. For the ~180 names where providers disagree, no bare
+key is published at all: a model whose provider is not recognised stays
+`UNKNOWN COST` rather than borrowing someone else's rate.
+
+These optional network commands update local caches and exit:
 
 ```sh
 # Scrape the current Zen pricing table
