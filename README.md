@@ -427,8 +427,9 @@ Only six fields of each record are read: `id`, `name`, `updatedAt`, `ready`,
 `tierLabel`, `usageStatusText`, and the `limits` list (`label`, `title`,
 `percent`, `resetsAt`). Never read: the agents' credentials, Omarchy's probe
 cache (`~/.cache/omarchy/agent-usage`), the network, the record's
-`authHelpText`, and its token tallies (`modelUsage`, `recentDays`, …). Nothing
-is written into the directory.
+`authHelpText`, and its token tallies (`modelUsage`, `recentDays`, …). The
+reader writes nothing there; the only write is the opt-in `--omarchy-record`
+action described next.
 
 The display rules follow Omarchy's panel. A window at or above 90 % is drawn in
 the alarm colour, in the panel and in the header; a window whose reset time has
@@ -459,6 +460,73 @@ with `[omarchy] limits = false`, or point it elsewhere with `[omarchy] dir` or
 `resets_at` are Unix seconds or `null`. CSV output is unchanged. The record's
 plan label (`tierLabel`) is also a billing signal for the Claude Code and Codex
 collectors — see [Claude Code billing](#claude-code).
+
+### Publishing to Omarchy's agents panel
+
+The reverse direction is opt-in. `ai-usage-tui --omarchy-record` writes this
+tool's own usage and budgets as a record into the same directory, so the bar's
+Agents panel gains a tab for the sources Omarchy cannot meter itself. It is a
+one-shot action, mutually exclusive with the other actions: it writes
+`<id>.json`, prints `Wrote Omarchy record <path> (N requests, M budget
+meters)`, and exits non-zero on failure. Nothing else in this tool writes
+there — the dashboard and the exports never do, and a test asserts it.
+
+```toml
+[omarchy]
+records = ["opencode"]            # ids to write: opencode (default), ollama
+balance = false                   # also draw a budget as the panel's prepaid ledger
+balance_budget = "global/monthly" # which budget, as <scope>/<period>
+```
+
+- `opencode` is every OpenCode row, all providers, priced; `ollama` is the
+  journal's Ollama rows. `claude`, `codex` and `fireworks` are refused: those
+  are Omarchy's own files and a record so named would overwrite them.
+- Claude Code and Codex rows are never included — Omarchy's own tabs cover
+  those logs. Omarchy's `claude` and `codex` collectors also fold OpenCode's
+  anthropic/openai rows into their tabs, so such a row can appear in both the
+  `opencode` tab and Omarchy's. Tabs are never summed, so this is display
+  overlap, not double counting.
+- Every configured budget becomes a meter in the record's `limits` list
+  (`Monthly budget` / `Daily budget`, the scope in the label, `percent` =
+  spend/limit clamped to 1, `resetsAt` the next local midnight or first of
+  next month), so the bar glyph alarms at 90 % like a rate limit and the
+  panel shows a reset countdown. The spend is the figure `--check-budgets`
+  reports — computed over all sources, not the tab's rows alone.
+- `balance = true` additionally draws one budget as the panel's prepaid
+  ledger (`remaining`, `funded`, `spent`, `USD`, `estimated: true`).
+  `balance_budget` picks it; a missing match falls back to `global/monthly`,
+  then `global/daily`, then the first budget. Off by default because the
+  panel labels it "Prepaid credits … funded", which describes a soft budget
+  loosely.
+- `tierLabel` reads `Budget $50/month` or `Pay as you go`. When billable
+  rows lack a price the status reads `Spend partly unpriced` and
+  `authHelpText` carries the count.
+- The record carries token counts, model ids, request and session counts,
+  and dollar figures — never content, never a path. The write is atomic
+  (temporary `.<id>.<pid>.tmp`, then rename), mode 0600, and no temporary
+  file is left on failure.
+
+Schedule it with the bundled user units (Omarchy's own collectors refresh
+every 15 minutes; the timer matches):
+
+```bash
+cp contrib/systemd/user/ai-usage-omarchy.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now ai-usage-omarchy.timer
+```
+
+The service runs `%h/.cargo/bin/ai-usage-tui` at `Nice=19` with idle IO;
+edit `ExecStart` if the binary lives elsewhere (`command -v ai-usage-tui`).
+See [`contrib/systemd/user/README.md`](contrib/systemd/user/README.md).
+
+The tab first appears at Omarchy's next rescan — its updater runs every
+`refreshIntervalSec` (900 s by default) — or at once after
+`omarchy-shell omarchy.agents refresh`; afterwards the panel watches the file.
+The panel never reads `updatedAt`, so if the timer stops the tab keeps showing
+its last numbers: check `systemctl --user status ai-usage-omarchy.timer`. To
+remove the tab, disable the timer and
+`rm ~/.local/state/omarchy/agents/usage/opencode.json` (one file per id).
+Linux/Omarchy only — the action has no meaning elsewhere.
 
 | Key | Action |
 | --- | --- |
@@ -549,6 +617,9 @@ interval = 60
 [omarchy]
 # dir = "/home/user/.local/state/omarchy/agents/usage"
 limits = true                           # read Omarchy's agents-panel records
+# records = ["opencode"]                # what --omarchy-record writes (opencode, ollama)
+# balance = false                       # also draw a budget as the panel's prepaid ledger
+# balance_budget = "global/monthly"     # which budget, as <scope>/<period>
 
 [[budgets.entry]]
 scope = "global"
@@ -678,6 +749,7 @@ does not load it automatically.
 | `--codex-dir PATH` | Override the Codex home (`$CODEX_HOME`, else `~/.codex`); `sessions/` and `archived_sessions/` are read beneath it |
 | `--codex-billing MODE` | How Codex usage is billed: `auto` (default), `subscription`, or `api`; overrides `[collectors.codex] billing` |
 | `--omarchy-dir PATH` | Override where Omarchy's agents panel keeps its usage records (default `$XDG_STATE_HOME/omarchy/agents/usage`) |
+| `--omarchy-record` | Write usage and budgets as a record for Omarchy's agents panel (`[omarchy] records`, default `opencode`) and exit |
 | `--today` | Use today (local calendar day) |
 | `--week` | Use the trailing 7 days (default) |
 | `--month` | Use the trailing 30 days |
@@ -743,13 +815,21 @@ On Windows, `USERPROFILE` (or `HOMEDRIVE` + `HOMEPATH`) stands in for `HOME`,
   record (`id`, `name`, `updatedAt`, `ready`, `tierLabel`, `usageStatusText`,
   `limits`). The agents' credentials, Omarchy's probe cache, the record's
   `authHelpText` and token tallies are never read, no network request is made,
-  and nothing is written into the directory.
+  and the reader writes nothing into the directory.
+- `--omarchy-record` is the one write into Omarchy's directory, and only that
+  explicit action performs it: `<id>.json` (`opencode` by default) holding
+  token counts, model ids, request and session counts, and budget figures —
+  never content, never a path. Ids that would overwrite Omarchy's own files
+  (`claude`, `codex`, `fireworks`) are refused; the file is written
+  atomically with mode 0600.
 - Per-project attribution records the **working directory path** of each
   session, so `~/a/build` and `~/b/build` stay separate projects. The dashboard
   shows only the shortest name that distinguishes them, but `--json` and
   `--csv` export the full path — worth knowing before pasting an export into a
   ticket.
-- Normal dashboard and export operation does not require a network request.
+- Normal dashboard and export operation does not require a network request,
+  and nothing is written outside the tool's own data directory unless
+  `--omarchy-record` is run.
 - `--refresh-pricing`, `--refresh-zen`, and an enabled `zen_pricing`
   background collector make outbound requests to OpenCode/Zen endpoints.
 
@@ -761,6 +841,7 @@ Default local storage paths (when the corresponding XDG variable is unset):
 | Claude Code config document, read-only (billing only) | `~/.claude.json` |
 | Codex session logs, read-only | `~/.codex/sessions`, `~/.codex/archived_sessions` |
 | Omarchy agents-panel records, read-only | `~/.local/state/omarchy/agents/usage` |
+| Omarchy agents-panel record, written only by `--omarchy-record` | `~/.local/state/omarchy/agents/usage/<id>.json` |
 | Ollama and routing journal | `~/.local/share/ai-usage-tui/usage.db` |
 | Zen pricing cache | `~/.local/share/ai-usage-tui/zen-pricing.toml` |
 | Zen model catalog | `~/.local/share/ai-usage-tui/zen-models.json` |

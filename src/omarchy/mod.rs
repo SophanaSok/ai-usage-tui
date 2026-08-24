@@ -12,6 +12,8 @@
 //! ever written here, and on a machine without Omarchy the directory is simply absent — that is
 //! an idle panel, not an error.
 
+pub mod record;
+
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;

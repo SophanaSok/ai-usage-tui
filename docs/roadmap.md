@@ -56,7 +56,8 @@ Shipped since the audit: the time-series panel (`g`), burn rate with budget proj
 per-project view (`p`), per-session drill-down (`s`), and the subscription-limits panel (`l`),
 which reads Omarchy's agents-panel records read-only and also surfaces the fullest fresh window
 in the header. `src/ui.rs` was split into `src/ui/` with one module per panel, which is what
-made each of those a small independent change.
+made each of those a small independent change. The other direction shipped too: `--omarchy-record`
+publishes this tool's usage and budgets as a tab in Omarchy's panel (see Decisions below).
 
 Remaining:
 
@@ -90,6 +91,18 @@ Remaining:
   different provider from the agent that wrote the code) when `reasoning` did the writing.
 
 ## Decisions worth knowing about
+
+**Omarchy integration writes a record rather than shipping a collector.** Omarchy's updater only
+runs collectors from the root-owned `$OMARCHY_PATH/bin` (`/usr/share/omarchy`), and `OMARCHY_PATH`
+is fixed by Omarchy's environment bootstrap, so a user cannot register one. But the panel tabs any
+`*.json` in its usage directory, whoever wrote it — so `--omarchy-record` writes the record itself,
+on a user timer (`contrib/systemd/user/`), and nothing else in the tool ever writes there. Budgets
+map to `limits[]` because that is the one structure the panel meters: a 0..1 `percent` gets the
+90 % alarm glyph and a `resetsAt` gets the countdown, which a soft budget wants too. The panel's
+`balance` block is opt-in (`[omarchy] balance`) because it labels the figure "Prepaid credits …
+funded", a loose description of a budget. Claude Code and Codex rows are excluded because
+Omarchy's own `claude`/`codex` tabs already cover those logs — and a record under either id would
+overwrite Omarchy's file, so those ids are refused outright.
 
 **Logging is a ~130-line module, not `tracing`.** The audit called for `tracing`; what the problem
 actually needed was "collector errors survive to a file the user can read." `tracing` +

@@ -100,6 +100,9 @@ fn dispatch() -> Result<()> {
     if cli.check_budgets {
         return check_budgets(&cli, &config);
     }
+    if cli.omarchy_record {
+        return write_omarchy_records(&cli, &config);
+    }
     if cli.routing_json || cli.routing_csv_path.is_some() {
         return export_routing(&cli);
     }
@@ -284,6 +287,103 @@ fn check_budgets(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()
         // `std::process::exit` here skipped every destructor on the way out, including the
         // collector handle's thread join. Signal the exit code by unwinding instead.
         return Err(BudgetsExceeded(alerts.iter().filter(|a| a.is_actionable()).count()).into());
+    }
+    Ok(())
+}
+
+/// Write one record per configured id into Omarchy's usage directory.
+///
+/// Budgets are checked over the tool's whole usage — every source, deduplicated and priced —
+/// so the meters agree with `--check-budgets` and the dashboard; only the token tallies are
+/// this tab's own rows.
+fn write_omarchy_records(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
+    use ai_usage_tui::budget::{BudgetPeriod, BudgetScope};
+    use ai_usage_tui::omarchy::record::{build_record, write_record, RecordSpec, ALLOWED_IDS};
+
+    let journal = cli
+        .journal_path
+        .clone()
+        .or_else(ai_usage_tui::utils::journal_path)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "could not determine a home directory; set AI_USAGE_JOURNAL_PATH or pass --journal"
+            )
+        })?;
+    let roots = SourceRoots::from_cli(cli, journal.clone());
+    let dir = roots.omarchy_usage_dir().ok_or_else(|| {
+        anyhow::anyhow!("could not determine Omarchy's usage directory; pass --omarchy-dir")
+    })?;
+    let omarchy = config.omarchy.clone().unwrap_or_default();
+    let ids: Vec<String> = omarchy
+        .records
+        .clone()
+        .unwrap_or_else(|| vec!["opencode".to_string()]);
+
+    let (all_usages, _) = load_usage(&roots)?;
+    let alerts = budget_engine(config).check(&all_usages);
+    let wanted = omarchy
+        .balance_budget
+        .as_deref()
+        .unwrap_or("global/monthly")
+        .to_ascii_lowercase();
+    let balance = if omarchy.balance.unwrap_or(false) {
+        let matches = |alert: &&ai_usage_tui::budget::Alert| {
+            let period = match alert.period {
+                BudgetPeriod::Daily => "daily",
+                BudgetPeriod::Monthly => "monthly",
+            };
+            format!("{}/{}", alert.scope.label(), period).to_ascii_lowercase() == wanted
+        };
+        alerts
+            .iter()
+            .find(matches)
+            .or_else(|| {
+                alerts
+                    .iter()
+                    .find(|a| a.scope == BudgetScope::Global && a.period == BudgetPeriod::Monthly)
+            })
+            .or_else(|| alerts.iter().find(|a| a.scope == BudgetScope::Global))
+            .or_else(|| alerts.first())
+    } else {
+        None
+    };
+
+    let engine = ai_usage_tui::pricing::PricingEngine::load();
+    let now = ai_usage_tui::utils::now();
+    for id in &ids {
+        anyhow::ensure!(
+            ALLOWED_IDS.contains(&id.as_str()),
+            "record id {id:?} is not one this tool may write"
+        );
+        let (mut rows, name) = match id.as_str() {
+            "opencode" => (
+                ai_usage_tui::collector::opencode::load_opencode(roots.db_path.as_deref())?.0,
+                "OpenCode",
+            ),
+            _ => (
+                ai_usage_tui::collector::journal::load_journal(&roots.journal)?
+                    .into_iter()
+                    .filter(|u| u.provider.eq_ignore_ascii_case("ollama"))
+                    .collect(),
+                "Ollama",
+            ),
+        };
+        ai_usage_tui::pricing::apply_estimated_pricing(&mut rows, &engine);
+        let record = build_record(&RecordSpec {
+            id,
+            name,
+            rows: &rows,
+            alerts: &alerts,
+            balance,
+            now,
+        });
+        let path = write_record(&dir, &record)?;
+        print_line(&format!(
+            "Wrote Omarchy record {} ({} requests, {} budget meters)",
+            path.display(),
+            record.total_prompts,
+            record.limits.len()
+        ))?;
     }
     Ok(())
 }

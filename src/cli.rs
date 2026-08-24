@@ -27,6 +27,8 @@ pub struct Cli {
     /// Omarchy's agents-panel records; defaults to the XDG state location.
     pub omarchy_dir: Option<PathBuf>,
     pub limits_enabled: bool,
+    /// Write this tool's usage and budgets as a record Omarchy's agents panel shows, and exit.
+    pub omarchy_record: bool,
     pub range: Range,
     pub range_set: bool,
     pub provider_filter: Option<String>,
@@ -63,6 +65,7 @@ impl Default for Cli {
             codex_billing_set: false,
             omarchy_dir: None,
             limits_enabled: true,
+            omarchy_record: false,
             range: Range::Week,
             range_set: false,
             provider_filter: None,
@@ -182,6 +185,7 @@ where
                     .ok_or_else(|| anyhow::anyhow!("--codex-dir requires a path"))?;
                 cli.codex_dir = Some(PathBuf::from(value));
             }
+            "--omarchy-record" => cli.omarchy_record = true,
             "--omarchy-dir" => {
                 let value = args
                     .next()
@@ -252,13 +256,18 @@ where
         cli.record_routing,
         cli.routing_json,
         cli.routing_csv_path.is_some(),
+        cli.omarchy_record,
     ]
     .into_iter()
     .filter(|enabled| *enabled)
     .count();
     if actions > 1
         || (cli.once
-            && (cli.record_ollama || cli.refresh_zen || cli.check_budgets || cli.record_routing))
+            && (cli.record_ollama
+                || cli.refresh_zen
+                || cli.check_budgets
+                || cli.record_routing
+                || cli.omarchy_record))
     {
         return Err(anyhow::anyhow!(
             "collection actions and --once/--json/--csv are mutually exclusive"
@@ -306,6 +315,8 @@ OPTIONS:
                                         or api. Overrides [collectors.codex]
     --omarchy-dir PATH                  Override where Omarchy's agents panel keeps its usage
                                         records (default $XDG_STATE_HOME/omarchy/agents/usage)
+    --omarchy-record                    Write usage and budgets as a record for Omarchy's agents
+                                        panel ([omarchy] records, default opencode) and exit
                   (default: ~/.claude/projects)
     --days N       Show the last N days
     --today        Show today
@@ -449,5 +460,14 @@ mod tests {
         assert!(cli.codex_billing_set);
         assert!(parse_cli(["--codex-dir"]).is_err());
         assert!(parse_cli(["--codex-billing", "maybe"]).is_err());
+    }
+
+    #[test]
+    fn omarchy_record_is_a_single_purpose_action() {
+        assert!(parse_cli(["--omarchy-record"]).unwrap().omarchy_record);
+        assert!(parse_cli(["--omarchy-record", "--json"]).is_err());
+        assert!(parse_cli(["--omarchy-record", "--once"]).is_err());
+        let cli = parse_cli(["--omarchy-record", "--omarchy-dir", "/x"]).unwrap();
+        assert_eq!(cli.omarchy_dir.as_deref(), Some(std::path::Path::new("/x")));
     }
 }

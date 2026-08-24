@@ -1,0 +1,15 @@
+# Regenerate ai-usage-tui's record for Omarchy's agents panel.
+#
+# ExecStart needs an absolute path: a user-session unit does not see ~/.cargo/bin. Adjust it if
+# the binary is installed elsewhere (`command -v ai-usage-tui`). The record is written only by
+# this explicit action; nothing else in ai-usage-tui writes into Omarchy's state directory.
+[Unit]
+Description=Write ai-usage-tui usage and budgets to Omarchy's agents panel
+
+[Service]
+Type=oneshot
+ExecStart=%h/.cargo/bin/ai-usage-tui --omarchy-record
+# A 2-core laptop should not notice this running.
+Nice=19
+IOSchedulingClass=idle
+CPUWeight=20

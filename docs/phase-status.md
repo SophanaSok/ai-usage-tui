@@ -53,6 +53,10 @@
 - Subscription limits from Omarchy's agents panel (`src/omarchy/mod.rs`, `l` panel, header span,
   `--json` `limits` array): read-only, six fields per record, `[omarchy]` / `--omarchy-dir`;
   the record's `tierLabel` is Phase 1's fourth billing signal, now live
+- `--omarchy-record` (`src/omarchy/record.rs`): writes this tool's usage and budgets as
+  `<id>.json` for Omarchy's agents panel — `[omarchy] records` (`opencode` default, `ollama`),
+  budgets as `limits[]` meters, opt-in `balance`; atomic 0600 write, nothing written otherwise;
+  user timer in `contrib/systemd/user/`
 
 ## Released in v0.4.1 (2026-08-20)
 

@@ -1,0 +1,13 @@
+# Enable with: systemctl --user enable --now ai-usage-omarchy.timer
+# Omarchy's own collectors refresh every 15 minutes; matching them keeps the tab current.
+[Unit]
+Description=Refresh ai-usage-tui's record for Omarchy's agents panel
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

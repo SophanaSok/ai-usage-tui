@@ -65,3 +65,6 @@ limit = 20.0
 [omarchy]
 # dir = "/home/user/.local/state/omarchy/agents/usage"   # default: $XDG_STATE_HOME/omarchy/agents/usage
 limits = true                            # `l` panel, header window, --json `limits`, billing signal
+# records = ["opencode"]                 # what --omarchy-record writes: opencode (default), ollama
+# balance = false                        # also draw a budget as the panel's prepaid ledger
+# balance_budget = "global/monthly"      # which budget the ledger shows, as <scope>/<period>

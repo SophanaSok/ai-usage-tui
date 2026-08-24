@@ -30,6 +30,14 @@ pub struct OmarchyConfig {
     /// Read the rate-limit windows and plan labels. Default true; the directory being absent
     /// is already silent.
     pub limits: Option<bool>,
+    /// Which records `--omarchy-record` writes: `opencode` (default), `ollama`. Never
+    /// `claude`, `codex` or `fireworks` — those are Omarchy's own files.
+    pub records: Option<Vec<String>>,
+    /// Also draw the primary budget as the panel's prepaid ledger. Off by default: the panel
+    /// labels it "Prepaid credits … funded", which is a loose description of a soft budget.
+    pub balance: Option<bool>,
+    /// Which budget is the ledger, as `<scope>/<period>` — `global/monthly` by default.
+    pub balance_budget: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -57,6 +65,17 @@ impl ConfigFile {
     /// no-op: a `billing` line under the wrong table would otherwise sit there looking like
     /// it worked.
     fn validate(&self) -> Result<()> {
+        if let Some(records) = self.omarchy.as_ref().and_then(|o| o.records.as_ref()) {
+            for id in records {
+                if !crate::omarchy::record::ALLOWED_IDS.contains(&id.as_str()) {
+                    return Err(anyhow::anyhow!(
+                        "[omarchy] records may only contain {}; {id:?} would overwrite or \
+                         impersonate an Omarchy agent",
+                        crate::omarchy::record::ALLOWED_IDS.join(", ")
+                    ));
+                }
+            }
+        }
         let Some(collectors) = &self.collectors else {
             return Ok(());
         };
@@ -393,5 +412,23 @@ mod tests {
             cli.omarchy_dir.as_deref(),
             Some(std::path::Path::new("/flag"))
         );
+    }
+
+    #[test]
+    fn omarchy_records_are_an_allowlist() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[omarchy]\nrecords = [\"opencode\", \"claude\"]\n").unwrap();
+        let error = load_config(&cli_with_config(&path))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("claude"), "{error}");
+        fs::write(
+            &path,
+            "[omarchy]\nrecords = [\"opencode\", \"ollama\"]\nbalance = true\n",
+        )
+        .unwrap();
+        let config = load_config(&cli_with_config(&path)).unwrap();
+        assert_eq!(config.omarchy.unwrap().balance, Some(true));
     }
 }
