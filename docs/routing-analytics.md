@@ -49,11 +49,35 @@ Record a routing event from stdin (JSON):
 echo '{"agent":"@heavy","model":"glm-5.2:cloud","task":"refactor","tokens":15000,"cost":0.02,"test_result":true}' | ai-usage-tui --record-routing
 ```
 
-Required fields: `agent`, `model`, `task`, `tokens`. Optional: `cost`, `test_result` (boolean).
+No field is required. `agent`, `model`, `task` and `tokens` are the useful minimum — an event
+without them is stored, but aggregates under `unknown` with nothing to count. Anything omitted
+takes a default:
+
+| Field | Default |
+| --- | --- |
+| `agent`, `model`, `provider` | `unknown` |
+| `task`, `phase` | empty string |
+| `requests` | `1` (values below 1 are raised to 1) |
+| `tokens`, `retries`, `escalations`, `review_defects` | `0` |
+| `category` | `UNKNOWN` |
+| `cost_status` | `unavailable` |
+| `cost` | `null` — no cost, not `$0.00` |
+| `test_result` | `null` — unobserved, not a failure |
+| `created` | now |
+
+The full optional set: `provider`, `phase`, `category`, `cost_status`, `requests`, `cost`,
+`retries`, `escalations`, `test_result` (`true`/`false`), `review_defects`, `created` (unix
+seconds).
+
+Events are deduplicated on the identity `routing:{agent}:{model}:{task}:{created}`; a second
+event with the same identity is ignored, not updated. Two events with the same agent, model and
+task recorded in the same second therefore collapse into one — pass `created` explicitly when
+batching.
 
 ## Exporting Analytics
 
-Export all routing events as JSON:
+Export the aggregates as JSON — `{source, events: <count>, aggregates: [...]}`. Individual
+events are not exported:
 ```sh
 ai-usage-tui --routing-json
 ```
@@ -63,37 +87,55 @@ Export as CSV:
 ai-usage-tui --routing-csv routing.csv
 ```
 
-CSV columns: `timestamp,agent,model,task,tokens,cost,test_result`
+One row per aggregate. CSV columns:
+`agent,model,provider,tasks,tokens,cost,retries,escalations,test_passes,test_failures,review_defects`
 
 ## TUI Routing View
 
-Press `t` in the TUI to open the routing analytics view. It shows aggregated tables:
+`t` toggles the routing panel. `Esc` (like `q`) quits the app; it does not return to the
+dashboard. The panel has two blocks:
 
-- **By Agent**: total tokens, total cost, task count, pass rate
-- **By Model**: total tokens, total cost, task count, pass rate
-- **By Task**: total tokens, total cost, task count, pass rate
-
-Navigate with `j/k`. Press `Esc` to return to the main dashboard.
+- **ROUTING — cost per delivered result**: one row per agent/model/provider, sorted cheapest per
+  passing test first. Columns: `AGENT`, `MODEL`, `$/SUCCESS`, `PASS`, `RETRY`, `ESC`, `DEFECT`,
+  `TOKENS`, `TASKS`. A row with nothing passing sorts last and shows `—`, never `$0.00`.
+- **ESCALATIONS — derived from sessions**: the derived block described above. Drawn only when
+  there is at least one session to report.
 
 ## Aggregation
 
-Events are grouped by agent, model, and task. Aggregations include:
+Events are grouped by agent, model and provider (`routing::aggregate`, `src/routing.rs`). Each
+aggregate carries:
 
-- `total_tokens`: sum of tokens across events
-- `total_cost`: sum of cost across events
-- `task_count`: number of events
-- `pass_rate`: percentage of events with `test_result: true`
+- `tasks`: number of events
+- `tokens`: sum of `tokens`
+- `cost`: sum of `cost`; an event without one contributes `0`
+- `retries`, `escalations`, `review_defects`: sums
+- `test_passes`, `test_failures`: events with `test_result` `true` / `false`
+
+The JSON export adds `retry_rate`, `escalation_rate` and `defect_rate` (per task, in percent).
+The TUI adds `success_rate` (passes over observed results) and `cost_per_success` (cost over
+passes); both are `—` when unobserved, never `0`.
 
 ## Schema
 
+`RoutingEvent` (`src/model.rs`), one row per event in the `routing_event` table:
+
 ```text
-timestamp
-agent
-model
-task
-tokens
-cost
-test_result: pass | fail
+task            string
+phase           string
+agent           string
+model           string
+provider        string
+category        LOCAL | FREE | PAID | CLOUD | UNKNOWN
+requests        integer, at least 1
+tokens          integer — one counter, no input/output split
+cost            number | null
+cost_status     reported | calculated | estimated | free | local | quota | unavailable
+retries         integer
+escalations     integer
+test_result     true | false | null
+review_defects  integer
+created         unix seconds (the timestamp column)
 ```
 
 ## Data Caveats

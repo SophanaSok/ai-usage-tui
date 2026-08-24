@@ -30,7 +30,7 @@
 - `[[budgets.entry]]` config with `--check-budgets` (exit 1 on alerts) and `--webhook` CLI
 - TUI alert banner and budget panel toggle (`b` key) with calendar-based period cutoffs
 - Model-routing analytics: `RoutingEvent`, `routing_event` table, `--record-routing` capture
-- `RoutingEngine` aggregation: cost/task, token efficiency, retry/escalation/defect rates
+- `routing::aggregate` (`src/routing.rs`) aggregation: cost/task, token efficiency, retry/escalation/defect rates
 - `--routing-json` and `--routing-csv` export flags
 - TUI routing panel toggle (`t` key) with sortable aggregate table
 - Cross-platform packaging: `.tar.gz`/`.deb`/`.rpm` (Linux), `.tar.gz`+Homebrew (macOS), `.zip`+Scoop+Chocolatey (Windows)
@@ -42,10 +42,16 @@
 - Pre-flight checks passed (51 tests, clippy clean, release build verified)
 - Security audit passed (cost provenance, privacy, SQL injection, thread safety, no secrets in packaging)
 
-## In progress (unreleased)
+## Released in v0.4.1 (2026-08-20)
+
+Two packaging fixes, both present in every release through 0.4.0: `checksums.txt` now hashes by
+basename so `sha256sum -c` works against the flat release assets, and the tarballs and Windows
+zip ship README and LICENSE alongside the binary.
+
+## Released in v0.4.0 (2026-08-20)
 
 Dashboard and analytics work on top of the audit fixes released in v0.3.0. Full detail in
-[`CHANGELOG.md`](../CHANGELOG.md) under `[Unreleased]`.
+[`CHANGELOG.md`](../CHANGELOG.md).
 
 - Four new panels: cost per project (`p`), spend over time (`g`), burn rate against budgets (`w`),
   and sessions (`s`)
@@ -69,12 +75,14 @@ Dashboard and analytics work on top of the audit fixes released in v0.3.0. Full 
 - Release workflow builds and verifies per-architecture artifacts; packaging manifests rendered
   at release time
 - CI matrix (Linux/macOS/Windows), MSRV job, `cargo-deny`, Dependabot
-- 212 tests (from 51), clippy clean
+- Test suite expanded (count: see the CI test job), clippy clean
 
 **Next steps and outstanding audit findings: [`docs/roadmap.md`](roadmap.md).**
 
 ## Released
 
+- v0.4.1 — 2026-08-20
+- v0.4.0 — 2026-08-20
 - v0.3.0 — 2026-08-19
 - v0.2.0 — 2026-07-24
 
@@ -90,4 +98,4 @@ config. Do not reintroduce one.
 
 ## Privacy Policy
 
-Hosted models may process non-secret code. Sensitive files, credentials, production data, and security-sensitive changes must use local models (`@local` or `@explorer`). When sensitivity is uncertain, route locally.
+Hosted models may process non-secret code. Sensitive files, credentials, production data, and security-sensitive changes must use a local tier (`local` or `explore-local`). When sensitivity is uncertain, route locally.

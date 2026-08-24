@@ -22,7 +22,7 @@ This extends to the pricing table: a rate that is absent is distinct from a rate
 
 ## Background Collectors
 
-Background collectors run in dedicated `std::thread`-based polling loops and write normalized usage events to the journal database. The TUI reads from the journal for display, keeping the UI responsive regardless of collector latency. Configuration lives in the `[collectors.opencode]`, `[collectors.claude_code]`, and `[collectors.journal]` sections of the config file.
+Background collectors run in dedicated `std::thread`-based polling loops and merge normalized usage events into the shared in-memory `CollectorState`. They never write to the journal database — the journal is a source (written by `--record-ollama` / `--record-routing`, read by the journal collector), not a sink. The TUI calls `snapshot()` on its own refresh interval (default 30s), keeping the UI responsive regardless of collector latency. Configuration lives in the `[collectors.opencode]`, `[collectors.claude_code]`, `[collectors.journal]`, and `[collectors.zen_pricing]` sections of the config file.
 
 Ingestion is incremental: the OpenCode collector resumes from a `time_created` high-water mark and the Claude Code collector tails each session log by byte offset, so neither re-reads history on every poll.
 
@@ -30,14 +30,14 @@ See [`background-collectors.md`](background-collectors.md) for the `Collector` t
 
 ## Budget Engine
 
-`BudgetEngine` checks spend against configured limits on each aggregation cycle. `AlertDispatcher` posts webhook alerts when `--webhook` or `budgets.webhook` is configured, from both `--check-budgets` and the TUI. Dispatch runs on a background thread so the blocking HTTP call never touches the render path, and repeat alerts at the same level are suppressed for an hour.
+`BudgetEngine` checks spend against configured limits on each aggregation cycle. `AlertDispatcher` posts webhook alerts when `--webhook` or `budgets.webhook` is configured, from both `--check-budgets` and the TUI. Dispatch runs on a background thread so the blocking HTTP call never touches the render path, and repeat alerts at the same level are suppressed for an hour (in-memory, per process).
 
-Budget periods use local calendar boundaries, shared with the dashboard's `TODAY` range so the two can never disagree.
+Budget periods use local calendar boundaries. The daily period shares the dashboard's `TODAY` boundary so the two can never disagree; the monthly period is the calendar month, deliberately not the dashboard's trailing 30-day range.
 
 See [`data-model.md`](data-model.md#budget-configuration) for budget schema.
 
 ## Routing Engine
 
-`RoutingEngine` aggregates routing events by agent, model, and provider. Aggregations power the TUI routing view (`t` key) and `--routing-json` / `--routing-csv` exports.
+`routing::aggregate` (`src/routing.rs`) aggregates routing events by agent, model, and provider. Aggregations power the TUI routing view (`t` key) and `--routing-json` / `--routing-csv` exports.
 
 See [`routing-analytics.md`](routing-analytics.md) for event schema and aggregation logic.

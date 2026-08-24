@@ -1,14 +1,15 @@
 # Roadmap and Outstanding Findings
 
 Working state for continuing the audit-driven work started 2026-08-18, last updated 2026-08-20.
-Shipped items are in `CHANGELOG.md` under `[Unreleased]`; this file is the *remaining* work, with
-enough evidence attached that each item can be picked up cold.
+Shipped items are in the versioned sections of `CHANGELOG.md` (new work goes under
+`[Unreleased]`); this file is the *remaining* work, with enough evidence attached that each item
+can be picked up cold.
 
 ## Where things stand
 
-212 tests (from 51), `cargo fmt --check` and `cargo clippy -D warnings` clean, CI across Linux /
-macOS / Windows with an MSRV job (1.88) and `cargo-deny` — six checks, all green on every branch
-since PR #5.
+Tests (see the CI test job for the count), `cargo fmt --check` and `cargo clippy -D warnings`
+clean, CI across Linux / macOS / Windows with an MSRV job (1.88) and `cargo-deny` — six checks,
+all green on every branch since PR #5.
 
 **Every P0 and P1 finding from the original audit has shipped.** What remains is P2 and P3 — depth
 and breadth, not correctness.
@@ -59,7 +60,7 @@ Remaining:
 - **Drill from a project into its sessions.** `Enter` on a project row. Deliberately not done
   with the flat session list: it introduces panel *state* — which project am I inside? — that no
   panel currently has, and that is a larger change than any of the panels were.
-- **Interactive depth** — `/` search, sortable columns, `?` help overlay, mouse support.
+- **Interactive depth** — `/` search, sortable columns, mouse support.
 - **Routing analytics still needs a harness for the half that matters.** Escalations are now
   derived from collected sessions, but pass/fail and retry counts cannot be inferred from usage
   metadata and must not be guessed. A shipped hook or wrapper that emits `--record-routing`
@@ -145,12 +146,12 @@ workflow, the packaging templates, or the build matrix.
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets && cargo test --doc
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --all-targets --locked && cargo test --doc --locked
 
 # Against the committed fixture. `--claude-dir` matters: without it this reads your real
 # ~/.claude/projects and stops being a fixture check.
-cargo build --release
+cargo build --release --locked
 ./target/release/ai-usage-tui --json --all \
   --db tests/fixtures/opencode_test.db --claude-dir /nonexistent
 
