@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 0.7.0 - 2026-08-24
+
 ### Added
 
 - **Shell completions and a man page.** `--completions SHELL` (bash, zsh, fish, elvish,
@@ -11,6 +13,56 @@
   and `usr/share/fish/vendor_completions.d/`; the release archives carry them too. `just assets`
   produces them locally, and the release job generates them from a **host** build — a man page is
   architecture-independent and an aarch64 binary cannot be run on the x86_64 runner that built it.
+
+- **Gemini CLI collector**, the first source added since the registry landed — a module plus one
+  registry line, as advertised. Reads Gemini's OpenTelemetry log and reports usage per API
+  response, with cost estimated from the bundled tables (`gemini/gemini-2.5-pro` and friends
+  resolve because pricing keys are provider-qualified now).
+
+  **It is opt-in, and the setup is Gemini's, not ours.** Unlike Claude Code and Codex, Gemini CLI
+  persists no usage anywhere by default: session totals live in UI state and are lost on exit, and
+  saved chats hold conversation history with no token counts. The only durable record is its
+  telemetry log, which is off until you add
+  `{"telemetry":{"enabled":true,"target":"local","outfile":"~/.gemini/telemetry.json"}}` to
+  `~/.gemini/settings.json`. `--doctor` prints that line when the file is missing, so the source
+  reads as "not set up" rather than "empty". This tool never edits Gemini's settings.
+
+  Configure with `--gemini-dir`, `--gemini-billing` and `[collectors.gemini]`; Gemini's own
+  `GEMINI_TELEMETRY_OUTFILE` is honoured when set.
+
+  Three details the format forced, all documented in `docs/provider-support.md`:
+
+  - The log is **concatenated pretty-printed JSON**, not JSONL, so it cannot be split on newlines.
+    The reader consumes only complete top-level objects and advances its offset to the end of the
+    last one, because a poll can land mid-record while the CLI is writing.
+  - Google reports cached tokens *inside* the prompt count, unlike Anthropic which reports them
+    alongside input. They are subtracted so a cached token is not billed as fresh input as well,
+    and `toolUsePromptTokenCount` is likewise already inside the prompt count and not added again.
+  - One `prompt_id` covers a whole tool-use loop, so several responses share it. Identity is
+    `prompt_id` + timestamp + total, because keying on `prompt_id` alone would deduplicate real
+    requests away and under-report spend.
+
+  Model output never reaches a usage record: the same telemetry carries `response_text` when
+  `telemetry.logPrompts` is on, and a test plants a credential there and fails if it appears.
+
+- **LiteLLM is now the base pricing source: 60 models priced to 1,491.** `pricing/litellm.tsv`
+  ships in the binary — ~3,450 keys across 88 providers, generated from
+  [LiteLLM's community table](https://github.com/BerriAI/litellm) by
+  `scripts/refresh-litellm-pricing.py` (`just pricing`). The curated `pricing/zen.toml` is applied
+  on top of it for Zen-specific and stealth models, 13 of which appear in no community table, and
+  a refreshed cache on top of that. No network is needed and the existing "an overlay never
+  replaces" invariant is unchanged. Costs +35KB to the packaged crate and +5ms to startup.
+
+- **Pricing keys can be provider-qualified, and the provider on the usage row is used.** The same
+  model bills differently at Bedrock, `bedrock_converse` and the aggregators — 20% apart for
+  Claude Sonnet 4.5 — and that is now priced correctly instead of resolved by bare name. Where
+  providers disagree on a name (180 of them) the generated table publishes **no bare key at all**,
+  so a model whose provider is not recognised stays `UNKNOWN COST` rather than borrowing another
+  provider's rate. Long-context tiers come through too, including the 200k and 272k ones.
+
+  Layering still outranks specificity: a hand-checked rate in `zen.toml` wins over a
+  provider-qualified community one, and the dated `period` records only the curated table carries
+  are never bypassed.
 
 ### Changed
 
@@ -49,9 +101,6 @@
   Costs +1.1 MB to the release binary (9.6 → 10.7 MB) and +18 KB to the packaged crate. Startup is
   unchanged at 10 ms. `clap` and friends need Rust 1.85, under the 1.88 already pinned.
 
-
-### Changed
-
 - **Aggregators and clouds are classified as `PAID` rather than `UNKNOWN`.** OpenRouter, Bedrock,
   Azure, Vertex, Fireworks, DeepInfra, Together and Perplexity all bill per token, and the bundled
   pricing table now carries provider-qualified rates for them — 106 keys for OpenRouter, 111 for
@@ -64,63 +113,6 @@
   unknown and counts against the pricing-coverage figure, so the gap stays visible rather than
   hidden in `UNKNOWN`. The README's category table said `PAID` meant "usage with a known billable
   cost"; it now says what the code does.
-
-
-### Added
-
-- **Gemini CLI collector**, the first source added since the registry landed — a module plus one
-  registry line, as advertised. Reads Gemini's OpenTelemetry log and reports usage per API
-  response, with cost estimated from the bundled tables (`gemini/gemini-2.5-pro` and friends
-  resolve because pricing keys are provider-qualified now).
-
-  **It is opt-in, and the setup is Gemini's, not ours.** Unlike Claude Code and Codex, Gemini CLI
-  persists no usage anywhere by default: session totals live in UI state and are lost on exit, and
-  saved chats hold conversation history with no token counts. The only durable record is its
-  telemetry log, which is off until you add
-  `{"telemetry":{"enabled":true,"target":"local","outfile":"~/.gemini/telemetry.json"}}` to
-  `~/.gemini/settings.json`. `--doctor` prints that line when the file is missing, so the source
-  reads as "not set up" rather than "empty". This tool never edits Gemini's settings.
-
-  Configure with `--gemini-dir`, `--gemini-billing` and `[collectors.gemini]`; Gemini's own
-  `GEMINI_TELEMETRY_OUTFILE` is honoured when set.
-
-  Three details the format forced, all documented in `docs/provider-support.md`:
-
-  - The log is **concatenated pretty-printed JSON**, not JSONL, so it cannot be split on newlines.
-    The reader consumes only complete top-level objects and advances its offset to the end of the
-    last one, because a poll can land mid-record while the CLI is writing.
-  - Google reports cached tokens *inside* the prompt count, unlike Anthropic which reports them
-    alongside input. They are subtracted so a cached token is not billed as fresh input as well,
-    and `toolUsePromptTokenCount` is likewise already inside the prompt count and not added again.
-  - One `prompt_id` covers a whole tool-use loop, so several responses share it. Identity is
-    `prompt_id` + timestamp + total, because keying on `prompt_id` alone would deduplicate real
-    requests away and under-report spend.
-
-  Model output never reaches a usage record: the same telemetry carries `response_text` when
-  `telemetry.logPrompts` is on, and a test plants a credential there and fails if it appears.
-
-
-### Added
-
-- **LiteLLM is now the base pricing source: 60 models priced to 1,491.** `pricing/litellm.tsv`
-  ships in the binary — ~3,450 keys across 88 providers, generated from
-  [LiteLLM's community table](https://github.com/BerriAI/litellm) by
-  `scripts/refresh-litellm-pricing.py` (`just pricing`). The curated `pricing/zen.toml` is applied
-  on top of it for Zen-specific and stealth models, 13 of which appear in no community table, and
-  a refreshed cache on top of that. No network is needed and the existing "an overlay never
-  replaces" invariant is unchanged. Costs +35KB to the packaged crate and +5ms to startup.
-
-- **Pricing keys can be provider-qualified, and the provider on the usage row is used.** The same
-  model bills differently at Bedrock, `bedrock_converse` and the aggregators — 20% apart for
-  Claude Sonnet 4.5 — and that is now priced correctly instead of resolved by bare name. Where
-  providers disagree on a name (180 of them) the generated table publishes **no bare key at all**,
-  so a model whose provider is not recognised stays `UNKNOWN COST` rather than borrowing another
-  provider's rate. Long-context tiers come through too, including the 200k and 272k ones.
-
-  Layering still outranks specificity: a hand-checked rate in `zen.toml` wins over a
-  provider-qualified community one, and the dated `period` records only the curated table carries
-  are never bypassed.
-
 
 ### Fixed
 
@@ -135,7 +127,6 @@
   v0.6.0 — fails outright. Any contributor with journaled Ollama usage would have hit it on their
   first `cargo test`. The same omission was in the documented commands in `CONTRIBUTING.md`,
   `docs/roadmap.md` and the `justfile`'s `run` recipe; all four now pin the journal.
-
 
 ## 0.6.0 - 2026-08-24
 
