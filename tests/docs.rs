@@ -8,14 +8,34 @@ use std::collections::BTreeSet;
 
 const README: &str = include_str!("../README.md");
 const CLI_SOURCE: &str = include_str!("../src/cli.rs");
-/// Every file that reads the environment. A new `env::var` elsewhere must be listed here.
-const ENV_SOURCES: &[&str] = &[
-    include_str!("../src/utils.rs"),
-    include_str!("../src/logging.rs"),
-    include_str!("../src/collector/claude_code.rs"),
-    include_str!("../src/collector/codex.rs"),
-    include_str!("../src/collector/billing.rs"),
-];
+/// Every `.rs` file under `src/`, walked at test time.
+///
+/// This was a hand-maintained list of five `include_str!`s with a comment asking the next person
+/// to remember. A new collector reading `env::var("YOURS_HOME")` -- exactly what `codex.rs` does
+/// for `CODEX_HOME` -- was invisible to the check that exists to catch it, until someone thought
+/// to add the file. Walking the tree cannot be forgotten.
+fn env_sources() -> Vec<String> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<String>) {
+        let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read {dir:?}: {e}"));
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(
+                    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}")),
+                );
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut out,
+    );
+    assert!(out.len() >= 20, "only {} source files walked", out.len());
+    out
+}
 /// Read by the code but deliberately not rows in the README table: the Windows stand-ins for
 /// `HOME` and the XDG directories are described in the sentence under the table, and the
 /// agents' own API-key variables are documented where billing detection is.
@@ -217,8 +237,8 @@ fn readme_env_table_matches_the_code() {
         .collect();
 
     let mut read: BTreeSet<String> = BTreeSet::new();
-    for source in ENV_SOURCES {
-        let mut rest = *source;
+    for source in &env_sources() {
+        let mut rest = source.as_str();
         while let Some(at) = rest.find("var") {
             let after = &rest[at..];
             let literal = after

@@ -91,6 +91,174 @@ fn doctor_reports_every_source_and_where_it_looked() {
     assert!(text.contains("CONFIG"), "no config section:\n{text}");
 }
 
+/// The journal's only write path, end to end. `--record-ollama` had no test at all, and the
+/// three fixtures written for it (`ollama_single.json`, `ollama_stream.jsonl`,
+/// `opencode_sample.json`) were referenced from nowhere in the tree.
+#[test]
+fn recording_an_ollama_response_round_trips_through_the_journal_and_is_idempotent() {
+    let dir = scratch("ollama-journal");
+    let journal = dir.join("usage.db");
+    let fixture = format!(
+        "{}/tests/fixtures/ollama_single.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+
+    record(&journal, &fixture, "--record-ollama");
+    let rows = journal_rows(&journal);
+    assert_eq!(
+        rows.len(),
+        1,
+        "one response should journal one row: {rows:?}"
+    );
+    assert_eq!(rows[0]["provider"], "ollama");
+    assert_eq!(rows[0]["model"], "qwen3-coder-agent");
+    assert_eq!(rows[0]["input_tokens"], 5000);
+    assert_eq!(rows[0]["output_tokens"], 6500);
+    // Local usage is never billed, and never rendered as a paid zero.
+    assert_eq!(rows[0]["category"], "LOCAL");
+    assert_eq!(rows[0]["cost_status"], "local");
+
+    // Recording the same response twice must not double-count spend: the insert is
+    // `INSERT OR IGNORE` against a unique index on the derived event id.
+    record(&journal, &fixture, "--record-ollama");
+    let rows = journal_rows(&journal);
+    assert_eq!(
+        rows.len(),
+        1,
+        "recording the same response twice double-counted it: {rows:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A streamed response arrives as many JSON lines; only the final one carries the totals.
+#[test]
+fn a_streamed_ollama_response_journals_once_from_its_final_line() {
+    let dir = scratch("ollama-stream");
+    let journal = dir.join("usage.db");
+    record(
+        &journal,
+        &format!(
+            "{}/tests/fixtures/ollama_stream.jsonl",
+            env!("CARGO_MANIFEST_DIR")
+        ),
+        "--record-ollama",
+    );
+
+    let rows = journal_rows(&journal);
+    assert_eq!(
+        rows.len(),
+        1,
+        "a stream should journal one row, not one per chunk: {rows:?}"
+    );
+    // The last line's counts, not the first chunk's partial ones.
+    assert_eq!(rows[0]["output_tokens"], 6500, "{rows:?}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--record-routing` is the other write path, read back by `--routing-json`.
+#[test]
+fn recording_a_routing_event_round_trips_through_the_journal() {
+    let dir = scratch("routing-journal");
+    let journal = dir.join("usage.db");
+    let event = dir.join("event.json");
+    std::fs::write(
+        &event,
+        r#"{"task":"t-1","agent":"reviewer","model":"gpt-5.6-sol","provider":"openai",
+            "category":"CLOUD","requests":1,"tokens":1234,"cost":0.5,"cost_status":"reported",
+            "retries":2,"escalations":1,"test_result":"pass","review_defects":3}"#,
+    )
+    .expect("write event");
+    record(&journal, event.to_str().unwrap(), "--record-routing");
+
+    let output = bin()
+        .arg("--routing-json")
+        .arg("--journal")
+        .arg(&journal)
+        .output()
+        .expect("run --routing-json");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("routing json parses");
+
+    assert_eq!(json["events"], 1, "{json}");
+    let agg = &json["aggregates"][0];
+    assert_eq!(agg["agent"], "reviewer", "{json}");
+    assert_eq!(agg["tokens"], 1234, "{json}");
+    assert_eq!(agg["retries"], 2, "{json}");
+    assert_eq!(agg["escalations"], 1, "{json}");
+    assert_eq!(agg["review_defects"], 3, "{json}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn scratch(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("ai-usage-tui-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    dir
+}
+
+/// Feed a file to a stdin-reading action.
+fn record(journal: &std::path::Path, input: &str, flag: &str) {
+    use std::io::Write;
+    let mut child = bin()
+        .arg(flag)
+        .arg("--journal")
+        .arg(journal)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    let body = std::fs::read(input).expect("read input");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(&body)
+        .expect("write stdin");
+    let output = child.wait_with_output().expect("wait");
+    assert!(
+        output.status.success(),
+        "{flag} exited {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The journal's rows, as `--json` reports them with every other source switched off.
+fn journal_rows(journal: &std::path::Path) -> Vec<serde_json::Value> {
+    let output = bin()
+        .arg("--json")
+        .arg("--all")
+        .arg("--journal")
+        .arg(journal)
+        .arg("--db")
+        .arg("/nonexistent/opencode.db")
+        .arg("--claude-dir")
+        .arg("/nonexistent")
+        .arg("--codex-dir")
+        .arg("/nonexistent")
+        .arg("--omarchy-dir")
+        .arg("/nonexistent")
+        .output()
+        .expect("run --json");
+    assert!(
+        output.status.success(),
+        "--json exited {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json parses");
+    json["usage"].as_array().cloned().unwrap_or_default()
+}
+
 /// `[collectors.<id>] enabled = false` governs the exports, not only the dashboard.
 ///
 /// The two paths were wired separately: `main::build_collectors` honoured `enabled` and

@@ -84,10 +84,13 @@ Remaining:
   fixtures were kept in deliberately: the `#[cfg(test)]` modules under `src/` read
   `tests/fixtures/` at runtime, so excluding them would ship a crate whose own tests cannot run.
   What is left is the account step — see `docs/release-process.md`, "First publish".
-- **Resolved.** `MODEL_ROUTING.md` no longer duplicates the agent-to-model table; that mapping
+- **Resolved.** `docs/model-routing.md` no longer duplicates the agent-to-model table; that mapping
   lives in `~/.config/opencode/opencode.json` and `~/.config/opencode/ROUTING.md`, and the repo doc
   now carries only policy (tiers by role, privacy boundary, escalation, evaluation schema).
-  `docs/phase-status.md` and the screenshot tooling were reconciled at the same time.
+  The screenshot tooling was reconciled at the same time. `docs/phase-status.md` and
+  `docs/execution-log.md` have since been removed: both restated `CHANGELOG.md` from memory and
+  had drifted -- phase-status still filed the whole of v0.5.0 under "Unreleased" -- while being
+  linked from the README as current contributor documentation.
 
   *One discrepancy is left for you, in your own config rather than this repo:* `ROUTING.md` lists
   `reviewer` as `north-mini-code-free` while `opencode.json` defines it as

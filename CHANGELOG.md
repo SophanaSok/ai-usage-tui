@@ -4,6 +4,13 @@
 
 ### Changed
 
+- **CI gained a docs job and its advisory check got faster and more timely.** `cargo doc` with
+  warnings denied, plus a relative-link check across every Markdown file — the kind of breakage
+  a doc-only PR causes and nothing caught. `cargo-deny` now runs from a prebuilt action instead
+  of a from-source `cargo install` on every run, and on a weekly schedule as well as on push: an
+  advisory published against an unchanged dependency produces neither a push nor a PR, so it was
+  previously never noticed.
+
 - **One source registry, replacing two hand-maintained wirings.** The set of data sources was
   wired independently in `collector::load_usage` (used by `--json`, `--csv`, `--check-budgets`,
   `--omarchy-record` and the dashboard's own refresh) and in `main::build_collectors` (background
@@ -32,6 +39,10 @@
 
 ### Added
 
+- **A `justfile`.** `just check` runs exactly what CI runs, in CI's order; `just run` starts the
+  dashboard against the committed fixture with the hermetic overrides already applied, `just
+  doctor`, `just deny` and `just msrv` cover the rest. The check list previously existed in four
+  places with three different subsets.
 - **`--doctor`.** The answer to "the dashboard is empty and I do not know why". One line per
   source: the id, whether anything was there, the exact path searched, how many rows it produced,
   how billing was decided, and — where a source is absent — the flag or environment variable that
@@ -70,6 +81,23 @@
   added here is gated on its secret and prints a notice instead of failing, so the release path is
   green before and after those steps.
 
+### Documentation
+
+- **The Omarchy integration moves to [`docs/omarchy.md`](docs/omarchy.md).** It occupied 136
+  contiguous lines in the README's primary usage section — enough that a general-audience tool
+  read as an add-on for one Arch/Hyprland desktop. A short pointer stays behind. The behaviour is
+  unchanged and was already correct: on a machine without Omarchy the reader logs the absence
+  once and idles.
+- **`docs/phase-status.md` and `docs/execution-log.md` are removed.** Both restated
+  `CHANGELOG.md` from memory and had drifted — phase-status still filed the whole of v0.5.0
+  under "Unreleased" — while being linked from the README as current contributor documentation.
+- **`MODEL_ROUTING.md` moves to `docs/model-routing.md`.** It is the maintainer's development-time
+  model policy, and at the repository root beside README and CONTRIBUTING it read as product
+  documentation.
+- **A `.mailmap`.** 38 of the first 85 commits were authored as `User <user@localhost>` and the
+  maintainer appeared under four identities; `git shortlog` and the contributor graph now show
+  one person.
+
 ### Fixed
 
 - **`--help` no longer carries an orphaned line, and drift is now caught.** A stray
@@ -83,6 +111,19 @@
 - **A failed refresh no longer blames OpenCode for the journal.** `App::refresh` reported every
   `load_usage` failure as `OpenCode unavailable`, sending readers to the wrong file when it was
   the journal that could not be read.
+- **`scripts/release.sh` printed "All checks passed!" without running two of them.** It skipped
+  `cargo fmt --check` and `cargo deny` entirely, and every check in it is path-relative with no
+  anchoring, so running it from anywhere but the repository root checked nothing and still
+  passed. It now runs the formatting check and the doc tests, anchors itself to the repository,
+  and names any check it had to skip instead of claiming a clean run.
+- **`tests/docs.rs` guarded environment-variable documentation against a hand-maintained list of
+  five files.** A new collector reading its own environment variable — exactly what `codex.rs`
+  does for `CODEX_HOME` — escaped the check that exists to catch it. It walks `src/` now.
+- **The journal's only write path had no tests.** `--record-ollama` and `--record-routing` are
+  the only things in the project that write, and neither was exercised; the three fixtures
+  written for them were referenced from nowhere. Round-trip tests now cover a single response, a
+  streamed response journaling once from its final line, idempotent re-recording, and a routing
+  event read back through `--routing-json`.
 - **The rendered Chocolatey package could not be packed.** The release job flattened every
   template with `basename`, so `chocolateyinstall.ps1` was published beside the nuspec — whose
   `<file src="tools/**" target="tools/" />` then matched nothing, producing a package that

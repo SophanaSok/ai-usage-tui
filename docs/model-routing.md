@@ -53,7 +53,7 @@ defaulting to it.
 
 This mirrors the constraint the application itself enforces: collectors read usage metadata only
 and never persist or transmit prompts, completions, or credentials. See
-[`docs/architecture.md`](docs/architecture.md#privacy-boundary).
+[`docs/architecture.md`](architecture.md#privacy-boundary).
 
 ## Routing rules
 
@@ -77,7 +77,7 @@ Escalate a tier when any of these hold:
 ## Evaluation
 
 Routing decisions are recorded through the application's own routing schema, which mirrors
-`RoutingEvent` in [`src/model.rs`](src/model.rs):
+`RoutingEvent` in [`src/model.rs`](../src/model.rs):
 
 - Task and phase
 - Agent, model, provider

@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A new advisory against a dependency that has not changed produces no push and no PR, so a
+  # push-only trigger never notices it. Weekly, the advisory job runs anyway.
+  schedule:
+    - cron: "0 6 * * 1"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -71,12 +75,54 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --all-targets --locked
 
-  audit:
-    name: Advisories
+  # A doc-only PR can break `cargo doc` (a bad intra-doc link) or a relative link between the
+  # README and docs/. Both are cheap to check and neither was checked; the Omarchy split moved a
+  # section between files and left two dangling anchors behind.
+  docs:
+    name: Docs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo install cargo-deny --locked
-      - run: cargo deny check
+
+      - name: rustdoc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --locked
+
+      - name: Relative links in Markdown resolve
+        shell: bash
+        run: |
+          python3 - <<'EOF'
+          import os, re, sys
+          bad = []
+          for root, dirs, files in os.walk('.'):
+              dirs[:] = [d for d in dirs if d not in {'.git', 'target'}]
+              for name in files:
+                  if not name.endswith('.md'):
+                      continue
+                  path = os.path.join(root, name)
+                  text = open(path, encoding='utf-8', errors='replace').read()
+                  for match in re.finditer(r'\]\(([^)#\s]+)(#[^)\s]*)?\)', text):
+                      link = match.group(1)
+                      if link.startswith(('http://', 'https://', 'mailto:')):
+                          continue
+                      target = os.path.normpath(os.path.join(os.path.dirname(path), link))
+                      if not os.path.exists(target):
+                          bad.append(f'{path} -> {link}')
+          for entry in bad:
+              print(f'::error::broken relative link: {entry}')
+          sys.exit(1 if bad else 0)
+          EOF
+
+  audit:
+    name: Advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Prebuilt rather than `cargo install cargo-deny` from source: the from-source install cost
+      # several minutes of every CI run and resolved a different version each time.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check

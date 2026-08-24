@@ -1,0 +1,11 @@
+# Canonical identities, so `git shortlog -sn`, the GitHub contributor graph and `git blame`
+# show people rather than machines.
+#
+# 38 of the first 85 commits were authored as `User <user@localhost>` -- a default git identity
+# on a machine where one was never configured -- and the maintainer appears under three
+# addresses. Both are this project's own history, not other contributors.
+Sophana Sok <sokdevelopment@gmail.com> <user@localhost>
+Sophana Sok <sokdevelopment@gmail.com> User <user@localhost>
+Sophana Sok <sokdevelopment@gmail.com> <5224183+SophanaSok@users.noreply.github.com>
+Sophana Sok <sokdevelopment@gmail.com> Sok <sokdevelopment@gmail.com>
+Sophana Sok <sokdevelopment@gmail.com> Sophana Sok <5224183+SophanaSok@users.noreply.github.com>

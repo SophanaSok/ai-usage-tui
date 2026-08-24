@@ -19,14 +19,24 @@ Two things make it different from the several similar tools, and both are worth 
 ## Setup
 
 Install Rust via [rustup](https://rustup.rs/) (1.88+ required — set by the dependency graph, not
-by this crate), then:
+by this crate), then run everything CI runs:
+
+```sh
+cargo install just     # once
+just check             # fmt-check, lint, test, test-doc — in CI's order
+```
+
+`just --list` shows the rest: `just run` starts the dashboard against the committed fixture
+hermetically, `just doctor` reports what every source resolved to on your machine, `just deny`
+checks advisories, `just msrv` compiles with the pinned minimum toolchain.
+
+Without `just`, the same four commands are:
 
 ```sh
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-targets --locked
 cargo test --doc --locked
-cargo build --release --locked
 ```
 
 `--locked` is not decoration. The lockfile is committed and the project ships release binaries,
