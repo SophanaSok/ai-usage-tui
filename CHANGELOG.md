@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 0.6.0 - 2026-08-24
+
 ### Changed
 
 - **Key bindings are defined once, in `src/ui/keys.rs`.** They existed in five places — the event
