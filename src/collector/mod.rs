@@ -195,7 +195,8 @@ pub struct SourceReport {
     /// Whether anything was there to read at all. A source that is simply absent is a normal
     /// state on most machines, not a fault.
     pub present: bool,
-    /// Context a reader needs to interpret the rows -- currently the billing decision.
+    /// One line `--doctor` prints under the source: the billing decision, or the rows the read
+    /// had to skip and the first reason.
     pub detail: Option<String>,
 }
 

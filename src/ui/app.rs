@@ -513,6 +513,10 @@ impl App {
             // past the last project — harmless while nothing acted on the row, and wrong the
             // moment Enter drills into whatever is under it.
             Panel::Projects => self.view.projects.len(),
+            // Same for routing: nothing acts on its row yet, but a cursor clamped to the model
+            // table cannot reach an aggregate past the model count, and now that the panel draws
+            // the cursor, that is a row the user can see and never land on.
+            Panel::Routing => self.view.routing.len(),
             _ => self.view.rows.len(),
         }
     }
@@ -536,6 +540,10 @@ impl App {
         } else {
             panel
         };
+        // The cursor is an index into whichever list is showing, and the lists differ in
+        // length. Left where it was, a cursor from the model table could sit past the end of
+        // the routing table: nothing highlighted, `k` unable to bring it back, `Enter` a no-op.
+        self.selected = self.selected.min(self.visible_rows().saturating_sub(1));
     }
 
     /// Order each panel's list by its current sort.
@@ -877,8 +885,11 @@ impl App {
         }
         self.last_refresh = format_clock();
         self.refreshed_at = Instant::now();
-        self.recompute();
-        // Routing lives in SQLite; read it here, not inside `draw`.
+        // Routing lives in SQLite; read it here, not inside `draw` — and before `recompute`,
+        // which sorts the panel and clamps the cursor against it. It was read after, so every
+        // refresh left the table in `aggregate`'s token order until the next key press, and the
+        // README's own screenshot showed `$0.60` above `$0.07` in a panel titled "cost per
+        // delivered result".
         self.view.routing = match crate::collector::journal::load_routing(&self.roots.journal) {
             Ok(events) => crate::routing::aggregate(&events),
             Err(error) => {
@@ -890,6 +901,7 @@ impl App {
                 Vec::new()
             }
         };
+        self.recompute();
         // Omarchy's records: three small files, read here beside the routing table so the
         // render path stays free of I/O. Absent on any machine without Omarchy.
         if self.roots.limits_enabled {

@@ -174,6 +174,117 @@ fn sorting_by_pass_orders_by_the_rate_the_column_shows() {
     );
 }
 
+#[test]
+fn the_selected_routing_row_is_highlighted_scrolled_into_view_and_reachable() {
+    // Same defect as the projects table, plus one of its own: `visible_rows` clamped the routing
+    // cursor to the *model* table, so with no models loaded it could not leave row zero.
+    use crate::ui::app::Panel;
+    let mut app = test_app(Vec::new());
+    app.toggle_panel(Panel::Routing);
+    app.set_routing_for_test(
+        (0..12)
+            .map(|i| routing_agg(&format!("agent{i:02}"), "m", 4, (i + 1) as f64, 4, 0))
+            .collect(),
+    );
+    assert_eq!(
+        app.visible_rows(),
+        12,
+        "the cursor is bounded by the routing table"
+    );
+    app.selected = 11;
+
+    let buffer = render_panel_buffer(84, 6, |frame, area| {
+        crate::ui::panels::routing::draw_routing(frame, area, &app)
+    });
+    let (row, highlighted) = find_row(&buffer, "agent11");
+    assert!(
+        highlighted,
+        "the selected aggregate is not highlighted:\n{row}"
+    );
+}
+
+/// The default sort survives a refresh.
+///
+/// `refresh` read the routing journal *after* `recompute`, which is where the panel is sorted,
+/// so every refresh left the table in `aggregate`'s token order until the next key press. The
+/// other routing tests inject aggregates through `set_routing_for_test`, which sorts, and so
+/// never saw it; this one goes through `refresh` with a real journal.
+#[test]
+fn a_refresh_leaves_the_routing_panel_in_its_default_order() {
+    use crate::collector::journal::record_routing_event;
+    use crate::collector::SourceRoots;
+    use serde_json::json;
+
+    let scratch = ScratchDir::new("routing-refresh");
+    let journal = scratch.0.join("usage.db");
+    // The pricier-per-success agent has the most tokens, so token order and cost order differ.
+    for (agent, tokens, cost) in [("pricey", 500_000, 8.0), ("cheap", 1_000, 0.5)] {
+        record_routing_event(
+            &journal,
+            &json!({"agent": agent, "model": "m", "task": agent, "tokens": tokens, "cost": cost, "test_result": true}),
+        )
+        .expect("record");
+    }
+
+    let nowhere = |name: &str| Some(PathBuf::from(format!("/nonexistent/{name}")));
+    let mut app = test_app(Vec::new());
+    app.roots = SourceRoots {
+        db_path: nowhere("opencode.db"),
+        claude_dir: nowhere("claude"),
+        codex_dir: nowhere("codex"),
+        gemini_dir: nowhere("gemini"),
+        omarchy_dir: nowhere("omarchy"),
+        ..SourceRoots::new(journal)
+    };
+    app.refresh();
+
+    let order: Vec<&str> = app.routing().iter().map(|a| a.agent.as_str()).collect();
+    assert_eq!(
+        order,
+        ["cheap", "pricey"],
+        "cheapest per delivered result should lead after a refresh"
+    );
+}
+
+#[test]
+fn switching_panels_clamps_the_cursor_to_the_new_list() {
+    // The cursor is an index into whichever list is showing. Left where the model table put
+    // it, on a shorter routing table it pointed past the end: no row highlighted, `k` unable to
+    // bring it back, and on Projects `Enter` a silent no-op.
+    use crate::ui::app::Panel;
+    let usages: Vec<Usage> = (0..8)
+        .map(|i| {
+            let mut u = usage(None, None, Some(1.0), 100);
+            u.model = format!("model-{i}");
+            u
+        })
+        .collect();
+    let mut app = test_app(usages);
+    app.recompute();
+    assert_eq!(app.rows().len(), 8);
+    app.selected = 5;
+    app.set_routing_for_test(vec![
+        routing_agg("alpha", "m", 4, 1.0, 4, 0),
+        routing_agg("beta", "m", 4, 2.0, 4, 0),
+    ]);
+
+    app.toggle_panel(Panel::Routing);
+    assert!(
+        app.selected < app.visible_rows(),
+        "cursor at {} on a list of {}",
+        app.selected,
+        app.visible_rows()
+    );
+    let buffer = render_panel_buffer(84, 6, |frame, area| {
+        crate::ui::panels::routing::draw_routing(frame, area, &app)
+    });
+    let (row, highlighted) = find_row(&buffer, "beta");
+    assert!(
+        highlighted,
+        "no row carries the cursor after the switch:\n{row}"
+    );
+}
+
 /// The text of one agent's row, from its name to its token count.
 fn routing_row<'a>(rendered: &'a str, agent: &str) -> &'a str {
     let start = rendered.find(agent).expect("the agent row");

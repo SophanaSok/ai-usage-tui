@@ -4,6 +4,7 @@
 //! to stdout when the thing reading it goes away.
 
 use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 fn bin() -> Command {
@@ -19,9 +20,27 @@ fn fixture_db() -> String {
 
 /// Never read the developer's real `~/.claude/projects`; see `docs/roadmap.md`.
 fn hermetic(command: &mut Command) -> &mut Command {
+    hermetic_with(
+        command,
+        &PathBuf::from(fixture_db()),
+        &PathBuf::from(format!(
+            "{}/tests/fixtures/no-such-journal.db",
+            env!("CARGO_MANIFEST_DIR")
+        )),
+    )
+}
+
+/// `hermetic`, with the two inputs a test sometimes brings its own of.
+fn hermetic_with<'a>(command: &'a mut Command, db: &Path, journal: &Path) -> &'a mut Command {
+    let nowhere = |name: &str| format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
     command
+        // Neither the config file nor the pricing cache is a flag every test passes, so both
+        // are pinned through the environment: a developer's `config.toml` or a refreshed
+        // `zen-pricing.toml` must not change what a fixture-only run prints.
+        .env("XDG_CONFIG_HOME", nowhere("no-such-config-home"))
+        .env("XDG_DATA_HOME", nowhere("no-such-data-home"))
         .arg("--db")
-        .arg(fixture_db())
+        .arg(db)
         .arg("--claude-dir")
         .arg(format!(
             "{}/tests/fixtures/no-such-claude-dir",
@@ -42,10 +61,7 @@ fn hermetic(command: &mut Command) -> &mut Command {
         // so a machine with any journaled Ollama usage sees `ollama` rows in a run that is
         // supposed to be fixture-only. CI never caught it because a fresh runner has no journal.
         .arg("--journal")
-        .arg(format!(
-            "{}/tests/fixtures/no-such-journal.db",
-            env!("CARGO_MANIFEST_DIR")
-        ))
+        .arg(journal)
         .arg("--all")
 }
 
@@ -93,6 +109,110 @@ fn doctor_reports_every_source_and_where_it_looked() {
         "no source reported as found:\n{text}"
     );
     assert!(text.contains("CONFIG"), "no config section:\n{text}");
+    // The pricing table's state, warnings included: a stale or invalid cache was ignored in
+    // favour of bundled rates and said so nowhere.
+    assert!(text.contains("PRICING"), "no pricing section:\n{text}");
+    assert!(text.contains("models") && text.contains("priced"), "{text}");
+    // The absence hint used to name `--refresh-zen`, which writes a file nothing prices from.
+    assert!(
+        !text.contains("--refresh-zen"),
+        "--doctor points at the catalog refresh, not the pricing one:\n{text}"
+    );
+}
+
+/// A refreshed pricing cache the engine refuses is named, with why, where the user looks.
+#[test]
+fn doctor_reports_a_pricing_cache_it_could_not_use() {
+    let dir = scratch("bad-pricing-cache");
+    let data_home = dir.join("data");
+    std::fs::create_dir_all(data_home.join("ai-usage-tui")).expect("data home");
+    std::fs::write(
+        data_home.join("ai-usage-tui").join("zen-pricing.toml"),
+        "not = [toml\n",
+    )
+    .expect("plant a broken cache");
+
+    let output = hermetic(bin().arg("--doctor"))
+        // Overrides the pin `hermetic` sets: this test wants the cache read.
+        .env("XDG_DATA_HOME", &data_home)
+        .output()
+        .expect("run --doctor");
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).expect("utf8");
+    assert!(
+        text.contains("warning") && text.contains("is invalid"),
+        "the refused cache is not reported:\n{text}"
+    );
+    assert!(
+        text.contains("ignored"),
+        "the cache line reads as in use beside a warning that it is not:\n{text}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A usage row the journal cannot read is counted where the user looks, not dropped.
+#[test]
+fn doctor_reports_journal_rows_it_could_not_read() {
+    let dir = scratch("corrupt-journal");
+    let journal = dir.join("usage.db");
+    let conn = rusqlite::Connection::open(&journal).expect("open");
+    conn.execute_batch(
+        "CREATE TABLE usage_event (
+            id INTEGER PRIMARY KEY, event_id TEXT, provider TEXT NOT NULL, model TEXT NOT NULL,
+            category TEXT NOT NULL, cost_status TEXT NOT NULL, requests INTEGER NOT NULL,
+            input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+            reasoning_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL,
+            cache_write_tokens INTEGER NOT NULL, cost REAL, created INTEGER NOT NULL
+        );
+        INSERT INTO usage_event (provider, model, category, cost_status, requests, input_tokens,
+            output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created)
+        VALUES ('ollama', 'm', 'LOCAL', 'local', 1, 10, 10, 0, 0, 0, NULL, 1),
+               ('ollama', 'm', 'LOCAL', 'local', 1, 10, 10, 0, 0, 0, NULL, 'soon');",
+    )
+    .expect("plant rows");
+    drop(conn);
+
+    let run = |action: &str| {
+        let output = hermetic_with(
+            bin().arg(action),
+            &PathBuf::from(format!(
+                "{}/tests/fixtures/no-such.db",
+                env!("CARGO_MANIFEST_DIR")
+            )),
+            &journal,
+        )
+        .output()
+        .expect("run");
+        assert!(
+            output.status.success(),
+            "{action}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).expect("utf8")
+    };
+
+    // `--doctor` carries the first reason beside the source.
+    let text = run("--doctor");
+    assert!(
+        text.contains("could not be read") && text.contains("id 2"),
+        "the skipped row is not reported:\n{text}"
+    );
+    // The source's status line — the `--once` header, and `--json`'s `source` — carries the
+    // count.
+    let json: serde_json::Value = serde_json::from_str(&run("--json")).expect("json parses");
+    let source = json["source"].as_str().unwrap_or_default();
+    assert!(
+        source.contains("1 row(s) unreadable"),
+        "the status line does not carry the count: {source}"
+    );
+    assert_eq!(
+        json["usage"].as_array().map(Vec::len),
+        Some(1),
+        "the readable row survives"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The journal's only write path, end to end. `--record-ollama` had no test at all, and the

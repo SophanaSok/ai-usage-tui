@@ -17,9 +17,40 @@ use std::path::PathBuf;
 /// One constant so those can never drift apart.
 pub const ID: &str = "journal";
 
+/// The journal's usage rows. A row that cannot be read is skipped and counted, never silently
+/// dropped: the count reaches the source's status line — the `--once` header — and `--doctor`
+/// through the source report, and the log through the live collector. Not an error,
+/// deliberately: `load_usage` fails as a whole on any source error, and one corrupt Ollama row
+/// must not take every command down.
 pub fn load_journal(path: &Path) -> Result<Vec<Usage>> {
+    let (usages, skipped) = load_journal_counting(path)?;
+    if let Some(skipped) = skipped {
+        crate::logging::error("journal", &skipped.to_string());
+    }
+    Ok(usages)
+}
+
+/// Rows a read had to skip: how many, and the first reason, for whoever surfaces it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SkippedRows {
+    pub count: usize,
+    pub first: String,
+}
+
+impl std::fmt::Display for SkippedRows {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} usage_event row(s) could not be read and were skipped; first: {}",
+            self.count, self.first
+        )
+    }
+}
+
+/// `load_journal`, with what was skipped for the caller to surface.
+pub(crate) fn load_journal_counting(path: &Path) -> Result<(Vec<Usage>, Option<SkippedRows>)> {
     if !path.exists() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
     }
     let conn = Connection::open_with_flags(
         path,
@@ -32,7 +63,7 @@ pub fn load_journal(path: &Path) -> Result<Vec<Usage>> {
         |row| row.get(0),
     )?;
     if !has_events {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
     }
     // A journal written by an older build has no `event_id` column, and this is a read-only
     // path that cannot migrate it. Select the column only when it actually exists.
@@ -42,13 +73,43 @@ pub fn load_journal(path: &Path) -> Result<Vec<Usage>> {
         |row| row.get(0),
     )?;
     let mut stmt = conn.prepare(if has_event_id {
-        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, event_id FROM usage_event"
+        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, event_id, id FROM usage_event"
     } else {
-        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, NULL AS event_id FROM usage_event"
+        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, NULL AS event_id, id FROM usage_event"
     })?;
-    let rows = stmt.query_map([], |row| {
-        let category: String = row.get(2)?;
-        let cost_status: String = row.get(3)?;
+    let mut rows = stmt.query([])?;
+    let mut usages = Vec::new();
+    let mut skipped = 0usize;
+    let mut first_error = None;
+    let mut position = 0usize;
+    // Driven by hand rather than through `query_map`'s iterator, so the two kinds of failure
+    // are told apart: a step error (`next()?`) means the file cannot be read past this point
+    // and is the whole read's error, while a row that steps but does not map is one row.
+    // Through the iterator, a step error ended the scan after one counted row and everything
+    // after it vanished uncounted.
+    while let Some(row) = rows.next()? {
+        position += 1;
+        match usage_from_row(row) {
+            Ok(usage) => usages.push(usage),
+            Err(error) => {
+                skipped += 1;
+                first_error
+                    .get_or_insert_with(|| format!("{}: {error}", row_name(row, 13, position)));
+            }
+        }
+    }
+    let skipped = (skipped > 0).then(|| SkippedRows {
+        count: skipped,
+        first: first_error.unwrap_or_default(),
+    });
+    Ok((usages, skipped))
+}
+
+/// One `usage_event` row, or why it could not be read.
+fn usage_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Usage> {
+    let category: String = row.get(2)?;
+    let cost_status: String = row.get(3)?;
+    {
         Ok(Usage {
             event_id: row.get(12).ok().flatten(),
             provider: row.get(0)?,
@@ -71,8 +132,17 @@ pub fn load_journal(path: &Path) -> Result<Vec<Usage>> {
             session_id: None,
             project: None,
         })
-    })?;
-    Ok(rows.filter_map(Result::ok).collect())
+    }
+}
+
+/// How a row is named in an error: by its `id`, which is what a user would look for in the
+/// file, or — if even that cannot be read — by its position in the scan, in a different word
+/// so the two are never confused.
+fn row_name(row: &rusqlite::Row<'_>, id_column: usize, position: usize) -> String {
+    match row.get::<_, i64>(id_column) {
+        Ok(id) => format!("id {id}"),
+        Err(_) => format!("position {position}"),
+    }
 }
 
 /// A token or request count read back from SQLite.
@@ -240,13 +310,38 @@ pub fn load_routing(path: &Path) -> Result<Vec<RoutingEvent>> {
         return Ok(Vec::new());
     }
     let mut stmt = conn.prepare(
-        "SELECT task, phase, agent, model, provider, category, cost_status, requests, tokens, cost, retries, escalations, test_result, review_defects, created FROM routing_event",
+        "SELECT task, phase, agent, model, provider, category, cost_status, requests, tokens, cost, retries, escalations, test_result, review_defects, created, id FROM routing_event",
     )?;
-    let rows = stmt.query_map([], |row| {
-        let category: String = row.get(5)?;
-        let cost_status: String = row.get(6)?;
-        let test_result: Option<i64> = row.get(12)?;
-        let cost: Option<f64> = row.get(9)?;
+    // Strict, unlike `load_journal`: a row this tool wrote and cannot read back is a corrupt
+    // journal, and the two callers already put an error where it is seen — the dashboard's
+    // status line, and a refused export rather than a partial table. `filter_map(Result::ok)`
+    // dropped the row and reported the rest as the whole.
+    let mut rows = stmt.query([])?;
+    let mut events = Vec::new();
+    let mut position = 0usize;
+    while let Some(row) = rows.next()? {
+        position += 1;
+        match routing_from_row(row) {
+            Ok(event) => events.push(event),
+            Err(error) => {
+                return Err(anyhow::anyhow!(
+                    "routing_event {} could not be read ({error}); the journal is corrupt or \
+                     was written by a newer version",
+                    row_name(row, 15, position)
+                ))
+            }
+        }
+    }
+    Ok(events)
+}
+
+/// One `routing_event` row, or why it could not be read.
+fn routing_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutingEvent> {
+    let category: String = row.get(5)?;
+    let cost_status: String = row.get(6)?;
+    let test_result: Option<i64> = row.get(12)?;
+    let cost: Option<f64> = row.get(9)?;
+    {
         Ok(RoutingEvent {
             task: row.get(0)?,
             phase: row.get(1)?,
@@ -264,8 +359,7 @@ pub fn load_routing(path: &Path) -> Result<Vec<RoutingEvent>> {
             review_defects: row.get(13)?,
             created: row.get(14)?,
         })
-    })?;
-    Ok(rows.filter_map(Result::ok).collect())
+    }
 }
 
 pub fn record_routing(path: &Path) -> Result<()> {
@@ -509,6 +603,9 @@ fn test_result(json: &Value) -> Result<Option<bool>> {
 pub struct JournalCollector {
     pub journal_path: PathBuf,
     pub interval_secs: u64,
+    /// What the last poll had to skip, for the live status line. The log is off by default,
+    /// so a count that reached only the log reached the dashboard's user nowhere.
+    pub skipped: Option<String>,
 }
 
 impl Collector for JournalCollector {
@@ -519,7 +616,15 @@ impl Collector for JournalCollector {
         Duration::from_secs(self.interval_secs)
     }
     fn poll(&mut self) -> Result<Vec<Usage>> {
-        load_journal(&self.journal_path)
+        let (usages, skipped) = load_journal_counting(&self.journal_path)?;
+        if let Some(skipped) = &skipped {
+            crate::logging::error(ID, &skipped.to_string());
+        }
+        self.skipped = skipped.map(|s| format!("{} row(s) unreadable", s.count));
+        Ok(usages)
+    }
+    fn warning(&self) -> Option<String> {
+        self.skipped.clone()
     }
 }
 
@@ -527,7 +632,7 @@ impl Collector for JournalCollector {
 pub(crate) fn read(
     roots: &crate::collector::SourceRoots,
 ) -> crate::collector::registry::SourceRead {
-    let usages = load_journal(&roots.journal)?;
+    let (usages, skipped) = load_journal_counting(&roots.journal)?;
     let present = roots.journal.exists();
     Ok((
         crate::collector::SourceReport {
@@ -535,12 +640,19 @@ pub(crate) fn read(
             present,
             path: Some(roots.journal.clone()),
             rows: usages.len(),
-            status: if present {
-                format!("journal: {}", roots.journal.display())
-            } else {
-                "journal: not initialized".to_string()
+            // The status line is what the `--once` header shows; a row count that quietly
+            // omitted the rows it could not read would be a smaller bill. `--doctor` gets the
+            // first reason as well.
+            status: match (present, &skipped) {
+                (true, Some(skipped)) => format!(
+                    "journal: {} ({} row(s) unreadable)",
+                    roots.journal.display(),
+                    skipped.count
+                ),
+                (true, None) => format!("journal: {}", roots.journal.display()),
+                (false, _) => "journal: not initialized".to_string(),
             },
-            detail: None,
+            detail: skipped.map(|s| s.to_string()),
         },
         usages,
     ))
@@ -554,6 +666,7 @@ pub(crate) fn collector(
     Box::new(JournalCollector {
         journal_path: roots.journal.clone(),
         interval_secs,
+        skipped: None,
     })
 }
 
@@ -631,13 +744,32 @@ mod tests {
         assert_eq!(events[0].test_result, Some(true));
         assert_eq!(events[1].test_result, Some(false));
 
-        let mut junk = event("t3", 3);
-        junk["test_result"] = json!("maybe");
-        let error = record_routing_event(&journal, &junk).expect_err("junk refused");
-        assert!(error.to_string().contains("test_result"), "{error}");
+        // The same emitter that sends `retries: 2.0` sends `test_result: 1.0`.
+        let mut float = event("t3", 3);
+        float["test_result"] = json!(1.0);
+        record_routing_event(&journal, &float).expect("record");
+        assert_eq!(
+            load_routing(&journal).expect("load")[2].test_result,
+            Some(true)
+        );
+
+        // Only the two documented words, and only 0 or 1: anything else is refused, not stored
+        // as "unobserved" under a success message.
+        for junk in [
+            json!("maybe"),
+            json!("passed"),
+            json!("true"),
+            json!(2),
+            json!(-1),
+        ] {
+            let mut e = event("t4", 4);
+            e["test_result"] = junk.clone();
+            let error = record_routing_event(&journal, &e).expect_err("junk refused");
+            assert!(error.to_string().contains("test_result"), "{junk}: {error}");
+        }
         assert_eq!(
             load_routing(&journal).expect("load").len(),
-            2,
+            3,
             "nothing was stored"
         );
     }
@@ -783,10 +915,123 @@ mod tests {
             events[1].retries, None,
             "the new row can say it was not reported"
         );
-        // The unique index was recreated with the table.
+        // An identity is still unique once the recorder has run on the rebuilt table. (The
+        // recorder's own `CREATE UNIQUE INDEX IF NOT EXISTS` would satisfy this too; the
+        // oldest-shape test below observes the index the rebuild itself creates.)
         assert_eq!(
             record_routing_event(&journal, &event("new-task", 2)).expect("record"),
             0
         );
+    }
+
+    #[test]
+    fn a_routing_row_that_cannot_be_read_fails_the_read_rather_than_vanishing() {
+        // Restore the bug with `filter_map(Result::ok)`: the row is dropped and the read reports
+        // the rest as the whole. A negative count cannot become a `u32`.
+        let scratch = scratch_journal("corrupt-routing");
+        let journal = scratch.journal.clone();
+        record_routing_event(&journal, &event("good", 1)).expect("record");
+        record_routing_event(&journal, &event("bad", 2)).expect("record");
+        let conn = Connection::open(&journal).expect("open");
+        conn.execute(
+            "UPDATE routing_event SET retries = -1 WHERE task = 'bad'",
+            [],
+        )
+        .expect("corrupt a row");
+        drop(conn);
+
+        let error = load_routing(&journal).expect_err("a corrupt row is an error");
+        assert!(error.to_string().contains("id 2"), "{error}");
+    }
+
+    #[test]
+    fn a_usage_row_that_cannot_be_read_is_counted_and_the_rest_survive() {
+        // Not strict, deliberately: `load_usage` fails as a whole on any source error, and one
+        // corrupt Ollama row must not take every command down. But the count reaches the
+        // source report, so `--doctor` says it — restore the bug and `skipped` is `None`.
+        let scratch = scratch_journal("corrupt-usage");
+        let journal = scratch.journal.clone();
+        let conn = Connection::open(&journal).expect("open");
+        conn.execute_batch(
+            "CREATE TABLE usage_event (
+                id INTEGER PRIMARY KEY, event_id TEXT, provider TEXT NOT NULL, model TEXT NOT NULL,
+                category TEXT NOT NULL, cost_status TEXT NOT NULL, requests INTEGER NOT NULL,
+                input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+                reasoning_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL,
+                cache_write_tokens INTEGER NOT NULL, cost REAL, created INTEGER NOT NULL
+            );
+            INSERT INTO usage_event (provider, model, category, cost_status, requests,
+                input_tokens, output_tokens, reasoning_tokens, cache_read_tokens,
+                cache_write_tokens, cost, created)
+            VALUES ('ollama', 'm', 'LOCAL', 'local', 1, 10, 10, 0, 0, 0, NULL, 1),
+                   ('ollama', 'm', 'LOCAL', 'local', 1, 10, 10, 0, 0, 0, NULL, 'soon');",
+        )
+        .expect("plant rows");
+        drop(conn);
+
+        let (usages, skipped) = load_journal_counting(&journal).expect("read");
+        assert_eq!(usages.len(), 1, "the readable row survives");
+        let skipped = skipped.expect("the unreadable row is counted");
+        assert_eq!(skipped.count, 1);
+        assert!(skipped.first.contains("id 2"), "{}", skipped.first);
+
+        // The live dashboard reads the count off the collector, not the log — which is off by
+        // default, so a count that reached only the log reached its user nowhere.
+        let mut collector = JournalCollector {
+            journal_path: journal.clone(),
+            interval_secs: 60,
+            skipped: None,
+        };
+        assert_eq!(collector.poll().expect("poll").len(), 1);
+        assert_eq!(
+            collector.warning().as_deref(),
+            Some("1 row(s) unreadable"),
+            "the collector must carry the count to the status line"
+        );
+    }
+
+    #[test]
+    fn the_oldest_journal_shape_is_migrated_in_the_right_order() {
+        // Before `event_id` existed at all: no column, no index. The `ALTER TABLE` that adds the
+        // column has to run before the rebuild, whose `SELECT` names it.
+        let scratch = scratch_journal("migrate-oldest");
+        let journal = scratch.journal.clone();
+        let conn = Connection::open(&journal).expect("open");
+        conn.execute_batch(
+            "CREATE TABLE routing_event (
+                id INTEGER PRIMARY KEY,
+                task TEXT NOT NULL, phase TEXT NOT NULL, agent TEXT NOT NULL,
+                model TEXT NOT NULL, provider TEXT NOT NULL, category TEXT NOT NULL,
+                cost_status TEXT NOT NULL, requests INTEGER NOT NULL, tokens INTEGER NOT NULL,
+                cost REAL, retries INTEGER NOT NULL, escalations INTEGER NOT NULL,
+                test_result INTEGER, review_defects INTEGER NOT NULL, created INTEGER NOT NULL
+            );
+            INSERT INTO routing_event (task, phase, agent, model, provider, category,
+                cost_status, requests, tokens, cost, retries, escalations, test_result,
+                review_defects, created)
+            VALUES ('old-task', '', 'a', 'm', 'p', 'UNKNOWN', 'unavailable', 1, 10, NULL,
+                2, 0, NULL, 0, 1);",
+        )
+        .expect("oldest schema");
+        drop(conn);
+
+        assert_eq!(
+            record_routing_event(&journal, &event("new-task", 2)).expect("record"),
+            1
+        );
+        let mut events = load_routing(&journal).expect("load");
+        events.sort_by_key(|e| e.created);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].retries, Some(2));
+        assert_eq!(events[1].retries, None);
+        let conn = Connection::open(&journal).expect("open");
+        let indexed: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'routing_event_event_id')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query");
+        assert!(indexed, "the identity index was not created by the rebuild");
     }
 }

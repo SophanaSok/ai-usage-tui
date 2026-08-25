@@ -438,6 +438,60 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
         }
     }
 
+    // The pricing table's own state. `PricingEngine::load` collected warnings about the cache —
+    // unreadable, invalid, too old to trust — and nothing printed them, so the fallback to
+    // bundled rates happened in silence and an `UNKNOWN COST` row had no explanation anywhere.
+    let _ = writeln!(out, "\nPRICING");
+    let engine = ai_usage_tui::pricing::PricingEngine::load();
+    // The count is the loaded table's: the bundled one, plus the cache below when it is in use.
+    let _ = writeln!(out, "  models       {} priced", engine.model_count());
+    match ai_usage_tui::collector::pricing_refresh::pricing_cache_path() {
+        Some(path) if path.exists() => {
+            let days = std::fs::metadata(&path)
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|modified| modified.elapsed().ok())
+                .map(|age| age.as_secs() / 86_400);
+            // A cache the engine refused — too old, unreadable, invalid — names its path in a
+            // warning; a cache line that read as "in use" beside that warning was two answers.
+            let shown = path.display().to_string();
+            let disposition = if engine.warnings().iter().any(|w| w.contains(&shown)) {
+                "ignored — see warning"
+            } else {
+                "in use"
+            };
+            match days {
+                Some(days) => {
+                    let _ = writeln!(
+                        out,
+                        "  cache        {shown} ({days} days old; {disposition})"
+                    );
+                }
+                None => {
+                    let _ = writeln!(out, "  cache        {shown} ({disposition})");
+                }
+            }
+        }
+        Some(path) => {
+            let _ = writeln!(
+                out,
+                "  cache        none at {} (--refresh-pricing writes it; bundled rates work \
+                 without it)",
+                path.display()
+            );
+        }
+        None => {
+            let _ = writeln!(out, "  cache        <no data directory>");
+        }
+    }
+    if engine.warnings().is_empty() {
+        let _ = writeln!(out, "  warnings     none");
+    } else {
+        for warning in engine.warnings() {
+            let _ = writeln!(out, "  warning      {warning}");
+        }
+    }
+
     // How this copy was installed, and how to upgrade it. Always shown and always offline: it is
     // read off the binary's own path. Seven install channels ship, and until this existed the
     // tool knew nothing about which one it came from -- so a user who installed with brew and
@@ -522,7 +576,7 @@ fn absence_hint(id: &str) -> Option<&'static str> {
             Some("written by --record-ollama and --record-routing; nothing to do if unused")
         }
         "zen_pricing" => {
-            Some("optional; populate with --refresh-zen (pricing still works without it)")
+            Some("optional; --refresh-pricing writes it (bundled rates work without it)")
         }
         _ => None,
     }

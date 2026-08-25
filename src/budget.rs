@@ -161,6 +161,75 @@ pub struct BudgetsConfig {
     pub entry: Vec<BudgetEntry>,
 }
 
+impl BudgetsConfig {
+    /// Refuse an entry that parses but cannot do what it says.
+    ///
+    /// `deny_unknown_fields` catches a misspelled key; nothing caught a *missing* one. A
+    /// provider budget with no `name` became `Provider("")`, which matches nothing, and a
+    /// `limit` of zero was permanently `OK` — both sat in the panel looking configured. Same
+    /// class as a `billing` line under the wrong collector table, which `ConfigFile::validate`
+    /// already refuses.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        for (index, entry) in self.entry.iter().enumerate() {
+            let at = format!("[[budgets.entry]] #{}", index + 1);
+            let named = entry.name.as_deref().is_some_and(|n| !n.trim().is_empty());
+            match entry.scope {
+                BudgetScopeKind::Global if entry.name.is_some() => {
+                    return Err(anyhow::anyhow!(
+                        "{at}: scope = \"global\" does not take a `name`; it applies to everything"
+                    ));
+                }
+                BudgetScopeKind::Provider | BudgetScopeKind::Model if !named => {
+                    let what = match entry.scope {
+                        BudgetScopeKind::Provider => "provider",
+                        _ => "model",
+                    };
+                    return Err(anyhow::anyhow!(
+                        "{at}: scope = \"{what}\" needs a `name` — the {what} it applies to"
+                    ));
+                }
+                _ => {}
+            }
+            if !(entry.limit.is_finite() && entry.limit > 0.0) {
+                return Err(anyhow::anyhow!(
+                    "{at}: `limit` must be a finite number greater than 0, got {}",
+                    entry.limit
+                ));
+            }
+            for (key, value) in [("warn", entry.warn), ("critical", entry.critical)] {
+                if let Some(pct) = value {
+                    if !(pct.is_finite() && pct > 0.0 && pct <= 100.0) {
+                        return Err(anyhow::anyhow!(
+                            "{at}: `{key}` is a percentage of `limit` and must be above 0 and at \
+                             most 100, got {pct}"
+                        ));
+                    }
+                }
+            }
+            let warn = entry.warn.unwrap_or(DEFAULT_WARN_PCT);
+            let critical = entry.critical.unwrap_or(DEFAULT_CRITICAL_PCT);
+            if warn >= critical {
+                // Say which side was implied: a `warn = 95` with no `critical` fails against a
+                // number the user never typed.
+                let shown = |value: f64, given: bool| {
+                    if given {
+                        format!("{value}")
+                    } else {
+                        format!("{value}, the default")
+                    }
+                };
+                return Err(anyhow::anyhow!(
+                    "{at}: `warn` ({}) must be below `critical` ({}), or the warning level can \
+                     never be reached",
+                    shown(warn, entry.warn.is_some()),
+                    shown(critical, entry.critical.is_some())
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 pub struct BudgetEngine {
     budgets: Vec<Budget>,
 }
@@ -171,14 +240,16 @@ impl BudgetEngine {
             .entry
             .iter()
             .map(|e| Budget {
+                // A config file has been through `BudgetsConfig::validate` by the time it gets
+                // here, so a provider or model entry has its name. An entry built by hand
+                // without one gets an empty scope, which matches nothing rather than everything.
                 scope: match e.scope {
                     BudgetScopeKind::Global => BudgetScope::Global,
-                    BudgetScopeKind::Provider => {
-                        BudgetScope::Provider(e.name.clone().unwrap_or_default())
-                    }
-                    BudgetScopeKind::Model => {
-                        BudgetScope::Model(e.name.clone().unwrap_or_default())
-                    }
+                    // Trimmed once here, so the scope the engine matches on is the one
+                    // validation approved: `" openai"` passes the emptiness check and would
+                    // otherwise never equal a row's `openai`.
+                    BudgetScopeKind::Provider => BudgetScope::Provider(trimmed_name(e)),
+                    BudgetScopeKind::Model => BudgetScope::Model(trimmed_name(e)),
                 },
                 period: e.period,
                 limit: e.limit,
@@ -239,6 +310,16 @@ impl BudgetEngine {
             })
             .collect()
     }
+}
+
+/// The entry's name with the padding a user may have typed inside the quotes removed.
+fn trimmed_name(entry: &BudgetEntry) -> String {
+    entry
+        .name
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn period_cutoff(period: BudgetPeriod) -> i64 {
@@ -558,6 +639,112 @@ mod tests {
         assert!(!alerts[0].is_partial());
         assert_eq!(alerts[0].unpriced_requests, 0);
         assert_eq!(alerts[0].quota_requests, 0);
+    }
+
+    fn entry(scope: BudgetScopeKind, name: Option<&str>, limit: f64) -> BudgetEntry {
+        BudgetEntry {
+            scope,
+            name: name.map(str::to_string),
+            period: BudgetPeriod::Monthly,
+            limit,
+            ..Default::default()
+        }
+    }
+
+    fn validate(entries: Vec<BudgetEntry>) -> Result<(), String> {
+        BudgetsConfig {
+            entry: entries,
+            ..Default::default()
+        }
+        .validate()
+        .map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn a_scoped_budget_without_a_name_is_refused_rather_than_matching_nothing() {
+        // Restore the bug by dropping `validate`: the entry becomes `Provider("")`, matches no
+        // row, and sits in the panel at `$0.00 / 0% / OK` looking configured.
+        let error = validate(vec![entry(BudgetScopeKind::Provider, None, 10.0)]).unwrap_err();
+        assert!(
+            error.contains("#1") && error.contains("needs a `name`"),
+            "{error}"
+        );
+        let error = validate(vec![entry(BudgetScopeKind::Model, Some("  "), 10.0)]).unwrap_err();
+        assert!(
+            error.contains("model") && error.contains("needs a `name`"),
+            "{error}"
+        );
+        // And the anti-test: a named one is fine.
+        validate(vec![entry(BudgetScopeKind::Provider, Some("openai"), 10.0)]).unwrap();
+        // Padding inside the quotes passes validation and is trimmed on the way in, so the
+        // scope the engine matches is the one validation approved — not `" openai "`, which
+        // would have matched nothing and sat at OK like the nameless entry it replaced.
+        let padded = entry(BudgetScopeKind::Provider, Some(" openai "), 10.0);
+        validate(vec![padded.clone()]).unwrap();
+        let engine = BudgetEngine::from_config(&BudgetsConfig {
+            entry: vec![padded],
+            ..Default::default()
+        });
+        assert_eq!(
+            engine.budgets()[0].scope,
+            BudgetScope::Provider("openai".into())
+        );
+    }
+
+    #[test]
+    fn a_global_budget_with_a_name_is_refused_rather_than_ignoring_it() {
+        // A key that parses and does nothing is an error here, not a no-op.
+        let error = validate(vec![entry(BudgetScopeKind::Global, Some("all"), 10.0)]).unwrap_err();
+        assert!(error.contains("does not take a `name`"), "{error}");
+        validate(vec![entry(BudgetScopeKind::Global, None, 10.0)]).unwrap();
+    }
+
+    #[test]
+    fn a_limit_that_can_never_be_reached_is_refused() {
+        // `pct` is `spend / limit` when `limit > 0` and `0.0` otherwise, so a zero or negative
+        // limit was a budget that read `OK` forever.
+        for limit in [0.0, -5.0, f64::NAN, f64::INFINITY] {
+            let error = validate(vec![entry(BudgetScopeKind::Global, None, limit)]).unwrap_err();
+            assert!(error.contains("`limit`"), "{limit}: {error}");
+        }
+    }
+
+    #[test]
+    fn thresholds_are_percentages_in_order() {
+        let mut inverted = entry(BudgetScopeKind::Global, None, 10.0);
+        inverted.warn = Some(90.0);
+        inverted.critical = Some(75.0);
+        let error = validate(vec![inverted]).unwrap_err();
+        assert!(error.contains("must be below"), "{error}");
+
+        let mut over = entry(BudgetScopeKind::Global, None, 10.0);
+        over.warn = Some(150.0);
+        let error = validate(vec![over]).unwrap_err();
+        assert!(error.contains("at most 100"), "{error}");
+
+        // A warn above the default critical is the same inversion with one side implied.
+        let mut implied = entry(BudgetScopeKind::Global, None, 10.0);
+        implied.warn = Some(95.0);
+        let error = validate(vec![implied]).unwrap_err();
+        assert!(
+            error.contains("must be below") && error.contains("90, the default"),
+            "{error}"
+        );
+
+        let mut fine = entry(BudgetScopeKind::Global, None, 10.0);
+        fine.warn = Some(50.0);
+        fine.critical = Some(100.0);
+        validate(vec![fine]).unwrap();
+    }
+
+    #[test]
+    fn the_error_names_the_entry_that_failed() {
+        let entries = vec![
+            entry(BudgetScopeKind::Global, None, 10.0),
+            entry(BudgetScopeKind::Provider, None, 10.0),
+        ];
+        let error = validate(entries).unwrap_err();
+        assert!(error.starts_with("[[budgets.entry]] #2"), "{error}");
     }
 
     #[test]

@@ -5,9 +5,9 @@
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Cell, Paragraph, Row, Table},
+    widgets::{Cell, Paragraph, Row, Table, TableState},
     Frame,
 };
 
@@ -50,7 +50,14 @@ pub fn draw_routing(frame: &mut Frame, area: Rect, app: &App) {
     // Ordering moved to `App::apply_sorts` — cheapest per delivered result is still the default,
     // but it is now a sort the user can change, and it is no longer recomputed on every frame.
     // The dashboard redraws several times a second and nothing on the render path may compute.
-    let rows = aggregates.iter().map(|agg| {
+    let rows = aggregates.iter().enumerate().map(|(index, agg)| {
+        // The same highlight as the other tables: a cursor that is not drawn is a cursor the
+        // user cannot know is on the row past the fold.
+        let style = if index == app.selected {
+            Style::default().bg(Color::Rgb(37, 57, 67))
+        } else {
+            Style::default()
+        };
         Row::new(vec![
             Cell::from(agg.agent.clone()),
             Cell::from(short_model(&agg.model)),
@@ -62,12 +69,15 @@ pub fn draw_routing(frame: &mut Frame, area: Rect, app: &App) {
             Cell::from(format_count(agg.tokens)),
             Cell::from(agg.tasks.to_string()),
         ])
+        .style(style)
     });
 
     let header = Row::new(super::sorted_header(app, crate::ui::app::Panel::Routing))
         .style(Style::default().fg(MUTED).add_modifier(Modifier::BOLD));
 
-    frame.render_widget(
+    // Stateful, so the selected row scrolls into view rather than sitting past the fold.
+    let mut state = TableState::default().with_selected(Some(app.selected));
+    frame.render_stateful_widget(
         Table::new(
             rows,
             [
@@ -86,6 +96,7 @@ pub fn draw_routing(frame: &mut Frame, area: Rect, app: &App) {
         .column_spacing(1)
         .block(panel("ROUTING — cost per delivered result", CYAN)),
         area,
+        &mut state,
     );
 }
 
