@@ -1,5 +1,30 @@
-use crate::model::{RoutingAggregates, RoutingEvent};
+use crate::model::{CostStatus, RoutingAggregates, RoutingEvent};
 use std::collections::BTreeMap;
+
+/// What `cost_per_success` is standing on.
+///
+/// The cell and the sort both read this, so they cannot disagree about the same row — the reason
+/// `theme::cost_sort_key` lives beside `theme::cost_display` one level up. A COST column that
+/// sorts by a number it never showed is how `ON QUOTA` ends up ranked as the cheapest work on the
+/// machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CostBasis {
+    /// Nothing passed, so there is no denominator. Not zero — unknown.
+    NoSuccesses,
+    /// Every contributing task was free or local. Genuinely zero.
+    Free,
+    /// Every contributing task carried a price.
+    Exact,
+    /// Some tasks were billed against a plan; the rest are priced.
+    PlusQuota,
+    /// Every contributing task was billed against a plan. Real spend, no per-request figure.
+    Quota,
+    /// Nothing was priced and something should have been. There is no figure at all — a floor of
+    /// `$0.0000` is arithmetically true and says nothing, which is the failure one level up.
+    Unpriced,
+    /// Some spend was priced and some was not, so the figure is a floor.
+    Floor,
+}
 
 pub fn aggregate(events: &[RoutingEvent]) -> Vec<RoutingAggregates> {
     let mut map: BTreeMap<(String, String, String), RoutingAggregates> = BTreeMap::new();
@@ -14,19 +39,34 @@ pub fn aggregate(events: &[RoutingEvent]) -> Vec<RoutingAggregates> {
             agent: event.agent.clone(),
             model: event.model.clone(),
             provider: event.provider.clone(),
-            tasks: 0,
-            tokens: 0,
-            cost: 0.0,
-            retries: 0,
-            escalations: 0,
-            test_passes: 0,
-            test_failures: 0,
-            review_defects: 0,
+            // Every counter starts at Default, so a counter added later cannot be left out of
+            // the accumulator and silently read as zero for every row.
+            ..Default::default()
         });
 
         entry.tasks += 1;
         entry.tokens += event.tokens;
-        entry.cost += event.cost.unwrap_or(0.0);
+        // Classified, not unwrapped. `unwrap_or(0.0)` charged $0 for work whose rate is unknown
+        // and for work billed against a plan, and then the panel divided by passes and called the
+        // result free. This is the same split `escalation::derive` makes, and it is matched
+        // exhaustively on purpose: a new `CostStatus` must not be able to acquire a cost of zero
+        // by falling through a wildcard.
+        match event.cost_status {
+            CostStatus::ProviderReported | CostStatus::Calculated | CostStatus::Estimated => {
+                match event.cost {
+                    Some(cost) => {
+                        entry.cost += cost;
+                        entry.priced_tasks += 1;
+                    }
+                    // A status that promises a figure, with no figure. Trusting the status over
+                    // the missing value is what produced the bug in the first place.
+                    None => entry.unpriced_tasks += 1,
+                }
+            }
+            CostStatus::Quota => entry.quota_tasks += 1,
+            CostStatus::Unavailable => entry.unpriced_tasks += 1,
+            CostStatus::Free | CostStatus::Local => entry.free_tasks += 1,
+        }
         entry.retries += event.retries;
         entry.escalations += event.escalations;
         if let Some(result) = event.test_result {
@@ -87,6 +127,61 @@ pub fn cost_per_success(agg: &RoutingAggregates) -> Option<f64> {
         return None;
     }
     Some(agg.cost / agg.test_passes as f64)
+}
+
+/// What that figure is standing on, from the counters `aggregate` kept.
+///
+/// The order of the arms is the order of severity: an unpriced task makes the figure a floor no
+/// matter what else is true, because the missing rate could be any size.
+pub fn cost_per_success_basis(agg: &RoutingAggregates) -> CostBasis {
+    if agg.test_passes == 0 {
+        return CostBasis::NoSuccesses;
+    }
+    match (agg.unpriced_tasks, agg.quota_tasks, agg.priced_tasks) {
+        (0, 0, 0) => CostBasis::Free,
+        (0, 0, _) => CostBasis::Exact,
+        (0, _, 0) => CostBasis::Quota,
+        (0, _, _) => CostBasis::PlusQuota,
+        // Nothing priced: the floor is zero, and "at least nothing" is not a figure worth
+        // printing beside one that is real.
+        (_, _, 0) => CostBasis::Unpriced,
+        _ => CostBasis::Floor,
+    }
+}
+
+/// How a `$/SUCCESS` column sorts, where `None` means "not a point on this scale".
+///
+/// Only an exact figure and a genuine zero are comparable. A floor is not: an agent at
+/// `≥ $0.01` with nine unpriced tasks may be the most expensive on the machine, and ordering it
+/// as though the floor were the total is precisely the claim this whole change removes. `None`
+/// sorts to one end in both directions via `App::cost_order`, exactly as an unknown row cost
+/// does in the model table.
+pub fn cost_per_success_sort_key(agg: &RoutingAggregates) -> Option<f64> {
+    match cost_per_success_basis(agg) {
+        CostBasis::Free => Some(0.0),
+        CostBasis::Exact => cost_per_success(agg),
+        CostBasis::NoSuccesses
+        | CostBasis::Quota
+        | CostBasis::PlusQuota
+        | CostBasis::Unpriced
+        | CostBasis::Floor => None,
+    }
+}
+
+/// The basis as a stable string, for `--routing-json`.
+///
+/// Its own function rather than `Debug`, because a derive is not a contract: renaming a variant
+/// would silently change an exported field that scripts key on.
+pub fn cost_basis_label(agg: &RoutingAggregates) -> &'static str {
+    match cost_per_success_basis(agg) {
+        CostBasis::NoSuccesses => "no_successes",
+        CostBasis::Free => "free",
+        CostBasis::Exact => "exact",
+        CostBasis::PlusQuota => "plus_quota",
+        CostBasis::Quota => "quota",
+        CostBasis::Unpriced => "unpriced",
+        CostBasis::Floor => "floor",
+    }
 }
 
 pub fn defect_rate(agg: &RoutingAggregates) -> f64 {
@@ -171,7 +266,14 @@ mod tests {
             requests: 1,
             tokens,
             cost,
-            cost_status: CostStatus::Unavailable,
+            // Coherent with `cost`, which it was not: it said `Unavailable` while carrying a
+            // figure. The old `unwrap_or(0.0)` ignored the status and summed the number anyway,
+            // so the contradiction never showed. Trusting the number over the status is exactly
+            // the laundering that let unpriced work reach the panel as $0.00.
+            cost_status: match cost {
+                Some(_) => CostStatus::ProviderReported,
+                None => CostStatus::Unavailable,
+            },
             retries,
             escalations,
             test_result,
@@ -227,17 +329,8 @@ mod tests {
     #[test]
     fn retry_rate_handles_zero_tasks() {
         let agg = RoutingAggregates {
-            agent: "a".to_string(),
-            model: "m".to_string(),
-            provider: "p".to_string(),
-            tasks: 0,
-            tokens: 0,
-            cost: 0.0,
             retries: 5,
-            escalations: 0,
-            test_passes: 0,
-            test_failures: 0,
-            review_defects: 0,
+            ..Default::default()
         };
         assert_eq!(retry_rate(&agg), 0.0);
     }

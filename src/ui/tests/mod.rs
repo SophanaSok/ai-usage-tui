@@ -239,9 +239,34 @@ fn routing_agg(
         tasks,
         tokens: 100_000,
         cost,
+        // `cost` is a floor now, read alongside these counters, so an aggregate built without
+        // them is one whose every task was free -- which is what a zero cost here means, and
+        // what a non-zero cost here must not mean.
+        priced_tasks: if cost > 0.0 { tasks } else { 0 },
+        free_tasks: if cost > 0.0 { 0 } else { tasks },
         test_passes: passes,
         test_failures: failures,
         ..Default::default()
+    }
+}
+
+/// An aggregate whose spend is partly or wholly unaccountable: `unpriced` tasks with no rate and
+/// `quota` tasks billed against a plan, on top of whatever `cost` was actually priced.
+#[allow(clippy::too_many_arguments)]
+fn routing_agg_with_gaps(
+    agent: &str,
+    model: &str,
+    tasks: u64,
+    cost: f64,
+    passes: u32,
+    failures: u32,
+    unpriced: u64,
+    quota: u64,
+) -> crate::model::RoutingAggregates {
+    crate::model::RoutingAggregates {
+        unpriced_tasks: unpriced,
+        quota_tasks: quota,
+        ..routing_agg(agent, model, tasks, cost, passes, failures)
     }
 }
 

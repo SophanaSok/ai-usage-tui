@@ -13,7 +13,10 @@ use ratatui::{
 
 use crate::escalation::{Escalations, Transition};
 use crate::model::{RoutingAggregates, CYAN, GREEN, YELLOW};
-use crate::routing::{cost_per_success, defect_rate, escalation_rate, retry_rate, success_rate};
+use crate::routing::{
+    cost_per_success, cost_per_success_basis, defect_rate, escalation_rate, retry_rate,
+    success_rate, CostBasis,
+};
 use crate::ui::app::App;
 use crate::ui::theme::{panel, MUTED};
 use crate::utils::format_count;
@@ -89,21 +92,34 @@ pub fn draw_routing(frame: &mut Frame, area: Rect, app: &App) {
 /// Dollars per task that actually passed.
 ///
 /// The one number that makes "is the expensive model worth it?" answerable rather than a matter
-/// of taste. Two cases are deliberately not rendered as a figure:
+/// of taste — which is why it is also the one number that must never be invented.
 ///
-/// A free model divides to `$0.0000` regardless of how badly it performs, so the metric cannot
-/// discriminate between free models at all. Printing four decimal places implies a comparison
-/// that is not being made — it says `free`, and the reader looks at the quality columns instead.
+/// The vocabulary is `escalation_block`'s, deliberately: a reader who has learned what
+/// `≥ $0.40 after` and `on quota after` mean two panels up should not have to learn a second
+/// dialect here.
 ///
-/// An agent with nothing passing shows `—`, never `$0.00`.
+/// - `—` when nothing passed. Dividing by zero successes is either infinite or, rendered
+///   carelessly, `$0.00`.
+/// - `free` only when every contributing task was genuinely free or local. A free model divides
+///   to `$0.0000` however badly it performs, so the metric cannot discriminate between free
+///   models at all; the word says so and sends the reader to the quality columns.
+/// - `on quota` when the work was billed against a plan. Real spend, no per-request figure.
+/// - `≥ $x` when some task should carry a price and does not, so the figure is a floor.
 fn cost_per_success_cell<'a>(agg: &RoutingAggregates) -> Cell<'a> {
-    match cost_per_success(agg) {
-        Some(cost) if cost <= 0.0 => Cell::from(Span::styled("free", Style::default().fg(GREEN))),
-        Some(cost) => Cell::from(Span::styled(
-            format!("${cost:.4}"),
-            Style::default().fg(GREEN),
-        )),
-        None => Cell::from(Span::styled("—", Style::default().fg(MUTED))),
+    let styled = |text: String, colour| Cell::from(Span::styled(text, Style::default().fg(colour)));
+    let Some(cost) = cost_per_success(agg) else {
+        return styled("—".to_string(), MUTED);
+    };
+    match cost_per_success_basis(agg) {
+        CostBasis::NoSuccesses => styled("—".to_string(), MUTED),
+        CostBasis::Free => styled("free".to_string(), GREEN),
+        CostBasis::Exact => styled(format!("${cost:.4}"), GREEN),
+        // Not `$0.0000`, and emphatically not `free`: on a Max or Pro account this is where all
+        // of the Opus work lands, and it used to render green and sort first.
+        CostBasis::Quota => styled("on quota".to_string(), YELLOW),
+        CostBasis::PlusQuota => styled(format!("${cost:.4}+q"), YELLOW),
+        CostBasis::Unpriced => styled("unpriced".to_string(), YELLOW),
+        CostBasis::Floor => styled(format!("≥ ${cost:.4}"), YELLOW),
     }
 }
 

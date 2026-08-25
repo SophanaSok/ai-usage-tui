@@ -24,6 +24,18 @@ pub trait Collector: Send + 'static {
     fn name(&self) -> &str;
     fn interval(&self) -> Duration;
     fn poll(&mut self) -> Result<Vec<Usage>>;
+
+    /// Whether a successful poll changes how every *other* row should be priced.
+    ///
+    /// True only for `zen_pricing`, which contributes no usage rows at all -- it refreshes the
+    /// pricing cache on disk. The engine is built once in `spawn`, so before this existed a
+    /// successful refresh reached the disk and never reached the running dashboard: rows stayed
+    /// `UNKNOWN COST` although the rate was now known, the log said the refresh succeeded, and
+    /// the only way to see the new prices was to restart. A refresh that "worked" and changed
+    /// nothing on screen is convention 8's silent failure, one layer out.
+    fn refreshes_pricing(&self) -> bool {
+        false
+    }
 }
 
 /// What a collector thread is doing, as far as the dashboard is concerned.
@@ -191,6 +203,17 @@ impl CollectorState {
         let pricing = Arc::clone(&self.pricing);
         apply_estimated_pricing(&mut self.usages, &pricing);
     }
+
+    /// Rebuild the engine from disk and re-price everything already collected.
+    ///
+    /// Only reached after a collector that `refreshes_pricing` polls successfully, so the reload
+    /// cost is paid once per refresh rather than once per poll. Re-pricing the whole list is the
+    /// point: the rows that were collected *before* the refresh are exactly the ones whose price
+    /// was missing.
+    fn reload_pricing(&mut self, pricing: Arc<PricingEngine>) {
+        self.pricing = pricing;
+        self.apply_pricing();
+    }
 }
 
 /// Shutdown signal that a sleeping collector can be woken from.
@@ -254,6 +277,7 @@ impl CollectorHandle {
             let shutdown = Arc::clone(&shutdown);
             let name = collector.name().to_string();
             let interval = collector.interval();
+            let refreshes_pricing = collector.refreshes_pricing();
             write_state(&state).register(&name, interval);
 
             threads.push(thread::spawn(move || {
@@ -263,11 +287,25 @@ impl CollectorHandle {
                         Ok(Ok(usages)) => {
                             let source = format!("{}: ok", name);
                             let count = usages.len();
+                            // Built *before* the lock is taken. A new cache on disk is worth
+                            // nothing until the engine reads it -- but reading and parsing it
+                            // while holding the write lock would block `snapshot()` on the render
+                            // thread for the duration, which is the mistake the comment above
+                            // `spawn`'s own `PricingEngine::load()` records having made once.
+                            let reloaded =
+                                refreshes_pricing.then(|| Arc::new(PricingEngine::load()));
                             let mut s = write_state(&state);
                             s.merge(&name, usages, source);
-                            s.apply_pricing();
+                            match reloaded {
+                                Some(pricing) => s.reload_pricing(pricing),
+                                None => s.apply_pricing(),
+                            }
                             drop(s);
-                            logging::info(&name, &format!("poll ok, {} usage rows", count));
+                            if refreshes_pricing {
+                                logging::info(&name, "pricing refreshed and reloaded");
+                            } else {
+                                logging::info(&name, &format!("poll ok, {} usage rows", count));
+                            }
                         }
                         Ok(Err(e)) => {
                             let message = e.to_string();
@@ -726,5 +764,90 @@ mod tests {
         });
         assert!(shutdown.sleep(Duration::from_secs(30)));
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+}
+
+#[cfg(test)]
+mod pricing_reload_tests {
+    use super::*;
+    use crate::model::{Category, CostStatus, Usage};
+
+    fn unpriced_row(model: &str) -> Usage {
+        Usage {
+            provider: "anthropic".into(),
+            model: model.into(),
+            category: Category::Paid,
+            cost: None,
+            cost_status: CostStatus::Unavailable,
+            input: 1_000_000,
+            output: 0,
+            requests: 1,
+            ..Default::default()
+        }
+    }
+
+    /// A refresh re-prices the rows that were collected *before* it.
+    ///
+    /// Those are precisely the rows whose price was missing, so re-pricing only newly merged rows
+    /// would leave the dashboard exactly as unhelpful as it was. Before `reload_pricing` existed,
+    /// the engine was built once in `spawn` and never replaced: `--refresh-pricing` wrote a new
+    /// cache to disk that the running process never read, so rows stayed `UNKNOWN COST` while the
+    /// log reported a successful refresh.
+    #[test]
+    fn a_reload_reprices_rows_that_were_already_collected() {
+        let mut state = CollectorState::for_test();
+        state.merge(
+            "test",
+            vec![unpriced_row("claude-sonnet-4-5")],
+            "test: ok".into(),
+        );
+        state.apply_pricing();
+
+        // The bundled table prices this model, so this asserts the fixture is doing its job
+        // rather than passing because nothing was ever priceable.
+        assert!(
+            state.usages[0].cost.is_some(),
+            "the bundled table should price this model; the fixture is not discriminating"
+        );
+
+        // Now the case that matters: a row that arrived unpriced, with a later engine that can
+        // price it.
+        let mut state = CollectorState::for_test();
+        let mut row = unpriced_row("claude-sonnet-4-5");
+        row.cost = None;
+        row.cost_status = CostStatus::Unavailable;
+        state.usages.push(row);
+        state.reload_pricing(Arc::new(PricingEngine::bundled()));
+
+        assert!(
+            state.usages[0].cost.is_some(),
+            "a reload left an already-collected row unpriced: {:?}",
+            state.usages[0]
+        );
+        assert_ne!(state.usages[0].cost_status, CostStatus::Unavailable);
+    }
+
+    /// Only the pricing collector claims to refresh pricing.
+    ///
+    /// If another source ever answered `true`, every one of its polls would rebuild the engine
+    /// and re-price the whole history -- the per-poll cost the comment in `spawn` exists to
+    /// prevent.
+    #[test]
+    fn only_the_pricing_source_refreshes_pricing() {
+        let roots = crate::collector::SourceRoots {
+            journal: std::path::PathBuf::from("/nonexistent/journal.db"),
+            ..Default::default()
+        };
+        for spec in crate::collector::registry::SOURCES {
+            let collector = (spec.collector)(&roots, spec.default_interval);
+            let expected = spec.id == crate::collector::pricing_refresh::ID;
+            assert_eq!(
+                collector.refreshes_pricing(),
+                expected,
+                "{} reports refreshes_pricing() = {}",
+                spec.id,
+                collector.refreshes_pricing()
+            );
+        }
     }
 }

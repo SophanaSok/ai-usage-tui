@@ -622,10 +622,20 @@ impl App {
             1 => sort_rows(routing, sort.descending, |a, b| {
                 a.model.to_lowercase().cmp(&b.model.to_lowercase())
             }),
-            // Cheapest per delivered result. Agents with nothing passing have no figure at all,
-            // and `cost_order` holds them at the end in both directions rather than letting them
-            // appear free -- which is why this is not `a.cost`.
-            2 => sort_rows_by_cost(routing, sort.descending, crate::routing::cost_per_success),
+            // Cheapest per delivered result. `cost_order` holds a row with no figure at the end
+            // in both directions rather than letting it appear free -- which is why this is not
+            // `a.cost`.
+            //
+            // It is not `cost_per_success` either, and that gap was the bug. That function still
+            // divides a *floor* by the passes, so an all-unpriced or all-subscription agent
+            // returned `Some(0.0)` and this guard never saw an unknown to hold back: the row
+            // sorted first, as the cheapest work on the machine, in the panel's default order.
+            // `cost_per_success_sort_key` reports a figure only when there is one to report.
+            2 => sort_rows_by_cost(
+                routing,
+                sort.descending,
+                crate::routing::cost_per_success_sort_key,
+            ),
             3 => sort_rows(routing, sort.descending, |a, b| {
                 a.test_passes.cmp(&b.test_passes)
             }),

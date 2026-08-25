@@ -449,6 +449,61 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
         }
     }
 
+    // How this copy was installed, and how to upgrade it. Always shown and always offline: it is
+    // read off the binary's own path. Seven install channels ship, and until this existed the
+    // tool knew nothing about which one it came from -- so a user who installed with brew and
+    // upgraded with cargo ended up with two binaries and no idea which was on PATH.
+    let _ = writeln!(out, "\nTHIS BUILD");
+    let (exe, channel) = ai_usage_tui::update::current_channel();
+    match &exe {
+        Some(path) => {
+            let _ = writeln!(out, "  path         {}", path.display());
+        }
+        None => {
+            let _ = writeln!(out, "  path         <could not be determined>");
+        }
+    }
+    let _ = writeln!(out, "  installed by {}", channel.label());
+    match channel.upgrade_command() {
+        Some(command) => {
+            let _ = writeln!(out, "  upgrade      {command}");
+        }
+        None => {
+            // Naming a command for a location we do not recognise is worse than saying nothing:
+            // running it would install a second copy elsewhere on PATH, and the user would be
+            // upgrading a binary they are not running.
+            let _ = writeln!(
+                out,
+                "  upgrade      download the release that matches how this was installed:"
+            );
+            let _ = writeln!(out, "               {}", ai_usage_tui::update::RELEASES_URL);
+        }
+    }
+
+    // The only part that needs the network, and the only part that is opt-in. Off by default,
+    // exactly as `zen_pricing` is, and never reached by any command but this one.
+    let check = config.update.as_ref().is_some_and(|u| u.check);
+    if check {
+        match ai_usage_tui::update::latest_release_tag() {
+            Ok(tag) if ai_usage_tui::update::is_newer(env!("CARGO_PKG_VERSION"), &tag) => {
+                let _ = writeln!(out, "  latest       {tag} — newer than this build");
+            }
+            Ok(tag) => {
+                let _ = writeln!(out, "  latest       {tag} — up to date");
+            }
+            // Reported, not swallowed. A check that silently returns nothing is
+            // indistinguishable from one that found nothing newer.
+            Err(error) => {
+                let _ = writeln!(out, "  latest       could not be checked: {error}");
+            }
+        }
+    } else {
+        let _ = writeln!(
+            out,
+            "  latest       not checked (set [update] check = true to look; needs the network)"
+        );
+    }
+
     if !found_any {
         let _ = writeln!(
             out,
@@ -511,12 +566,16 @@ fn export_routing(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
     let aggregates = ai_usage_tui::routing::aggregate(&events);
 
     if let Some(path) = &cli.routing_csv_path {
+        // The four provenance columns are **appended**, never inserted, so a consumer reading by
+        // index keeps working. `cost` keeps its position and its meaning changes from a total to
+        // a floor -- which is why `priced_tasks` sits beside it: a reader who takes `cost` alone
+        // now has a column that tells them whether they may.
         let mut csv = String::from(
-            "agent,model,provider,tasks,tokens,cost,retries,escalations,test_passes,test_failures,review_defects\n",
+            "agent,model,provider,tasks,tokens,cost,retries,escalations,test_passes,test_failures,review_defects,priced_tasks,unpriced_tasks,quota_tasks,free_tasks\n",
         );
         for agg in &aggregates {
             csv.push_str(&format!(
-                "{},{},{},{},{},{},{},{},{},{},{}\n",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
                 csv_field(&agg.agent),
                 csv_field(&agg.model),
                 csv_field(&agg.provider),
@@ -528,6 +587,10 @@ fn export_routing(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
                 agg.test_passes,
                 agg.test_failures,
                 agg.review_defects,
+                agg.priced_tasks,
+                agg.unpriced_tasks,
+                agg.quota_tasks,
+                agg.free_tasks,
             ));
         }
         std::fs::write(path, csv)?;
@@ -542,7 +605,18 @@ fn export_routing(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
                     "provider": agg.provider,
                     "tasks": agg.tasks,
                     "tokens": agg.tokens,
-                    "cost": agg.cost,
+                    // `null` rather than `0` when nothing was priced, for the same reason the
+                    // usage export keeps an unknown cost null: a script that sums this column
+                    // must not be handed a zero it cannot distinguish from a free model.
+                    "cost": if agg.priced_tasks == 0 { None } else { Some(agg.cost) },
+                    "priced_tasks": agg.priced_tasks,
+                    "unpriced_tasks": agg.unpriced_tasks,
+                    "quota_tasks": agg.quota_tasks,
+                    "free_tasks": agg.free_tasks,
+                    // What `cost_per_success` is standing on, in the same words the panel uses,
+                    // so a script and the dashboard cannot disagree about one aggregate.
+                    "cost_per_success": ai_usage_tui::routing::cost_per_success_sort_key(agg),
+                    "cost_basis": ai_usage_tui::routing::cost_basis_label(agg),
                     "retries": agg.retries,
                     "escalations": agg.escalations,
                     "test_passes": agg.test_passes,

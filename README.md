@@ -611,6 +611,11 @@ days = 7
 # claude_dir = "/home/user/.claude/projects"
 # codex_dir = "/home/user/.codex"
 
+# Off by default: this is the only setting that would let the tool reach the network
+# outside an explicit --refresh-* command. See "Privacy and network behavior".
+[update]
+check = false
+
 [collectors.opencode]
 enabled = true
 interval = 30
@@ -740,7 +745,7 @@ retry, escalation, and defect rates. Routing CSV columns are:
 
 ```text
 agent,model,provider,tasks,tokens,cost,retries,escalations,test_passes,
-test_failures,review_defects
+test_failures,review_defects,priced_tasks,unpriced_tasks,quota_tasks,free_tasks
 ```
 
 See [`docs/routing-analytics.md`](docs/routing-analytics.md) for the underlying
@@ -854,6 +859,14 @@ On Windows, `USERPROFILE` (or `HOMEDRIVE` + `HOMEPATH`) stands in for `HOME`,
   `--omarchy-record` is run.
 - `--refresh-pricing`, `--refresh-zen`, and an enabled `zen_pricing`
   background collector make outbound requests to OpenCode/Zen endpoints.
+- `[update] check = true` lets `--doctor` — and only `--doctor` — ask GitHub for
+  the latest release tag. **Off by default**, never automatic, and never on the
+  dashboard's refresh path. It is a plain GET of a public endpoint: no usage
+  data, no identifiers, no query parameters. The User-Agent names the tool and
+  its version because GitHub's API requires one.
+- Reporting **how this copy was installed and how to upgrade it** needs no
+  network at all. `--doctor` reads it off the running binary's own path, so it
+  is always on and works offline.
 
 Default local storage paths (when the corresponding XDG variable is unset):
 

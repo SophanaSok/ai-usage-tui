@@ -398,7 +398,24 @@ pub struct RoutingAggregates {
     pub provider: String,
     pub tasks: u64,
     pub tokens: u64,
+    /// Spend on the tasks that carried a price. **A floor, not a total** — read it with the three
+    /// counters below, exactly as `escalation::Transition::cost_after` is read with
+    /// `unpriced_after` and `quota_after`.
+    ///
+    /// This used to be `event.cost.unwrap_or(0.0)`, which made an unpriced or subscription-billed
+    /// model divide to `$0.0000` per success. The routing panel sorts by that figure ascending by
+    /// default, so such a model ranked as the cheapest work on the machine and rendered green as
+    /// `free`. Convention 1, broken in the panel that carries the project's pitch.
     pub cost: f64,
+    /// Tasks whose cost is in `cost`.
+    pub priced_tasks: u64,
+    /// Tasks that should carry a price and do not, making `cost` a floor.
+    pub unpriced_tasks: u64,
+    /// Tasks billed against a plan rather than per token. Real spend with no per-request figure;
+    /// without this counter an all-subscription agent reads as free.
+    pub quota_tasks: u64,
+    /// Tasks that genuinely cost nothing — a local model, or one explicitly free.
+    pub free_tasks: u64,
     pub retries: u32,
     pub escalations: u32,
     pub test_passes: u32,

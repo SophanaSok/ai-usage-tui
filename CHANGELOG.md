@@ -4,6 +4,59 @@
 
 ### Added
 
+- **`--doctor` says how this copy was installed and how to upgrade it.** Seven install channels
+  ship — cargo, binstall, Homebrew, Scoop, Chocolatey, the `.deb`/`.rpm`, and `install.sh` — and
+  until now nothing in the tool knew which one it came from or mentioned upgrading at all. It is
+  read off the running binary's own path, so it needs no network and works offline.
+
+  A location none of the channels explains reports itself as unrecognised and points at the
+  releases page, rather than guessing. Naming the wrong command is worse than admitting ignorance:
+  running it installs a *second* copy elsewhere on `PATH`, and the user upgrades a binary they are
+  not running.
+
+- **An opt-in check for a newer release.** `[update] check = true` lets `--doctor`, and only
+  `--doctor`, ask GitHub for the latest release tag. **Off by default**, never automatic, never on
+  the dashboard's refresh path — the same stance `zen_pricing` takes, and for the same reason: a
+  tool whose pitch is "reads usage metadata, writes nothing, transmits nothing" does not get to
+  contact a server because it would be convenient. A failed check is reported, not swallowed; a
+  check that silently returns nothing is indistinguishable from one that found nothing newer.
+
+### Fixed
+
+- **The routing panel ranked unpriced work as the cheapest on the machine and called it free.**
+  `aggregate` summed `cost.unwrap_or(0.0)`, so an agent whose spend could not be priced arrived
+  with `cost: 0.0`; `cost_per_success` divided that by its passes and returned `Some(0.0)` rather
+  than "no figure". The panel's default sort is `$/SUCCESS` **ascending**, so the row sailed into
+  first place, rendered green as `free`. On a Max or Pro account that is where all of the Opus
+  work lands.
+
+  The guard against exactly this already existed and fired one layer too late: `cost_order` holds
+  a row with no figure at the end of the ordering in both directions — but by the time it ran, the
+  unknown had been laundered into a zero upstream. Convention 1, broken in the panel that carries
+  the project's pitch.
+
+  `RoutingAggregates.cost` is a **floor** now, read with `priced_tasks`, `unpriced_tasks`,
+  `quota_tasks` and `free_tasks`, the way `Transition::cost_after` is read with `unpriced_after`
+  and `quota_after`. The `$/SUCCESS` cell reports what the figure is standing on, in the
+  vocabulary the escalations block already uses — `$0.42`, `$0.42+q`, `on quota`, `≥ $0.42`,
+  `unpriced`, `free`, `—` — and only a real figure or a genuine zero takes part in the sort.
+
+  `--routing-json` reports `cost` as `null` rather than `0` when nothing was priced, and gains
+  `priced_tasks`, `unpriced_tasks`, `quota_tasks`, `free_tasks`, `cost_per_success` and
+  `cost_basis`. `--routing-csv` appends the four counters after its existing columns, never
+  between them.
+
+- **A pricing refresh never reached the running dashboard.** The engine was built once when the
+  collectors were spawned and never replaced, while the `zen_pricing` collector wrote a refreshed
+  cache to disk and returned no rows. So a successful refresh changed nothing until restart: rows
+  stayed `UNKNOWN COST` although the rate was now known, and the log reported success while the
+  screen disagreed. Convention 8.
+
+  A collector can now declare that its work re-prices everything else; only `zen_pricing` does.
+  The engine is rebuilt *before* the write lock is taken — parsing ~3,450 keys while holding it
+  would block `snapshot()` on the render thread, which is the mistake the original one-time load
+  was written to avoid.
+
 - **One identity, enforced by CI.** The project's description of itself was hand-copied into seven
   files plus GitHub's About box, in five different wordings — and GitHub's copy named two of the
   five sources this tool reads. `Cargo.toml` is the single source of truth now: crates.io reads it
@@ -30,8 +83,6 @@
   The defaults reproduce the orders these lists have always had, so nothing moves until a key is
   pressed. Unknown cost sorts to one end rather than being interleaved as `$0.00`: a row whose
   price is unknown is not a cheap row.
-
-### Fixed
 
 - **The man page described the parser, not the tool.** `struct Args` in `src/cli.rs` carried a
   `///` doc comment explaining why it is separate from `Cli`. Clap promotes a doc comment on the
