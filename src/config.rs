@@ -100,6 +100,9 @@ impl ConfigFile {
     /// no-op: a `billing` line under the wrong table would otherwise sit there looking like
     /// it worked.
     fn validate(&self) -> Result<()> {
+        if let Some(budgets) = &self.budgets {
+            budgets.validate()?;
+        }
         if let Some(records) = self.omarchy.as_ref().and_then(|o| o.records.as_ref()) {
             for id in records {
                 if !crate::omarchy::record::ALLOWED_IDS.contains(&id.as_str()) {
@@ -302,6 +305,24 @@ mod tests {
     }
 
     #[test]
+    fn a_budget_that_cannot_fire_is_refused_at_load() {
+        // Same policy as a `billing` line under the wrong table: a config that parses and does
+        // nothing is an error, not a panel row that reads OK forever.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            "[[budgets.entry]]\nscope = \"provider\"\nperiod = \"monthly\"\nlimit = 10.0\n",
+        )
+        .unwrap();
+        let error = load_config(&cli_with_config(&path))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("config.toml"), "{error}");
+        assert!(error.contains("needs a `name`"), "{error}");
+    }
+
+    #[test]
     fn an_explicit_missing_config_is_an_error_but_a_missing_default_is_not() {
         let dir = tempfile::TempDir::new().unwrap();
         let missing = dir.path().join("absent.toml");
@@ -359,6 +380,9 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let config: ConfigFile = toml::from_str(&uncommented).expect("examples/config.toml parses");
+        config
+            .validate()
+            .expect("every budget in examples/config.toml is one that can fire");
         let budgets = config
             .budgets
             .expect("the example configures a [budgets] table");

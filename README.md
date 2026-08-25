@@ -649,6 +649,9 @@ limit = 50.0
 ```
 
 `warn` and `critical` are percentages of `limit`; they default to 75 and 90.
+An entry that could never fire is refused when the config loads rather than
+shown as `OK` forever: a `provider` or `model` scope needs a `name`, `global`
+takes none, `limit` must be above zero, and `warn` must sit below `critical`.
 The complete annotated example — including data paths, filters, collectors, and
 budget scopes — is in [`examples/config.toml`](examples/config.toml).
 

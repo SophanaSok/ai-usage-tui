@@ -105,6 +105,14 @@
   routing cursor was also clamped to the *model* table's length — cosmetic while nothing drew it,
   and a row the user could see and never reach once something did.
 
+- **A budget that could never fire is refused when the config loads.** `deny_unknown_fields`
+  caught a misspelled key; nothing caught a missing one. A `provider` or `model` entry with no
+  `name` became `Provider("")`, which matches no row, and a `limit` of zero made `pct` zero
+  forever — both sat in the panel at `OK` looking configured. `[[budgets.entry]]` is validated
+  the way `[collectors.*]` already was: a scoped entry needs its `name`, `global` takes none,
+  `limit` must be above zero, `warn` and `critical` are percentages, and `warn` must sit below
+  `critical`. The error names the entry by number and says what it needs.
+
 ## 0.9.0 - 2026-08-25
 
 ### Added
