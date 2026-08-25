@@ -84,6 +84,27 @@ impl CostStatus {
     }
 }
 
+/// Fold one usage row into a rollup's cost fields.
+///
+/// Four rollups needed exactly this and carried four copies of it. Adding the quota case to a
+/// copy-pasted block is the shape of change that reliably gets applied to three places out of
+/// four, so there is now one. The budget engine was the fifth copy, written before the counters
+/// existed: it summed the priced rows and dropped the rest, so a budget over unpriced or
+/// quota-billed work read as untouched. It lives here rather than in the UI's aggregation
+/// module because the budget engine is not UI, and the types it folds are these.
+pub fn accrue(usage: &Usage, cost: &mut f64, unpriced: &mut u64, quota: &mut u64) {
+    if usage.cost_status.is_quota_billed() {
+        *quota += usage.requests;
+        return;
+    }
+    if usage.cost_status.needs_price() {
+        match usage.cost.filter(|_| usage.cost_status.is_billable()) {
+            Some(value) => *cost += value,
+            None => *unpriced += usage.requests,
+        }
+    }
+}
+
 impl Category {
     pub fn label(self) -> &'static str {
         match self {

@@ -185,14 +185,47 @@ pub fn build_record(spec: &RecordSpec<'_>) -> OmarchyRecord {
         Some(alert) => format!("Budget ${:.0}/{}", alert.limit, period_noun(alert.period)),
         None => "Pay as you go".to_string(),
     };
-    let (usage_status_text, auth_help_text) = if unpriced > 0 {
-        (
-            "Spend partly unpriced".to_string(),
-            format!("{unpriced} of {billable} billable requests have no price; spend is a floor."),
+    // The tab's own rows can be fully priced while a budget — computed over every source — is
+    // not, and a budget whose period is all plan quota draws a 0 % meter over work the panel
+    // cannot see. The status line is the one place the record can say what a meter stands on,
+    // so it names each budget concerned rather than speaking of "the meters".
+    let mut notes: Vec<String> = Vec::new();
+    if unpriced > 0 {
+        notes.push(format!(
+            "{unpriced} of {billable} billable requests have no price; spend is a floor."
+        ));
+    }
+    notes.extend(spec.alerts.iter().filter(|a| a.is_partial()).map(|a| {
+        format!(
+            "{} {}: {} budgeted requests have no price; its meter is a floor.",
+            a.scope.label(),
+            a.period.label(),
+            a.unpriced_requests
         )
+    }));
+    let on_quota: Vec<String> = spec
+        .alerts
+        .iter()
+        .filter(|a| a.is_quota_only())
+        .map(|a| {
+            format!(
+                "{} {}: all {} requests are on quota; its meter has nothing per-token to draw.",
+                a.scope.label(),
+                a.period.label(),
+                a.quota_requests
+            )
+        })
+        .collect();
+    let usage_status_text = if !notes.is_empty() {
+        "Spend partly unpriced"
+    } else if !on_quota.is_empty() {
+        "Budget on quota"
     } else {
-        (String::new(), String::new())
-    };
+        ""
+    }
+    .to_string();
+    notes.extend(on_quota);
+    let auth_help_text = notes.join(" ");
 
     OmarchyRecord {
         schema_version: 1,
@@ -380,6 +413,8 @@ mod tests {
             limit,
             pct: spend / limit * 100.0,
             level: AlertLevel::Ok,
+            unpriced_requests: 0,
+            quota_requests: 0,
         }
     }
 
@@ -499,6 +534,52 @@ mod tests {
         assert!(record.limits.is_empty());
         assert_eq!(record.tier_label, "Pay as you go");
         assert_eq!(record.usage_status_text, "");
+    }
+
+    #[test]
+    fn a_budget_meter_over_unpriced_work_is_declared_a_floor() {
+        // The rows this tab counts can be fully priced while the budget — computed over every
+        // source — is not. The meter beside a clean status would then be the one figure on the
+        // panel with nothing said about what it stands on.
+        let rows = [row("m", "s", noon(), Some(0.1))];
+        let mut partial = alert(BudgetScope::Global, BudgetPeriod::Monthly, 5.0, 50.0);
+        partial.unpriced_requests = 4;
+        let record = build(&rows, &[partial], None);
+        assert_eq!(record.usage_status_text, "Spend partly unpriced");
+        assert!(
+            record.auth_help_text.contains("global monthly")
+                && record.auth_help_text.contains("4 budgeted requests")
+                && record.auth_help_text.contains("floor"),
+            "the help text should name the budget:\n{}",
+            record.auth_help_text
+        );
+
+        // And the anti-test: a fully priced budget over fully priced rows says nothing.
+        let exact = alert(BudgetScope::Global, BudgetPeriod::Monthly, 5.0, 50.0);
+        let record = build(&rows, &[exact], None);
+        assert_eq!(record.usage_status_text, "");
+        assert_eq!(record.auth_help_text, "");
+    }
+
+    #[test]
+    fn a_budget_on_quota_says_so_rather_than_drawing_an_empty_meter() {
+        // On a Max account every budgeted request is quota-billed: the meter reads 0 % over real
+        // work, and `percent` has no way to say otherwise. The status line does.
+        let rows = [row("m", "s", noon(), Some(0.1))];
+        let mut on_quota = alert(BudgetScope::Global, BudgetPeriod::Monthly, 0.0, 50.0);
+        on_quota.quota_requests = 300;
+        let record = build(&rows, &[on_quota], None);
+        assert_eq!(record.usage_status_text, "Budget on quota");
+        assert!(
+            record.auth_help_text.contains("global monthly")
+                && record.auth_help_text.contains("300 requests are on quota"),
+            "{}",
+            record.auth_help_text
+        );
+        assert_eq!(
+            record.limits[0].percent, 0.0,
+            "the meter itself cannot say more"
+        );
     }
 
     #[test]

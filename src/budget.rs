@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
-use crate::model::Usage;
+use crate::model::{accrue, Usage};
 
 const DEFAULT_WARN_PCT: f64 = 75.0;
 const DEFAULT_CRITICAL_PCT: f64 = 90.0;
@@ -27,6 +27,15 @@ pub enum BudgetPeriod {
     Daily,
     #[serde(rename = "monthly")]
     Monthly,
+}
+
+impl BudgetPeriod {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Daily => "daily",
+            Self::Monthly => "monthly",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -78,15 +87,55 @@ impl AlertLevel {
 pub struct Alert {
     pub scope: BudgetScope,
     pub period: BudgetPeriod,
+    /// Priced spend in the period. A floor when `unpriced_requests` is non-zero: the requests
+    /// that could not be priced are real spend this figure does not include.
     pub spend: f64,
     pub limit: f64,
+    /// `spend` over `limit`, so a floor whenever `spend` is.
     pub pct: f64,
+    /// Derived from `pct`, so a floor too: a budget can be over its limit in truth and `Ok` on
+    /// its priced spend. `is_actionable` — and with it the exit code and the webhook — acts on
+    /// this floor; the counters below are how a reader learns what it left out.
     pub level: AlertLevel,
+    /// Requests in the period that should carry a price and do not.
+    pub unpriced_requests: u64,
+    /// Requests billed against a plan quota rather than per token. Real cost with no per-request
+    /// figure, so never in `spend` — and counted, so a budget over a subscription account does
+    /// not read as untouched.
+    pub quota_requests: u64,
 }
 
 impl Alert {
     pub fn is_actionable(&self) -> bool {
         self.level != AlertLevel::Ok
+    }
+
+    /// Whether some of the period's usage has no price, making `spend` a floor.
+    pub fn is_partial(&self) -> bool {
+        self.unpriced_requests > 0
+    }
+
+    /// Whether the period contains only quota-billed work, so there is no figure to report.
+    pub fn is_quota_only(&self) -> bool {
+        self.quota_requests > 0 && self.spend == 0.0 && self.unpriced_requests == 0
+    }
+
+    /// The alert as the webhook and `--check-budgets` report it.
+    ///
+    /// One shape for both: they were two hand-copied literals, and a field added to one would
+    /// not have reached the other. `spend` and `pct` are floors when `unpriced_requests` is
+    /// non-zero; a consumer that treats them as exact is reading a number the tool never claimed.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "scope": self.scope.label(),
+            "period": self.period.label(),
+            "level": self.level.label(),
+            "spend": self.spend,
+            "limit": self.limit,
+            "pct": self.pct,
+            "unpriced_requests": self.unpriced_requests,
+            "quota_requests": self.quota_requests,
+        })
     }
 }
 
@@ -158,7 +207,11 @@ impl BudgetEngine {
         self.budgets
             .iter()
             .map(|budget| {
-                let spend = spend_for_scope(usages, &budget.scope, budget.period);
+                let ScopeSpend {
+                    spend,
+                    unpriced_requests,
+                    quota_requests,
+                } = spend_for_scope(usages, &budget.scope, budget.period);
                 let pct = if budget.limit > 0.0 {
                     (spend / budget.limit) * 100.0
                 } else {
@@ -180,6 +233,8 @@ impl BudgetEngine {
                     limit: budget.limit,
                     pct,
                     level,
+                    unpriced_requests,
+                    quota_requests,
                 }
             })
             .collect()
@@ -203,15 +258,33 @@ fn matches_scope(usage: &Usage, scope: &BudgetScope) -> bool {
     }
 }
 
-fn spend_for_scope(usages: &[Usage], scope: &BudgetScope, period: BudgetPeriod) -> f64 {
+/// What a period's usage adds up to, and what that sum is standing on.
+#[derive(Default)]
+struct ScopeSpend {
+    spend: f64,
+    unpriced_requests: u64,
+    quota_requests: u64,
+}
+
+fn spend_for_scope(usages: &[Usage], scope: &BudgetScope, period: BudgetPeriod) -> ScopeSpend {
     let cutoff = period_cutoff(period);
-    usages
+    let mut total = ScopeSpend::default();
+    // The same fold every other rollup uses. This one summed `filter_map(|u| u.cost)` on its
+    // own, so a row with no price contributed nothing and was counted nowhere — a budget over
+    // unpriced or quota-billed work read as untouched, in the one figure the tool acts on.
+    for usage in usages
         .iter()
         .filter(|u| u.created >= cutoff)
-        .filter(|u| u.cost_status.is_billable())
         .filter(|u| matches_scope(u, scope))
-        .filter_map(|u| u.cost)
-        .sum()
+    {
+        accrue(
+            usage,
+            &mut total.spend,
+            &mut total.unpriced_requests,
+            &mut total.quota_requests,
+        );
+    }
+    total
 }
 
 pub struct AlertDispatcher {
@@ -268,17 +341,7 @@ impl AlertDispatcher {
         let payload = serde_json::json!({
             "tool": "ai-usage-tui",
             "timestamp": crate::utils::now(),
-            "alerts": to_send.iter().map(|a| serde_json::json!({
-                "scope": a.scope.label(),
-                "period": match a.period {
-                    BudgetPeriod::Daily => "daily",
-                    BudgetPeriod::Monthly => "monthly",
-                },
-                "level": a.level.label(),
-                "spend": a.spend,
-                "limit": a.limit,
-                "pct": a.pct,
-            })).collect::<Vec<_>>(),
+            "alerts": to_send.iter().map(|a| a.to_json()).collect::<Vec<_>>(),
         });
 
         let client = reqwest::blocking::Client::builder()
@@ -312,7 +375,51 @@ mod tests {
             category: Category::Paid,
             cost_status: CostStatus::Calculated,
             cost: Some(cost),
+            requests: 1,
             created,
+            ..Default::default()
+        }
+    }
+
+    /// A row that should carry a price and does not: a paid provider, a model no table knows.
+    fn unpriced_usage(provider: &str, model: &str) -> Usage {
+        Usage {
+            provider: provider.into(),
+            model: model.into(),
+            category: Category::Paid,
+            cost_status: CostStatus::Unavailable,
+            cost: None,
+            requests: 1,
+            created: crate::utils::now(),
+            ..Default::default()
+        }
+    }
+
+    /// A row billed against a plan: real work, no per-request figure.
+    fn quota_usage(provider: &str, model: &str) -> Usage {
+        Usage {
+            provider: provider.into(),
+            model: model.into(),
+            category: Category::Paid,
+            cost_status: CostStatus::Quota,
+            billing: crate::model::Billing::Subscription,
+            cost: None,
+            api_equivalent_cost: Some(50.0),
+            requests: 1,
+            created: crate::utils::now(),
+            ..Default::default()
+        }
+    }
+
+    fn global_monthly(limit: f64) -> BudgetsConfig {
+        BudgetsConfig {
+            entry: vec![BudgetEntry {
+                scope: BudgetScopeKind::Global,
+                name: None,
+                period: BudgetPeriod::Monthly,
+                limit,
+                ..Default::default()
+            }],
             ..Default::default()
         }
     }
@@ -429,6 +536,7 @@ mod tests {
                 category: Category::Free,
                 cost_status: CostStatus::Free,
                 cost: Some(5.0),
+                requests: 1,
                 created: crate::utils::now(),
                 ..Default::default()
             },
@@ -438,6 +546,7 @@ mod tests {
                 category: Category::Local,
                 cost_status: CostStatus::Local,
                 cost: Some(3.0),
+                requests: 1,
                 created: crate::utils::now(),
                 ..Default::default()
             },
@@ -445,6 +554,10 @@ mod tests {
         ];
         let alerts = engine.check(&usages);
         assert!((alerts[0].spend - 3.0).abs() < 0.01);
+        // Costless is not unpriced: a free or local row must not mark the budget a floor.
+        assert!(!alerts[0].is_partial());
+        assert_eq!(alerts[0].unpriced_requests, 0);
+        assert_eq!(alerts[0].quota_requests, 0);
     }
 
     #[test]
@@ -457,6 +570,8 @@ mod tests {
             limit: 100.0,
             pct: 80.0,
             level: AlertLevel::Critical,
+            unpriced_requests: 0,
+            quota_requests: 0,
         };
         assert!(dispatcher.should_dispatch(&alert));
         dispatcher.last_dispatched.insert(
@@ -475,8 +590,91 @@ mod tests {
             limit: 100.0,
             pct: 10.0,
             level: AlertLevel::Ok,
+            unpriced_requests: 0,
+            quota_requests: 0,
         };
         assert!(!alert.is_actionable());
+    }
+
+    #[test]
+    fn unpriced_work_is_counted_rather_than_dropped() {
+        // Restore the bug by summing `filter_map(|u| u.cost)` straight into `spend` with no
+        // counter beside it: the two unpriced rows vanish, and a $10 budget over $1 of priced
+        // work plus two requests nobody could price reads as 10% spent, exactly.
+        let engine = BudgetEngine::from_config(&global_monthly(10.0));
+        let usages = vec![
+            make_usage("opencode", "gpt-5.6-luna", 1.0, crate::utils::now()),
+            unpriced_usage("opencode", "a-model-no-table-has"),
+            unpriced_usage("opencode", "a-model-no-table-has"),
+            quota_usage("anthropic", "claude-opus-5"),
+        ];
+        let alerts = engine.check(&usages);
+        let alert = &alerts[0];
+        assert!(
+            (alert.spend - 1.0).abs() < 1e-9,
+            "spend is the priced floor, got {}",
+            alert.spend
+        );
+        assert_eq!(alert.unpriced_requests, 2);
+        assert_eq!(alert.quota_requests, 1);
+        assert!(alert.is_partial());
+        assert!(!alert.is_quota_only());
+    }
+
+    #[test]
+    fn a_fully_priced_budget_is_not_a_floor() {
+        // The anti-test: the fix must not mark every budget as partial.
+        let engine = BudgetEngine::from_config(&global_monthly(10.0));
+        let usages = vec![
+            make_usage("opencode", "gpt-5.6-luna", 1.0, crate::utils::now()),
+            make_usage("opencode", "gpt-5.6-sol", 2.0, crate::utils::now()),
+        ];
+        let alert = &engine.check(&usages)[0];
+        assert!((alert.spend - 3.0).abs() < 1e-9);
+        assert_eq!(alert.unpriced_requests, 0);
+        assert_eq!(alert.quota_requests, 0);
+        assert!(!alert.is_partial());
+        assert!(!alert.is_quota_only());
+    }
+
+    #[test]
+    fn a_budget_over_only_quota_work_says_so() {
+        // On a Max account every Anthropic row is quota-billed. `$0.00 / 0% / OK` is what this
+        // read before: true of the per-token figure, and false about the work.
+        let engine = BudgetEngine::from_config(&global_monthly(10.0));
+        let usages = vec![
+            quota_usage("anthropic", "claude-opus-5"),
+            quota_usage("anthropic", "claude-sonnet-5"),
+        ];
+        let alert = &engine.check(&usages)[0];
+        assert_eq!(alert.spend, 0.0);
+        assert_eq!(alert.quota_requests, 2);
+        assert!(alert.is_quota_only());
+        assert_eq!(alert.level, AlertLevel::Ok, "no threshold was crossed");
+    }
+
+    #[test]
+    fn the_alert_json_carries_what_the_figure_is_standing_on() {
+        // One shape for the webhook and `--check-budgets`: they were two hand-copied literals.
+        let alert = Alert {
+            scope: BudgetScope::Provider("openai".into()),
+            period: BudgetPeriod::Daily,
+            spend: 1.5,
+            limit: 10.0,
+            pct: 15.0,
+            level: AlertLevel::Warn,
+            unpriced_requests: 3,
+            quota_requests: 7,
+        };
+        let json = alert.to_json();
+        assert_eq!(json["scope"], "provider:openai");
+        assert_eq!(json["period"], "daily");
+        assert_eq!(json["level"], "WARN");
+        assert_eq!(json["spend"], 1.5);
+        assert_eq!(json["limit"], 10.0);
+        assert_eq!(json["pct"], 15.0);
+        assert_eq!(json["unpriced_requests"], 3);
+        assert_eq!(json["quota_requests"], 7);
     }
 
     #[test]
@@ -508,17 +706,7 @@ mod tests {
             };
             let engine = BudgetEngine::from_config(&config);
             let usages = vec![
-                Usage {
-                    provider: "anthropic".into(),
-                    model: "claude-opus-5".into(),
-                    category: Category::Paid,
-                    cost_status: CostStatus::Quota,
-                    billing: crate::model::Billing::Subscription,
-                    cost: None,
-                    api_equivalent_cost: Some(50.0),
-                    created: crate::utils::now(),
-                    ..Default::default()
-                },
+                quota_usage("anthropic", "claude-opus-5"),
                 make_usage("anthropic", "claude-opus-5", 1.0, crate::utils::now()),
             ];
             let alerts = engine.check(&usages);
@@ -528,6 +716,9 @@ mod tests {
                 alerts[0].spend
             );
             assert_eq!(alerts[0].level, AlertLevel::Ok);
+            // Excluded from the sum is not the same as gone: the work happened.
+            assert_eq!(alerts[0].quota_requests, 1, "{scope:?}");
+            assert_eq!(alerts[0].unpriced_requests, 0, "{scope:?}");
         }
     }
 }

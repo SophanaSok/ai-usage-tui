@@ -102,16 +102,30 @@ fn projection_rows<'a>(burn: &BurnRate, alerts: &[Alert]) -> Vec<Row<'a>> {
     }
 
     if !burn.is_projectable() {
-        return vec![Row::new(vec![
-            Cell::from(Span::styled("projection", Style::default().fg(MUTED))),
-            Cell::from(Span::styled(
+        // Say which of the two conditions failed. This read "too little activity to project
+        // (550/5 requests)" over a window of 550 quota-billed requests: the count was fine, the
+        // rate was zero because nothing in the window is priced per token, and the message
+        // blamed the one thing that was not wrong.
+        let (text, colour) = if burn.requests < BurnRate::MIN_SAMPLE {
+            (
                 format!(
                     "too little activity to project ({}/{} requests)",
                     burn.requests,
                     BurnRate::MIN_SAMPLE
                 ),
-                Style::default().fg(MUTED),
-            )),
+                MUTED,
+            )
+        } else if burn.is_quota_only() {
+            ("on quota".to_string(), CLOUD)
+        } else if burn.is_partial() {
+            // A rate whose priced part is zero is not a floor to project from; it is unknown.
+            ("unpriced".to_string(), YELLOW)
+        } else {
+            ("no per-token spend in the window".to_string(), MUTED)
+        };
+        return vec![Row::new(vec![
+            Cell::from(Span::styled("projection", Style::default().fg(MUTED))),
+            Cell::from(Span::styled(text, Style::default().fg(colour))),
         ])];
     }
 
@@ -119,10 +133,22 @@ fn projection_rows<'a>(burn: &BurnRate, alerts: &[Alert]) -> Vec<Row<'a>> {
         .iter()
         .map(|alert| {
             let remaining = alert.limit - alert.spend;
+            // A floor on the spend is a ceiling on what is left; a floor on the rate is a
+            // ceiling on how long that lasts. The two markers say which: `≤` on the figure means
+            // the budget's spend is a floor, which the budgets panel marks the same way; `≤` on
+            // the duration alone means the rate is, which the spend row above marks. Before
+            // this the panel rendered the rate as `≥ $4.10/hr (37 unpriced)` and then projected
+            // from a spend that had dropped those same 37 requests.
+            let remaining_bound = if alert.is_partial() { "≤ " } else { "" };
+            let time_bound = if alert.is_partial() || burn.is_partial() {
+                "≤ "
+            } else {
+                ""
+            };
             let (text, colour) = match seconds_to_exhaust(burn, remaining) {
                 Some(secs) => (
                     format!(
-                        "{} left  ({} remaining)",
+                        "{time_bound}{} left  ({remaining_bound}{} remaining)",
                         format_duration(secs),
                         money(remaining)
                     ),
@@ -131,7 +157,7 @@ fn projection_rows<'a>(burn: &BurnRate, alerts: &[Alert]) -> Vec<Row<'a>> {
                 None if remaining <= 0.0 => ("already over".to_string(), RED),
                 None => ("not projectable".to_string(), MUTED),
             };
-            let label = format!("{} {}", alert.scope.label(), period(alert));
+            let label = format!("{} {}", alert.scope.label(), alert.period.label());
             Row::new(vec![
                 Cell::from(Span::styled(label, Style::default().fg(MUTED))),
                 Cell::from(Span::styled(text, Style::default().fg(colour))),
@@ -151,11 +177,4 @@ fn window_label(seconds: i64) -> String {
 
 fn money(value: f64) -> String {
     format!("${value:.2}")
-}
-
-fn period(alert: &Alert) -> &'static str {
-    match alert.period {
-        crate::budget::BudgetPeriod::Daily => "daily",
-        crate::budget::BudgetPeriod::Monthly => "monthly",
-    }
 }

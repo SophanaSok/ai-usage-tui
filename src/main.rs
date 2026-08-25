@@ -238,19 +238,11 @@ fn check_budgets(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()
 
     let json = serde_json::json!({
         "budgets": budget_engine.budgets().len(),
-        "alerts": alerts.iter().filter(|a| a.is_actionable()).map(|a| {
-            serde_json::json!({
-                "scope": a.scope.label(),
-                "period": match a.period {
-                    ai_usage_tui::budget::BudgetPeriod::Daily => "daily",
-                    ai_usage_tui::budget::BudgetPeriod::Monthly => "monthly",
-                },
-                "level": a.level.label(),
-                "spend": a.spend,
-                "limit": a.limit,
-                "pct": a.pct,
-            })
-        }).collect::<Vec<_>>(),
+        "alerts": alerts
+            .iter()
+            .filter(|a| a.is_actionable())
+            .map(|a| a.to_json())
+            .collect::<Vec<_>>(),
     });
     print_line(&serde_json::to_string_pretty(&json)?)?;
 
@@ -305,11 +297,8 @@ fn write_omarchy_records(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> R
         .to_ascii_lowercase();
     let balance = if omarchy.balance.unwrap_or(false) {
         let matches = |alert: &&ai_usage_tui::budget::Alert| {
-            let period = match alert.period {
-                BudgetPeriod::Daily => "daily",
-                BudgetPeriod::Monthly => "monthly",
-            };
-            format!("{}/{}", alert.scope.label(), period).to_ascii_lowercase() == wanted
+            format!("{}/{}", alert.scope.label(), alert.period.label()).to_ascii_lowercase()
+                == wanted
         };
         alerts
             .iter()

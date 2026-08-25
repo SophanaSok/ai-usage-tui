@@ -98,8 +98,12 @@ balance_budget = "global/monthly" # which budget, as <scope>/<period>
   panel labels it "Prepaid credits … funded", which describes a soft budget
   loosely.
 - `tierLabel` reads `Budget $50/month` or `Pay as you go`. When billable
-  rows lack a price the status reads `Spend partly unpriced` and
-  `authHelpText` carries the count.
+  rows lack a price — the tab's own, or a budget's, since a budget is
+  computed over every source — the status reads `Spend partly unpriced`;
+  when a budget's period is all plan quota it reads `Budget on quota`.
+  `authHelpText` names each budget concerned. A meter's `percent` is a floor
+  in the first case and has nothing to draw in the second, and the panel can
+  show neither, so the status line is where it is said.
 - The record carries token counts, model ids, request and session counts,
   and dollar figures — never content, never a path. The write is atomic
   (temporary `.<id>.<pid>.tmp`, then rename), mode 0600, and no temporary

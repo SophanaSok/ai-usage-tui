@@ -1,5 +1,50 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A budget over unpriced or subscription-billed work read as untouched.** `spend_for_scope`
+  summed the priced rows into a bare `f64` and dropped the rest, so a request whose rate was
+  unknown, or one billed against a Max or Pro quota, contributed nothing and was counted nowhere.
+  On a subscription account that is every Claude Code row: a `$50` monthly budget read
+  `$0.00 / 0% / OK` for as long as it was configured. Convention 1, in the one figure the tool
+  *acts* on — the webhook fires on it, `--check-budgets` sets its exit code from it, and the
+  Omarchy meter is drawn from it.
+
+  The guard already existed, and this was the one rollup that bypassed it. `accrue` folds a row
+  into a cost floor plus `unpriced` and `quota` counters, and its own comment records that four
+  copies of that logic were collapsed into one; the budget engine was the fifth copy, written
+  before the counters existed. It goes through `accrue` now — moved to `model.rs`, next to the
+  `CostStatus` predicates it is written in terms of, because the budget engine is not UI — and
+  `Alert` carries `unpriced_requests` and `quota_requests` beside `spend`.
+
+  The panels say what the figure is standing on, in the vocabulary the rest of the dashboard
+  already uses: `≥ $2.00` and `≥ 4%` when part of the period is unpriced, `on quota` when the
+  period's work is all plan quota, and `—` for a budget nothing has checked yet, which used to
+  print `$0.00 / 0% / OK`. The burn panel's projection was the worst case — it rendered the rate
+  as `≥ $4.10/hr (37 unpriced)` and, two lines down, computed time-to-exhaust from a spend that
+  had dropped those same 37 requests. It now reads `≤ 2h 14m left` when either the rate or the
+  spend is a floor, and marks the figure in brackets only when the spend is: the two markers
+  say which. Its "too little activity to project (550/5 requests)" — measured on a Max account,
+  over a window of 550 quota-billed requests — blamed the request count when the rate was zero
+  because nothing was priced per token; it now says which condition failed: `on quota`,
+  `unpriced`, or too few requests. The Omarchy record's status names each budget whose meter is
+  a floor, not only the tab's own rows — a budget is computed over every source, so the rows
+  can be fully priced while the meter is not — and reads `Budget on quota` when a budget's
+  period is all plan quota, where the meter draws 0 % over real work and cannot say so itself.
+
+  `--check-budgets` and the webhook payload gain `unpriced_requests` and `quota_requests`. The
+  two had been hand-copied literals of the same shape, and are one `Alert::to_json` now so a
+  field cannot reach one and miss the other. `BudgetPeriod::label` replaces the five
+  hand-written `daily`/`monthly` matches and the budgets panel's lower-cased `Debug` name.
+
+  Deliberately unchanged: the exit code and the webhook still act on the floor, so a budget that
+  is `OK` on its priced spend is not reported, however much of it is unpriced or on quota. On a
+  Max account `--check-budgets` still prints an empty `alerts` and exits `0`. Emitting every
+  partial budget would change what `alerts` means for every script that reads it; that is a
+  contract decision, not a rider on a fix, and the panel is where the floor is visible.
+
 ## 0.9.0 - 2026-08-25
 
 ### Added

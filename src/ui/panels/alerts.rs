@@ -29,10 +29,9 @@ pub fn draw_alert_banner(frame: &mut Frame, area: Rect, app: &App) {
                 AlertLevel::Critical | AlertLevel::Exceeded => RED,
                 AlertLevel::Ok => MUTED,
             };
-            let period_str = match alert.period {
-                crate::budget::BudgetPeriod::Daily => "daily",
-                crate::budget::BudgetPeriod::Monthly => "monthly",
-            };
+            // A banner is the loudest place this figure appears, so it is the last place a
+            // floor may pass as a total.
+            let floor = if alert.is_partial() { "≥ " } else { "" };
             vec![
                 Span::styled(
                     format!(" {} ", alert.level.label()),
@@ -43,9 +42,9 @@ pub fn draw_alert_banner(frame: &mut Frame, area: Rect, app: &App) {
                 ),
                 Span::styled(
                     format!(
-                        "{} {}/${:.2}/${:.2} ({}%)  ",
+                        "{} {}/{floor}${:.2}/${:.2} ({floor}{}%)  ",
                         alert.scope.label(),
-                        period_str,
+                        alert.period.label(),
                         alert.spend,
                         alert.limit,
                         alert.pct as u64

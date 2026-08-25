@@ -666,9 +666,23 @@ budgets are below their warning thresholds or no budgets are configured.
 
 Only usage with a reported, calculated, or estimated cost contributes to
 spend. Subscription-billed Claude Code usage is `quota` and does not count, so
-a budget scoped to `global`, `provider = "anthropic"`, or a Claude model sees
-none of it; `[collectors.claude_code] billing = "api"` restores the per-token
-accounting. A daily budget period begins at local midnight — the same boundary the
+a budget scoped to `global`, `provider = "anthropic"`, or a Claude model counts
+none of it toward `spend`; `[collectors.claude_code] billing = "api"` restores
+the per-token accounting.
+
+Not counted is not the same as not shown. Usage that should carry a price and
+does not is left out of `spend` and reported beside it as `unpriced_requests`,
+and quota-billed usage as `quota_requests`. The panel renders such a spend as
+`≥ $2.00` and `≥ 4%`, or `on quota` when the period's work is all plan quota,
+and the burn panel's projection becomes `≤ 2h 14m left`. A floor presented as
+a total is how a budget gets trusted past the point it should be.
+
+The exit code and the webhook still act on the floor: a budget that is `OK` on
+its priced spend is not reported, however much of it is unpriced or on quota,
+because reporting it would change what `alerts` means for every script that
+reads it. The panel is where the floor is visible.
+
+A daily budget period begins at local midnight — the same boundary the
 dashboard's `TODAY` range uses, so those two always agree. A monthly budget
 period begins on the first day of the current local month, which is
 deliberately **not** the dashboard's `3` / `--month` trailing-30-day range, so
@@ -678,8 +692,12 @@ When `--webhook URL` (or `webhook` in the `[budgets]` table) is set, actionable
 alerts are POSTed as JSON with this shape:
 
 ```text
-{tool, timestamp, alerts: [{scope, period, level, spend, limit, pct}]}
+{tool, timestamp, alerts: [{scope, period, level, spend, limit, pct,
+                            unpriced_requests, quota_requests}]}
 ```
+
+`spend` and `pct` are floors when `unpriced_requests` is non-zero.
+`--check-budgets` prints the same per-alert object.
 
 `--check-budgets` posts synchronously before exiting `1` and prints
 `warning: budget webhook dispatch failed: …` on stderr if the POST fails. The
