@@ -123,6 +123,22 @@
   `source` — and `--doctor` adds the first reason; the live dashboard's collector writes it to
   the log.
 
+- **`--doctor` tells the truth about pricing, and a tier that cannot be read prices nothing.**
+  `PricingEngine::load` collected warnings — the refreshed cache is unreadable, invalid, or too
+  old to trust, so bundled rates are in use — and nothing printed them: the fallback happened in
+  silence and an `UNKNOWN COST` row had no explanation anywhere. `--doctor` has a `PRICING`
+  section now, with the model count, the cache's path and age, and every warning. Its
+  `zen_pricing` line also described the wrong file: the Zen *catalog* that `--refresh-zen`
+  writes, which nothing prices from, with a hint to populate it — while the pricing cache that
+  `--refresh-pricing` writes and the engine reads was reported nowhere. It reports that file.
+
+  Two tier parsers defaulted an unreadable threshold to `0`: the curated table's `tier-<junk>`
+  keys and the scraper's `(> lots tokens)` display names. A tier at zero matches every request
+  with a nonzero prompt, so a typo in a hand-edited table applied the long-context rate — roughly
+  double — to everything for that model, and nothing said so. Both refuse now: the table
+  reports the key in a warning and the scraper skips the row, and the base row survives either
+  way. A lowercase `k` in a scraped name is a number, not a typo.
+
 ## 0.9.0 - 2026-08-25
 
 ### Added

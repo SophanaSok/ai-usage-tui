@@ -93,6 +93,15 @@ fn doctor_reports_every_source_and_where_it_looked() {
         "no source reported as found:\n{text}"
     );
     assert!(text.contains("CONFIG"), "no config section:\n{text}");
+    // The pricing table's state, warnings included: a stale or invalid cache was ignored in
+    // favour of bundled rates and said so nowhere.
+    assert!(text.contains("PRICING"), "no pricing section:\n{text}");
+    assert!(text.contains("models priced"), "{text}");
+    // The absence hint used to name `--refresh-zen`, which writes a file nothing prices from.
+    assert!(
+        !text.contains("--refresh-zen"),
+        "--doctor points at the catalog refresh, not the pricing one:\n{text}"
+    );
 }
 
 /// A usage row the journal cannot read is counted where the user looks, not dropped.

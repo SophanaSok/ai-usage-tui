@@ -912,8 +912,10 @@ Default local storage paths (when the corresponding XDG variable is unset):
 
 **Start with `ai-usage-tui --doctor`.** It reports every source, the exact path it was looked
 for at, how many rows it produced, how billing was decided, and — where a source is absent —
-the flag or environment variable that points it elsewhere. It reads what a normal collection
-reads and writes nothing.
+the flag or environment variable that points it elsewhere. It also reports the pricing table's
+state: how many models it prices, how old the refreshed cache is, and any warning about it — a
+cache that is unreadable, invalid, or too old is ignored in favour of the bundled rates, and
+this is where that is said. It reads what a normal collection reads and writes nothing.
 
 ```text
 SOURCES
@@ -928,8 +930,9 @@ SOURCES
 - **No Ollama rows:** first pipe a completed response containing `done: true`
   through `--record-ollama`, then verify the journal path.
 - **No cost shown:** the model may be local, free, absent from pricing data, or
-  missing authoritative cost metadata. Try `--refresh-pricing`; unknown cost
-  remains unavailable by design.
+  missing authoritative cost metadata. `--doctor`'s `PRICING` section says
+  whether a refreshed cache is in use and why not if not; try
+  `--refresh-pricing`. Unknown cost remains unavailable by design.
 - **Config not applied:** verify TOML syntax and the path shown above. A custom
   `--config PATH` fails immediately when the file does not exist.
 - **macOS refuses to run the binary** ("cannot be opened because the developer

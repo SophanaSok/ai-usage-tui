@@ -309,10 +309,13 @@ Remaining:
 
 Each of these is an afternoon at most, and each is a reasonable first outside contribution.
 
-- **`src/collector/zen.rs` has no tests.** Thirty-two lines: a path join and a network fetch. The
-  join is trivially testable; the fetch wants the same fetch-from-parse split
-  `pricing_refresh.rs` already uses (`fetch_with_backoff` does the HTTP, `parse_pricing_html` is
-  pure and tested against committed fixtures).
+- **Resolved differently: `src/collector/zen.rs` stays untested, and the defect was elsewhere.**
+  There was nothing to split — `refresh_zen_catalog`'s entire "parse" is `to_vec_pretty` on a
+  `Value` — and a test that the path ends in `zen-models.json` is what convention 6 forbids. The
+  real defect was that `--doctor`'s `zen_pricing` line described that catalog, which nothing
+  prices from, and told a user with `UNKNOWN COST` rows to run `--refresh-zen`. It now reports
+  the pricing cache `--refresh-pricing` writes and `PricingEngine::load` reads, and a `PRICING`
+  section carries the engine's warnings, which had no production reader at all.
 - **The README's "Data sources" section is the longest one left**, at roughly 140 lines. The two
   provider billing essays already moved to `docs/provider-support.md`; the per-provider parsing
   detail is the obvious next candidate, leaving a table and the paths.

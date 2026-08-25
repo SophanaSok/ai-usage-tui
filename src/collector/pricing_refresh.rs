@@ -108,7 +108,21 @@ fn parse_pricing_html(html: &str) -> Result<String> {
             continue;
         };
 
-        let tier = extract_tier(display_name);
+        // A tier row whose threshold cannot be read is skipped, and said so: stored as `tier-0`
+        // it would have priced every request at the long-context rate. The base row for the
+        // same model is its own row and survives.
+        let tier = match extract_tier(display_name) {
+            Ok(tier) => tier,
+            Err(threshold) => {
+                crate::logging::warn(
+                    ID,
+                    &format!(
+                        "skipping {display_name:?}: cannot read a token threshold from {threshold:?}"
+                    ),
+                );
+                continue;
+            }
+        };
         let input = parse_price(&row[1]);
         let output = parse_price(&row[2]);
         let cache_read = parse_price(&row[3]);
@@ -184,7 +198,7 @@ fn parse_pricing_html(html: &str) -> Result<String> {
 struct PricingEntry {
     model_id: String,
     free: bool,
-    tier: Option<String>,
+    tier: Option<u64>,
     input: Option<f64>,
     output: Option<f64>,
     cache_read: Option<f64>,
@@ -284,20 +298,30 @@ fn parse_price(text: &str) -> Option<f64> {
     trimmed.trim_start_matches('$').parse::<f64>().ok()
 }
 
-fn extract_tier(display_name: &str) -> Option<String> {
-    if let Some(start) = display_name.find("(> ") {
-        let rest = &display_name[start + 3..];
-        if let Some(end) = rest.find(" tokens)") {
-            let threshold_str = &rest[..end];
-            let expanded = threshold_str
-                .replace("K", "000")
-                .replace("M", "000000")
-                .replace(',', "");
-            let threshold: u64 = expanded.parse().unwrap_or(0);
-            return Some(threshold.to_string());
-        }
-    }
-    None
+/// The token threshold of a context-tier row, from its display name.
+///
+/// `Ok(None)` when the name carries no tier; `Err` with the offending text when it carries one
+/// that cannot be read. That used to be `parse().unwrap_or(0)`, and a threshold of zero is a
+/// tier that applies to everything — a lowercase `k` in a scraped name would have doubled the
+/// price of every request for that model.
+fn extract_tier(display_name: &str) -> Result<Option<u64>, String> {
+    let Some(start) = display_name.find("(> ") else {
+        return Ok(None);
+    };
+    let rest = &display_name[start + 3..];
+    let Some(end) = rest.find(" tokens)") else {
+        return Ok(None);
+    };
+    let threshold_str = &rest[..end];
+    let expanded = threshold_str
+        .to_ascii_uppercase()
+        .replace('K', "000")
+        .replace('M', "000000")
+        .replace(',', "");
+    expanded
+        .parse::<u64>()
+        .map(Some)
+        .map_err(|_| threshold_str.to_string())
 }
 
 /// Turn a pricing-table display name into the model id the pricing table is keyed on.
@@ -376,20 +400,24 @@ impl Collector for ZenPricingCollector {
 ///
 /// Not a usage source: the cached catalog only enriches pricing. It is reported anyway, because
 /// "why is this row unpriced" is often answered by whether this file is there.
+/// One-shot read for the source registry: whether the refreshed pricing cache exists.
+///
+/// The cache is what `--refresh-pricing` writes and `PricingEngine::load` reads. This used to
+/// report the Zen *catalog* instead — the file `--refresh-zen` writes, which nothing prices
+/// from — so `--doctor` told a user with `UNKNOWN COST` rows to populate a file that would not
+/// have changed a single one, while the file that would was reported nowhere.
 pub(crate) fn read(
     _roots: &crate::collector::SourceRoots,
 ) -> crate::collector::registry::SourceRead {
-    let path = crate::collector::zen::zen_cache_path();
+    let path = pricing_cache_path();
     let present = path.as_deref().is_some_and(std::path::Path::exists);
     Ok((
         crate::collector::SourceReport {
             id: ID,
             present,
             status: match (&path, present) {
-                (Some(path), true) => {
-                    format!("Zen catalog: cached (informational) at {}", path.display())
-                }
-                _ => "Zen catalog: not cached".to_string(),
+                (Some(path), true) => format!("pricing cache: {}", path.display()),
+                _ => "pricing cache: none (bundled rates)".to_string(),
             },
             path,
             rows: 0,
@@ -498,9 +526,32 @@ mod tests {
     fn extract_tier_detects_threshold() {
         assert_eq!(
             extract_tier("GPT 5.6 Luna (> 272K tokens)"),
-            Some("272000".to_string())
+            Ok(Some(272_000))
         );
-        assert_eq!(extract_tier("GPT 5.6 Luna"), None);
+        assert_eq!(extract_tier("GPT 5.6 Luna"), Ok(None));
+        // Case does not change a number.
+        assert_eq!(extract_tier("Grok (> 1m tokens)"), Ok(Some(1_000_000)));
+    }
+
+    #[test]
+    fn a_tier_threshold_that_cannot_be_read_is_refused_not_zero() {
+        // Restore the bug with `parse().unwrap_or(0)`: this returns `Some(0)`, and a tier at 0
+        // matches every request.
+        assert_eq!(
+            extract_tier("GPT 5.6 Luna (> lots tokens)"),
+            Err("lots".to_string())
+        );
+    }
+
+    #[test]
+    fn a_tier_row_that_cannot_be_read_is_skipped_and_its_base_row_survives() {
+        let html = r#"<h2 id="pricing">Pricing</h2><table><thead><tr><th>Model</th><th>Input</th><th>Output</th><th>Cached Read</th><th>Cached Write</th></tr></thead><tbody><tr><td>GPT 5.6 Luna (≤ 272K tokens)</td><td>$1.00</td><td>$6.00</td><td>$0.10</td><td>$1.25</td></tr><tr><td>GPT 5.6 Luna (> lots tokens)</td><td>$2.00</td><td>$9.00</td><td>$0.20</td><td>$2.50</td></tr></tbody></table>"#;
+        let toml = parse_pricing_html(html).unwrap();
+        assert!(toml.contains("[model.\"gpt-5.6-luna\"]"), "{toml}");
+        assert!(
+            !toml.contains("tier-"),
+            "an unreadable tier reached the table:\n{toml}"
+        );
     }
 
     #[test]

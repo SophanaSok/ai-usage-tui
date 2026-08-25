@@ -184,11 +184,21 @@ impl PricingEngine {
 
                 for (key, value) in model_subtable {
                     if let Some(stripped) = key.strip_prefix("tier-") {
-                        let threshold: u64 = stripped.parse().unwrap_or(0);
-                        tiers
-                            .entry(model_id.clone())
-                            .or_default()
-                            .push((threshold, parse_pricing_from_value(value)));
+                        // Refused, not defaulted. `unwrap_or(0)` gave a typo'd key a threshold
+                        // of zero, which `resolve_tier` matched for every request with a
+                        // nonzero prompt — the long-context rate, roughly double, applied to
+                        // everything, from a hand-edited table nothing checked.
+                        match stripped.parse::<u64>() {
+                            Ok(threshold) => tiers
+                                .entry(model_id.clone())
+                                .or_default()
+                                .push((threshold, parse_pricing_from_value(value))),
+                            Err(_) => warnings.push(format!(
+                                "{}: ignoring `{}`; a tier key is `tier-<tokens>` and this \
+                                 threshold does not parse",
+                                model_id, key
+                            )),
+                        }
                     } else if key == "period" {
                         match parse_periods(value) {
                             Ok(parsed) => {
@@ -410,6 +420,11 @@ impl PricingEngine {
 
     pub fn warnings(&self) -> &[String] {
         &self.warnings
+    }
+
+    /// How many model ids the table prices, for `--doctor`.
+    pub fn model_count(&self) -> usize {
+        self.models.len()
     }
 
     /// Resolve a model id to its pricing entry, trying each candidate spelling in turn.
@@ -749,6 +764,38 @@ pub fn apply_estimated_pricing(usages: &mut [Usage], engine: &PricingEngine) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_tier_key_that_does_not_parse_is_reported_and_not_applied_to_every_request() {
+        // Restore the bug with `stripped.parse().unwrap_or(0)`: the tier's threshold becomes 0,
+        // `resolve_tier` matches every request with a nonzero prompt, and the long-context rate
+        // applies to all of them.
+        let engine = PricingEngine::parse(
+            "[model.\"m\"]\ninput = 1.0\noutput = 2.0\n\n[model.\"m\".tier-lots]\ninput = 100.0\noutput = 200.0\n",
+        )
+        .expect("parses");
+        assert!(
+            engine.warnings().iter().any(|w| w.contains("tier-lots")),
+            "the bad key should be named: {:?}",
+            engine.warnings()
+        );
+        let base = engine.models.get("m").expect("base pricing");
+        assert_eq!(
+            engine.resolve_tier("m", base, 1_000_000).input,
+            base.input,
+            "a tier that could not be read must not price anything"
+        );
+
+        // And the anti-test: a tier that does parse still applies above its threshold.
+        let engine = PricingEngine::parse(
+            "[model.\"m\"]\ninput = 1.0\noutput = 2.0\n\n[model.\"m\".tier-200000]\ninput = 100.0\noutput = 200.0\n",
+        )
+        .expect("parses");
+        assert!(engine.warnings().is_empty(), "{:?}", engine.warnings());
+        let base = engine.models.get("m").expect("base pricing");
+        assert_eq!(engine.resolve_tier("m", base, 1_000_000).input, Some(100.0));
+        assert_eq!(engine.resolve_tier("m", base, 1_000).input, base.input);
+    }
+
     use super::*;
 
     #[test]
