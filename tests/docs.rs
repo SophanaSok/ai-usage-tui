@@ -276,3 +276,358 @@ fn readme_env_table_matches_the_code() {
         documented.len()
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// One identity.
+//
+// The project's description of itself was hand-copied into seven files plus GitHub's About box,
+// in five different wordings, and the README told readers for three releases that crates.io and
+// the Homebrew tap did not exist yet. Gemini CLI shipped in v0.7.0 and never reached the README's
+// first paragraph.
+//
+// `Cargo.toml` is the single source of truth: crates.io reads it verbatim at publish, so that one
+// consumer is correct structurally. Everything else is either derived from it (clap's `about`,
+// the packaging templates' `__DESCRIPTION__`) or checked against it here. GitHub has no manifest,
+// so `.github/workflows/identity.yml` does that half -- it needs the network, which these tests
+// must never touch.
+// ---------------------------------------------------------------------------------------------
+
+const CARGO_TOML: &str = include_str!("../Cargo.toml");
+const DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
+
+/// The parsed manifest.
+///
+/// `toml` is a regular dependency and Cargo puts it in scope for integration tests, so this needs
+/// no manifest change. Everything read here -- `Cargo.toml`, `README.md`, `packaging/**` -- is
+/// inside the published tarball, so `cargo test` in an unpacked crate still passes. **Nothing in
+/// this file may read `.github/`**: `exclude` drops it, and a test that read it would fail for
+/// anyone who installed from crates.io.
+fn manifest() -> toml::Value {
+    toml::from_str(CARGO_TOML).expect("Cargo.toml parses")
+}
+
+/// The sources that contribute usage rows, by the name the product calls them.
+///
+/// `contributes_rows` is the discriminator rather than a second hand-maintained list: it is
+/// already `true` for exactly the five sources a one-line description should name, and `false`
+/// only for `zen_pricing`, which produces no rows.
+fn row_labels() -> Vec<&'static str> {
+    ai_usage_tui::collector::registry::SOURCES
+        .iter()
+        .filter(|spec| spec.contributes_rows)
+        .map(|spec| spec.label)
+        .collect()
+}
+
+fn topics() -> Vec<String> {
+    manifest()["package"]["metadata"]["identity"]["topics"]
+        .as_array()
+        .expect("[package.metadata.identity] topics is an array")
+        .iter()
+        .map(|value| value.as_str().expect("a topic is a string").to_string())
+        .collect()
+}
+
+/// A source label as a GitHub topic: `Claude Code` -> `claude-code`.
+fn slug(label: &str) -> String {
+    label.to_lowercase().replace(' ', "-")
+}
+
+/// The README's tagline is the crate description, character for character.
+///
+/// They were two different sentences, and the one a reader saw depended on whether they arrived
+/// from GitHub or from crates.io.
+#[test]
+fn readme_tagline_is_the_crate_description() {
+    let tagline = README
+        .lines()
+        .find_map(|line| line.strip_prefix("> "))
+        .expect("README.md opens with a `> ` tagline under the title");
+    assert_eq!(
+        tagline.trim(),
+        DESCRIPTION,
+        "README.md's tagline and Cargo.toml's description are different sentences"
+    );
+}
+
+/// The crate description names every source that contributes usage rows.
+///
+/// This is what a stranger reads on crates.io and in GitHub's About box. It described the tool as
+/// reading "local and hosted AI usage" and named no source at all, while the GitHub description
+/// named two of five.
+#[test]
+fn crate_description_names_every_usage_source() {
+    let missing: Vec<&str> = row_labels()
+        .into_iter()
+        .filter(|label| !DESCRIPTION.contains(label))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "the crate description does not name {missing:?}.\ndescription: {DESCRIPTION}"
+    );
+}
+
+/// So does the README's headline -- the title, tagline, opening paragraph and "What it shows".
+///
+/// Gemini CLI shipped in v0.7.0 with its own README section at "### Gemini CLI", and stayed
+/// missing from all three places above it for two releases, because nothing looked.
+#[test]
+fn readme_headline_names_every_usage_source() {
+    let end = README
+        .find("## Prerequisites")
+        .expect("README.md has a '## Prerequisites' section");
+    let headline = &README[..end];
+    let missing: Vec<&str> = row_labels()
+        .into_iter()
+        .filter(|label| !headline.contains(label))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "README.md's opening (title through 'What it shows') does not name {missing:?}"
+    );
+}
+
+/// Every registered source has a "Data sources" section, and every section is a registered
+/// source.
+#[test]
+fn readme_data_source_sections_match_the_registry() {
+    let start = README
+        .find("## Data sources")
+        .expect("README.md has a '## Data sources' section");
+    let rest = &README[start + "## Data sources".len()..];
+    let end = rest.find("\n## ").unwrap_or(rest.len());
+    let documented: BTreeSet<String> = rest[..end]
+        .lines()
+        .filter_map(|line| line.strip_prefix("### "))
+        .map(|heading| heading.trim().to_string())
+        .collect();
+    let registered: BTreeSet<String> = ai_usage_tui::collector::registry::SOURCES
+        .iter()
+        .map(|spec| spec.label.to_string())
+        .collect();
+    assert_eq!(
+        documented, registered,
+        "the README's 'Data sources' subsections and registry::SOURCES disagree"
+    );
+}
+
+/// GitHub's topics cover every keyword and every source.
+///
+/// The source-name rule is the forcing function: a collector cannot be added without the project
+/// admitting in public that it exists. `every_source_is_reachable_from_both_paths` does this for
+/// the code paths; this does it for the identity.
+#[test]
+fn github_topics_cover_the_keywords_and_the_sources() {
+    let topics = topics();
+    assert!(
+        topics.len() <= 20,
+        "GitHub allows 20 topics; Cargo.toml lists {}",
+        topics.len()
+    );
+    for topic in &topics {
+        assert!(
+            !topic.is_empty()
+                && topic.len() <= 50
+                && topic
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+                && !topic.starts_with('-'),
+            "{topic:?} is not a valid GitHub topic (lowercase alphanumerics and hyphens, <= 50)"
+        );
+    }
+
+    let keywords: Vec<String> = manifest()["package"]["keywords"]
+        .as_array()
+        .expect("keywords is an array")
+        .iter()
+        .map(|value| value.as_str().expect("a keyword is a string").to_string())
+        .collect();
+    assert!(
+        keywords.len() <= 5,
+        "crates.io allows five keywords; Cargo.toml lists {}",
+        keywords.len()
+    );
+    let missing: Vec<&String> = keywords.iter().filter(|k| !topics.contains(k)).collect();
+    assert!(
+        missing.is_empty(),
+        "keywords {missing:?} are not also GitHub topics; a term crates.io advertises and GitHub \
+         does not is the drift this pairing exists to prevent"
+    );
+
+    let unlisted: Vec<String> = row_labels()
+        .into_iter()
+        .map(slug)
+        .filter(|s| !topics.contains(s))
+        .collect();
+    assert!(
+        unlisted.is_empty(),
+        "registered sources {unlisted:?} have no GitHub topic; add them to \
+         [package.metadata.identity] topics"
+    );
+}
+
+/// The description fits every registry it is published to, and survives the release job's `sed`.
+///
+/// `release.yml` substitutes it into the packaging templates with
+/// `sed -e "s|__DESCRIPTION__|${DESCRIPTION}|g"`, where an unescaped `&` means "the whole match"
+/// and a `|` ends the expression. Either would render a corrupted manifest rather than failing.
+#[test]
+fn crate_description_fits_every_registry() {
+    assert!(!DESCRIPTION.is_empty(), "the crate has no description");
+    assert!(
+        DESCRIPTION.chars().count() <= 350,
+        "GitHub caps a repository description at 350 characters; this is {}",
+        DESCRIPTION.chars().count()
+    );
+    for bad in ['|', '&', '\\', '\n'] {
+        assert!(
+            !DESCRIPTION.contains(bad),
+            "{bad:?} in the description would corrupt release.yml's sed substitution"
+        );
+    }
+}
+
+/// The packaging templates carry the placeholder, not a copy of the description.
+#[test]
+fn packaging_templates_render_the_description() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for relative in [
+        "packaging/homebrew/ai-usage-tui.rb",
+        "packaging/scoop/ai-usage-tui.json",
+        "packaging/chocolatey/ai-usage-tui.nuspec",
+    ] {
+        let path = root.join(relative);
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        assert!(
+            text.contains("__DESCRIPTION__"),
+            "{relative} has no __DESCRIPTION__ placeholder for release.yml to render"
+        );
+        assert!(
+            !text.contains(DESCRIPTION),
+            "{relative} carries a literal copy of the description; use __DESCRIPTION__"
+        );
+    }
+}
+
+/// The manifest states the description once.
+///
+/// `[package.metadata.generate-rpm]` carried its own `summary`, a second copy in the same file.
+/// cargo-generate-rpm falls back to `package.description`, so the key is gone rather than tested.
+#[test]
+fn the_manifest_carries_one_description() {
+    let manifest = manifest();
+    let rpm = &manifest["package"]["metadata"]["generate-rpm"];
+    assert!(
+        rpm.get("summary").is_none(),
+        "[package.metadata.generate-rpm] has its own `summary`; delete it and let \
+         cargo-generate-rpm fall back to package.description"
+    );
+}
+
+/// `--help` and the man page describe the product, not the parser.
+///
+/// `struct Args` in `src/cli.rs` carried a `///` doc comment explaining why it is separate from
+/// `Cli`. Clap promotes a doc comment on the parser struct to `long_about`, so that paragraph was
+/// the DESCRIPTION section of `ai-usage-tui --man` -- shipped in the .deb and the .rpm and
+/// installed to /usr/share/man/man1/. `man ai-usage-tui` explained the clap migration.
+#[test]
+fn help_and_man_describe_the_product() {
+    let command = ai_usage_tui::cli::command();
+    assert_eq!(
+        command.get_about().map(|s| s.to_string()).as_deref(),
+        Some(DESCRIPTION),
+        "clap's `about` is not the crate description"
+    );
+    assert!(
+        command.get_long_about().is_none(),
+        "clap has a `long_about`, which becomes the man page's DESCRIPTION section. It comes \
+         from a `///` doc comment on `struct Args`; make it `//`.\ngot: {:?}",
+        command.get_long_about().map(|s| s.to_string())
+    );
+}
+
+/// No document claims a release channel that already exists.
+///
+/// Deliberately a literal phrase ban, and deliberately weak: someone writing "coming soon to
+/// crates.io" defeats it entirely. It is worth its four lines only because it failed in four
+/// places the day it was written. The claims that can be checked properly are checked properly --
+/// `readme_names_every_packaging_template` binds prose to an artifact in the tree, and
+/// `identity.yml` checks that each channel the README names actually exists.
+#[test]
+fn no_stale_publication_notes() {
+    const BANNED: &[&str] = &[
+        "Not published yet",
+        "is unclaimed",
+        "not on crates.io",
+        "until the maintainer",
+    ];
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut docs = vec![("README.md".to_string(), README.to_string())];
+    for entry in std::fs::read_dir(root.join("docs"))
+        .expect("docs/ exists")
+        .flatten()
+    {
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "md") {
+            let name = format!("docs/{}", path.file_name().unwrap().to_string_lossy());
+            docs.push((name, std::fs::read_to_string(&path).expect("read a doc")));
+        }
+    }
+    let mut stale = Vec::new();
+    for (name, text) in &docs {
+        for (index, line) in text.lines().enumerate() {
+            for phrase in BANNED {
+                if line.contains(phrase) {
+                    stale.push(format!("{name}:{}: {}", index + 1, line.trim()));
+                }
+            }
+        }
+    }
+    assert!(
+        stale.is_empty(),
+        "these claim a release channel that already exists:\n{}",
+        stale.join("\n")
+    );
+}
+
+/// Every packaging template is named in the README, and the README names no other.
+///
+/// This is the strong, hermetic half of the prose guard: prose naming a distribution mechanism is
+/// bound to that mechanism's artifact in the tree. Deleting `packaging/scoop/` while the README
+/// still says `scoop install` fails the build. Chocolatey was rendered and attached to every
+/// release and the README never mentioned it.
+#[test]
+fn readme_names_every_packaging_template() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let templates: BTreeSet<String> = std::fs::read_dir(root.join("packaging"))
+        .expect("packaging/ exists")
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.file_name().to_string_lossy().to_lowercase())
+        .collect();
+    assert!(
+        !templates.is_empty(),
+        "packaging/ has no template directories; the section marker may have moved"
+    );
+    let lowered = README.to_lowercase();
+    let unmentioned: Vec<&String> = templates.iter().filter(|t| !lowered.contains(*t)).collect();
+    assert!(
+        unmentioned.is_empty(),
+        "packaging/{unmentioned:?} exists and is rendered into every release, and the README \
+         never mentions it"
+    );
+}
+
+/// The README links the page `cargo install` installs from.
+///
+/// It documented `cargo install ai-usage-tui` and linked crates.io nowhere -- not in the badges,
+/// not in the text.
+#[test]
+fn readme_links_the_crates_io_page() {
+    let url = format!("https://crates.io/crates/{}", env!("CARGO_PKG_NAME"));
+    assert!(
+        README.contains(&url),
+        "README.md does not link {url}, though it documents `cargo install`"
+    );
+}

@@ -8,8 +8,8 @@
     <projectUrl>https://github.com/SophanaSok/ai-usage-tui</projectUrl>
     <licenseUrl>https://github.com/SophanaSok/ai-usage-tui/blob/main/LICENSE</licenseUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
-    <description>A btop-inspired dashboard for local and hosted AI usage</description>
-    <tags>ai tui dashboard usage opencode cli</tags>
+    <description>__DESCRIPTION__</description>
+    <tags>__TOPICS__</tags>
   </metadata>
   <files>
     <file src="tools/**" target="tools/" />

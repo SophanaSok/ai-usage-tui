@@ -1,6 +1,6 @@
 # Roadmap and Outstanding Findings
 
-Working state for continuing the audit-driven work started 2026-08-18, last updated 2026-08-24 (v0.6.0).
+Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.8.0 plus the unreleased work in `CHANGELOG.md`.
 Shipped items are in the versioned sections of `CHANGELOG.md` (new work goes under
 `[Unreleased]`); this file is the *remaining* work, with enough evidence attached that each item
 can be picked up cold.
@@ -33,6 +33,46 @@ The two things worth defending, and the reason to prefer depth over breadth belo
 ## Outstanding findings
 
 Numbering follows the original audit. Everything not listed here has shipped.
+
+### P0 — Routing analytics reports a cost it cannot defend
+
+Found while planning v0.9.0, and the reason the arc is ordered the way it is.
+
+`routing.rs::aggregate` does `entry.cost += event.cost.unwrap_or(0.0)` and `RoutingAggregates.cost`
+is a bare `f64`, so an unpriced or subscription-billed model reaches `cost_per_success` as
+`Some(0.0)`. The routing panel's **default sort is `$/SUCCESS` ascending**, so that row ranks as
+the cheapest work on the machine, and `cost_per_success_cell` renders it green as **`free`**. On a
+Max account, Opus work arrives as `cost: null, cost_status: quota` and prints as free.
+
+The defence is already there and fires one layer too late: `sort_rows_by_cost`'s `cost_order`
+holds unknown costs at both ends precisely so they cannot "appear free" — but by then the unknown
+has been laundered into `0.0` upstream. This is convention 1 broken in the panel that carries the
+project's pitch.
+
+It is latent only because a human typing `--record-routing` JSON usually types a `cost`. **An
+automated emitter cannot**, having no rate table in hand — so this must be fixed *before* any
+harness ships, or the harness's first act is to make every subscription user's headline metric a
+lie. Fix by copying `escalation::Transition`'s shape (`cost_after` + `unpriced_after` +
+`quota_after`) and classifying with `is_billable()` / `is_quota_billed()` / `needs_price()`, which
+`escalation::derive` already does.
+
+Two more of the same class in the same file: `retry_rate` and `defect_rate` return `0.0` both when
+a model never retried and when nothing reported a count, because `RoutingEvent.retries` is a bare
+`u32` — `success_rate` immediately above returns `Option` for exactly this reason. And `retry_rate`
+is `retries / tasks` rendered `{:.0}%`, so an emitter writing `retries: 3` on one task renders
+`300%`.
+
+### P1 — A pricing refresh never reaches the running dashboard
+
+`CollectorState.pricing` is loaded once in `CollectorHandle::spawn` and never replaced, while
+`pricing_refresh::poll` writes a refreshed cache to disk and returns no rows. So on a running
+dashboard a successful refresh changes nothing until restart: rows stay `UNKNOWN COST` although
+the rate is now known, the log says the refresh succeeded, and the screen silently disagrees.
+Nothing documents this. Convention 8.
+
+Note the interaction with incremental pricing: `apply_pricing` currently re-prices all accumulated
+history inside the write lock on every poll, and narrowing it to newly merged rows is only safe
+while the engine is immutable. Whichever lands second has to account for the other.
 
 ### P2 — Pricing depth
 
@@ -234,9 +274,9 @@ Each of these is an afternoon at most, and each is a reasonable first outside co
   detail is the obvious next candidate, leaving a table and the paths.
 - **`src/ui/theme.rs` has no tests** and probably wants none — it is colour constants. Noted so
   the next person does not re-derive that.
-- **Derived escalations are TUI-only** (also listed under Dashboard above): `--json` and `--csv`
-  carry usage rows only. This is the cheapest of the Dashboard items and the only one that
-  needs no new UI.
+- **Resolved in v0.8.0.** Derived escalations are exported: `--json` carries an `escalations`
+  object. Deliberately not in `--routing-json` or `--csv`; the reasoning is under *Dashboard*
+  above.
 
 ## Decisions worth knowing about
 

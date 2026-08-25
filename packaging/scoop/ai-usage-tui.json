@@ -1,6 +1,6 @@
 {
     "version": "__VERSION__",
-    "description": "A btop-inspired dashboard for local and hosted AI usage",
+    "description": "__DESCRIPTION__",
     "homepage": "https://github.com/SophanaSok/ai-usage-tui",
     "license": "MIT",
     "url": "https://github.com/SophanaSok/ai-usage-tui/releases/download/__TAG__/ai-usage-tui-__TAG__-x86_64-windows.zip",

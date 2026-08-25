@@ -11,7 +11,14 @@ _default:
     @just --list
 
 # Everything CI runs, in CI's order. This is the pre-push check.
-check: fmt-check lint test test-doc
+#
+# It really is everything now. It used to stop after `test-doc`, omitting the msrv, docs and
+# audit jobs -- three of the seven -- while the comments above and here both claimed otherwise,
+# so a green `just check` still left three ways to arrive red.
+#
+# `msrv` needs the 1.88 toolchain (`rustup toolchain install 1.88`) and `deny` needs cargo-deny
+# (`cargo install cargo-deny`); both say so if they are missing.
+check: fmt-check lint test test-doc msrv docs deny
 
 # Rustfmt, as CI checks it.
 fmt-check:
@@ -34,10 +41,24 @@ test-doc:
 
 # The MSRV job: the toolchain named by `rust-version` in Cargo.toml must compile the tree.
 msrv:
-    cargo +$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2) check --all-targets --locked
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version="$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)"
+    rustup toolchain list | grep -q "^${version}" \
+        || { echo "MSRV toolchain ${version} is not installed: rustup toolchain install ${version}" >&2; exit 1; }
+    cargo "+${version}" check --all-targets --locked
+
+# The docs job: rustdoc with warnings denied, and every relative Markdown link resolving.
+docs:
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+    python3 scripts/check-markdown-links.py .
 
 # Dependency advisories and licence policy, as CI runs it.
 deny:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v cargo-deny >/dev/null \
+        || { echo "cargo-deny is not installed: cargo install cargo-deny" >&2; exit 1; }
     cargo deny check
 
 # Run the dashboard against the committed fixture, hermetically.
@@ -76,3 +97,11 @@ pricing-check:
 # Release pre-flight. Takes the version without the leading v: `just release 0.6.0`.
 release VERSION:
     scripts/release.sh {{VERSION}}
+
+# What GitHub's About box says, against what Cargo.toml says. Needs `gh auth login`.
+#
+# Deliberately not part of `just check`: it needs the network and a GitHub login, while `check`
+# must stay exactly equal to ci.yml. This is the same comparison .github/workflows/identity.yml
+# makes, and it is read-only -- `scripts/identity.sh --apply` is the one that writes.
+identity:
+    scripts/identity.sh --check

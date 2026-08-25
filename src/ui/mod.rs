@@ -130,7 +130,6 @@ pub fn run(
                         }
                         _ => {}
                     }
-                    app.pulse = app.pulse.wrapping_add(1);
                     continue;
                 }
                 let action = match key.code {
@@ -176,7 +175,6 @@ pub fn run(
                 }
             }
         }
-        app.pulse = app.pulse.wrapping_add(1);
     }
     Ok(())
 }

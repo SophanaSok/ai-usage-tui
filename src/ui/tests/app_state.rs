@@ -58,7 +58,6 @@ fn rows_do_not_mix_cost_provenance() {
         status: String::new(),
         degraded: false,
         last_refresh: String::new(),
-        pulse: 0,
         refresh_interval: Duration::from_secs(30),
         refreshed_at: Instant::now(),
         roots: crate::collector::SourceRoots {

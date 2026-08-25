@@ -106,19 +106,28 @@ impl Default for Cli {
     }
 }
 
-/// The command line, as clap parses it.
-///
-/// Deliberately a separate struct from [`Cli`], which every consumer already takes. Clap's
-/// natural shape is `Option<T>` for "was it given", while `Cli` carries explicit `*_set`
-/// booleans that `config::apply_config` reads to decide whether a config value may fill a field
-/// in. Converting between them here keeps the migration inside this file: `parse_cli` has the
-/// same signature and returns the same `Cli` it always did, so `main.rs`, `config.rs`,
-/// `SourceRoots::from_cli` and the UI are untouched and cannot have been changed by accident.
+// The command line, as clap parses it.
+//
+// Deliberately a separate struct from `Cli`, which every consumer already takes. Clap's natural
+// shape is `Option<T>` for "was it given", while `Cli` carries explicit `*_set` booleans that
+// `config::apply_config` reads to decide whether a config value may fill a field in. Converting
+// between them here keeps the migration inside this file: `parse_cli` has the same signature and
+// returns the same `Cli` it always did, so `main.rs`, `config.rs`, `SourceRoots::from_cli` and
+// the UI are untouched and cannot have been changed by accident.
+//
+// Deliberately `//` and not `///`. Clap promotes a doc comment on the parser struct to
+// `long_about`, so this paragraph was the DESCRIPTION section of `ai-usage-tui --man` -- shipped
+// in the .deb and the .rpm and installed to /usr/share/man/man1/. `man ai-usage-tui` explained
+// the clap migration. `tests/docs.rs::help_and_man_describe_the_product` fails if a `///`
+// returns.
 #[derive(clap::Parser, Debug)]
 #[command(
     name = "ai-usage-tui",
     version,
-    about = "A btop-inspired dashboard for AI token usage.",
+    // The one description, from the manifest crates.io publishes. Written as an explicit
+    // `env!` rather than a bare `about` so it survives a clap upgrade and so a reader of this
+    // line can see where the string comes from.
+    about = env!("CARGO_PKG_DESCRIPTION"),
     // Last occurrence wins, which is what the hand-rolled parser did: it simply assigned, so a
     // repeated flag overwrote. Clap's default is to reject a repeat, which would break anything
     // that layers defaults and then overrides them -- a wrapper script, a shell alias, or the
@@ -440,10 +449,22 @@ EXAMPLES:
 ///
 /// Generated from the same `Command` that parses the arguments, so a flag cannot exist without
 /// completing — which is exactly what a hand-written completion script cannot promise.
-pub fn print_completions(shell: clap_complete::Shell) {
+pub fn print_completions(shell: clap_complete::Shell) -> std::io::Result<()> {
     let mut command = command();
     let name = command.get_name().to_string();
-    clap_complete::generate(shell, &mut command, name, &mut std::io::stdout());
+    // Rendered into memory first, then written out.
+    //
+    // `clap_complete::generate` takes a `Write` and `.expect()`s on it internally, so handing it
+    // stdout means `--completions bash | head` aborts inside clap with "failed to write
+    // completion file: BrokenPipe" -- a panic this crate cannot catch or convert. A `Vec<u8>`
+    // cannot fail, so the only fallible write is ours, and `main` already treats a closed pipe
+    // as a normal end to a pipeline. A completion script is a few KB; buffering it is free.
+    let mut rendered = Vec::new();
+    clap_complete::generate(shell, &mut command, name, &mut rendered);
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    out.write_all(&rendered)?;
+    out.flush()
 }
 
 /// Write the man page (roff) to stdout.
@@ -455,9 +476,15 @@ pub fn print_man() -> std::io::Result<()> {
 ///
 /// Kept because `main.rs` still has a `help` branch, and because a caller that wants the text
 /// without exiting the process should not have to go through clap's error path.
-pub fn print_help() {
-    let _ = command().print_help();
-    println!();
+pub fn print_help() -> std::io::Result<()> {
+    command().print_help()?;
+    // `println!` and not `writeln!` was the bug: it panics on a closed pipe, so `--help | head`
+    // aborted with "failed printing to stdout: Broken pipe" while `--json | head` ended cleanly.
+    // A reader closing the pipe is a normal end to a pipeline; `main` already knows that.
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    writeln!(out)?;
+    out.flush()
 }
 
 #[cfg(test)]

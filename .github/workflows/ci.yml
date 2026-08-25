@@ -92,29 +92,9 @@ jobs:
         run: cargo doc --no-deps --locked
 
       - name: Relative links in Markdown resolve
-        shell: bash
-        run: |
-          python3 - <<'EOF'
-          import os, re, sys
-          bad = []
-          for root, dirs, files in os.walk('.'):
-              dirs[:] = [d for d in dirs if d not in {'.git', 'target'}]
-              for name in files:
-                  if not name.endswith('.md'):
-                      continue
-                  path = os.path.join(root, name)
-                  text = open(path, encoding='utf-8', errors='replace').read()
-                  for match in re.finditer(r'\]\(([^)#\s]+)(#[^)\s]*)?\)', text):
-                      link = match.group(1)
-                      if link.startswith(('http://', 'https://', 'mailto:')):
-                          continue
-                      target = os.path.normpath(os.path.join(os.path.dirname(path), link))
-                      if not os.path.exists(target):
-                          bad.append(f'{path} -> {link}')
-          for entry in bad:
-              print(f'::error::broken relative link: {entry}')
-          sys.exit(1 if bad else 0)
-          EOF
+        # The checker lives in scripts/ so that `just docs` and this job run the same code. It
+        # used to be a 20-line Python heredoc here, which `just check` did not run at all.
+        run: python3 scripts/check-markdown-links.py .
 
   audit:
     name: Advisories

@@ -4,6 +4,24 @@
 
 ### Added
 
+- **One identity, enforced by CI.** The project's description of itself was hand-copied into seven
+  files plus GitHub's About box, in five different wordings — and GitHub's copy named two of the
+  five sources this tool reads. `Cargo.toml` is the single source of truth now: crates.io reads it
+  verbatim at publish, `src/cli.rs` takes clap's `about` from `env!("CARGO_PKG_DESCRIPTION")`, the
+  packaging manifests carry `__DESCRIPTION__` and `__TOPICS__` and are rendered at release time,
+  and twelve guards in `tests/docs.rs` fail the build when anything else diverges.
+
+  GitHub is the one consumer with no manifest, so `.github/workflows/identity.yml` enforces it —
+  and does so without being able to pass silently. Updating a repository's description or topics
+  needs Administration: write, which the built-in `GITHUB_TOKEN` can never hold; reading them
+  needs only Metadata: read, which it always has. So the job pushes with a PAT and **verifies with
+  `GITHUB_TOKEN`**: a missing or expired secret makes the build red rather than skipping it, which
+  is the failure mode the `TAP_TOKEN` gate already has.
+
+  Adding a data source now requires naming it — in the crate description, the README's opening, a
+  README section and a GitHub topic. Gemini CLI shipped in v0.7.0 and never reached the README's
+  first paragraph, because nothing looked.
+
 - **Sortable columns.** `<` and `>` (or `,` and `.`) move the sort to the previous or next column
   of the visible panel, `o` reverses it, and the sorted column carries a marker in its header so
   the order is never a mystery. Models, projects, sessions and routing each keep their own sort —
@@ -13,7 +31,52 @@
   pressed. Unknown cost sorts to one end rather than being interleaved as `$0.00`: a row whose
   price is unknown is not a cheap row.
 
+### Fixed
+
+- **The man page described the parser, not the tool.** `struct Args` in `src/cli.rs` carried a
+  `///` doc comment explaining why it is separate from `Cli`. Clap promotes a doc comment on the
+  parser struct to `long_about`, so that paragraph was the DESCRIPTION section of
+  `ai-usage-tui --man` — shipped in the `.deb` and the `.rpm` and installed to
+  `/usr/share/man/man1/`. `man ai-usage-tui` explained the clap migration, `Option<T>` and all.
+
+- **`--help` and `--completions` no longer panic when the reader closes the pipe.**
+  `ai-usage-tui --help | head` aborted with "failed printing to stdout: Broken pipe" while
+  `--json | head` ended cleanly: `print_help` finished with a bare `println!`, and
+  `clap_complete::generate` `.expect()`s on the writer internally, so handing it stdout panicked
+  inside clap where this crate could not catch it. Completions render to memory first. A reader
+  closing the pipe is a normal end to a pipeline, which `--json` and `--once` already knew.
+
+- **The README no longer says crates.io and the Homebrew tap do not exist.** Both have since
+  v0.6.0; the notices survived three releases because nothing checked them. `tests/docs.rs` now
+  bans the phrasing, binds every `packaging/` template to the README prose that names it, and
+  `identity.yml` checks each release channel the README documents actually exists.
+
+- **A Gemini telemetry file rewritten in place could kill its collector.** The stale-offset guard
+  in `src/collector/gemini.rs` covered a file that shrank but not one whose offset landed inside a
+  multi-byte character, and slicing on a non-boundary index panics. `catch_unwind` contained it,
+  so the symptom was Gemini restart-looping and going `Dead` rather than a crash.
+
+- **A panic in the dashboard now says what happened.** The terminal was restored *after* the
+  unwind began, by which point the default panic hook had already written the message to the
+  alternate screen — which `LeaveAlternateScreen` then discarded. A user who hit a panic saw a
+  clean prompt and nothing else. The hook restores the terminal first.
+
+- **`just check` runs what it says it runs.** It stopped after the doc tests, omitting the `msrv`,
+  `docs` and `audit` jobs — three of the seven — while its own comments claimed it ran "everything
+  CI runs, in CI's order". The Markdown link checker moved from an inline heredoc in `ci.yml` to
+  `scripts/check-markdown-links.py` so both callers run the same code.
+
+- **Leaving a project drilldown finds the project by name, not by the row number it was at.**
+  Sorting, a `/` filter or a refresh that adds a project can all move it while the user is
+  inside, and returning them to whatever now sits at the old index would put the cursor on the
+  wrong project without saying so.
+
 ### Changed
+
+- **The release binary is built with `lto = "thin"`, one codegen unit, and stripped.** There was no
+  `[profile.release]` at all; CI stripped on Unix as a separate step and not on Windows, so the
+  Windows archive shipped a needlessly larger binary. Deliberately not `panic = "abort"`: the TUI
+  restores the terminal from a `catch_unwind`, and a panicking collector is caught and restarted.
 
 - **The routing panel no longer re-sorts inside its draw call.** It ranked by cost per delivered
   result on every frame — computation on the render path, which the dashboard forbids, and which
@@ -24,13 +87,6 @@
   showing `first_seen`, so the column a reader saw was not the column the rows were in. Sorting
   by STARTED now means what it says. Sessions that started earlier but ran longer will move; a
   test distinguishes the two orders rather than assuming they agree.
-
-### Fixed
-
-- **Leaving a project drilldown finds the project by name, not by the row number it was at.**
-  Sorting, a `/` filter or a refresh that adds a project can all move it while the user is
-  inside, and returning them to whatever now sits at the old index would put the cursor on the
-  wrong project without saying so.
 
 
 ## 0.8.0 - 2026-08-24
