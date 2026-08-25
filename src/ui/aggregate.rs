@@ -3,7 +3,7 @@
 //! Deliberately free of any ratatui types: these are the numbers the dashboard shows, and they
 //! are unit-testable without constructing a terminal or an `App`.
 
-use crate::model::{BurnRate, DayTotals, ProjectTotals, SessionTotals, Usage};
+use crate::model::{accrue, BurnRate, DayTotals, ProjectTotals, SessionTotals, Usage};
 
 use super::app::Coverage;
 
@@ -106,24 +106,6 @@ pub fn project_totals(usages: &[Usage]) -> Vec<ProjectTotals> {
             .then(b.tokens.cmp(&a.tokens))
     });
     rows
-}
-
-/// Fold one usage row into a rollup's cost fields.
-///
-/// Four rollups needed exactly this and carried four copies of it. Adding the quota case to a
-/// copy-pasted block is the shape of change that reliably gets applied to three places out of
-/// four, so there is now one.
-fn accrue(usage: &Usage, cost: &mut f64, unpriced: &mut u64, quota: &mut u64) {
-    if usage.cost_status.is_quota_billed() {
-        *quota += usage.requests;
-        return;
-    }
-    if usage.cost_status.needs_price() {
-        match usage.cost.filter(|_| usage.cost_status.is_billable()) {
-            Some(value) => *cost += value,
-            None => *unpriced += usage.requests,
-        }
-    }
 }
 
 pub fn coverage(usages: &[Usage]) -> Coverage {

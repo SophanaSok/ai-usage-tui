@@ -24,6 +24,7 @@ use ratatui::style::{Color, Modifier, Style};
 // The fixtures below are shared by all of them; each submodule picks them up with `use super::*`.
 mod app_state;
 mod breakdown;
+mod budgets;
 mod burn;
 mod coverage;
 mod keys;
