@@ -1,0 +1,100 @@
+name: Identity
+
+# GitHub's About box must say what Cargo.toml says.
+#
+# The description lived in seven files plus GitHub's settings, in five wordings, and GitHub's copy
+# named two of the five sources this tool reads. crates.io needs no job -- `cargo publish` reads
+# the manifest verbatim -- but GitHub has no manifest, so this is the half that has to be enforced
+# rather than derived.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - ".github/workflows/identity.yml"
+      - "scripts/identity.sh"
+  # A token expires on a calendar, not on a commit, and a description can be edited in the web UI
+  # without touching the repository at all. A push-only trigger would not notice either. Same
+  # reasoning as ci.yml's weekly advisory run.
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Push the metadata. Left unchecked, the run only reports drift."
+        type: boolean
+        default: false
+
+# Deliberately not on `pull_request`: a pull request should not go red for a repository setting it
+# never touched, and a contributor cannot fix it anyway.
+#
+# Deliberately not on tag, either. GitHub renders README.md from `main`, so the About box above it
+# should agree with `main`. crates.io necessarily lags -- its copy is whatever was in Cargo.toml
+# at the last publish -- and that is versioning, not drift.
+
+concurrency:
+  group: identity
+  # Not `cancel-in-progress`. A cancelled drift check reports "cancelled", not "failed", which is
+  # exactly the silent-skip this job exists to avoid.
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  identity:
+    name: GitHub matches Cargo.toml
+    # Without this, every fork's main goes red over a repository the forker cannot edit.
+    if: github.repository == 'SophanaSok/ai-usage-tui'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Push the metadata to GitHub
+        # Skipped on a dispatch unless explicitly asked, so a dispatch with apply=false is a
+        # rehearsal: it proves the detector works without changing anything.
+        if: github.event_name != 'workflow_dispatch' || inputs.apply
+        env:
+          GH_TOKEN: ${{ secrets.REPO_METADATA_TOKEN }}
+        run: |
+          set -uo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            # A warning rather than a notice, and deliberately not a skip-and-pass: unlike
+            # publish-crate and update-taps, this job is not waiting on an account that does not
+            # exist yet. The verify step below is what actually fails the build, and it
+            # authenticates with a token that cannot write -- so this can never pass silently.
+            echo "::warning::REPO_METADATA_TOKEN is not set, so nothing was pushed."
+            echo "::warning::The verify step will fail if GitHub has drifted. See docs/release-process.md."
+            exit 0
+          fi
+          if ! err="$(scripts/identity.sh --apply 2>&1)"; then
+            case "$err" in
+              *"Bad credentials"*|*401*)
+                echo "::error::REPO_METADATA_TOKEN was rejected (401). A fine-grained PAT has almost"
+                echo "::error::certainly expired; mint a new one and update the secret." ;;
+              *"Resource not accessible"*|*403*)
+                echo "::error::REPO_METADATA_TOKEN lacks Administration: write on $GITHUB_REPOSITORY."
+                echo "::error::The built-in GITHUB_TOKEN cannot do this -- there is no 'administration'"
+                echo "::error::key in a workflow permissions block -- so a fine-grained PAT is required." ;;
+              *) echo "::error::pushing the repository metadata failed:" ;;
+            esac
+            echo "$err"
+            exit 1
+          fi
+          echo "$err"
+
+      - name: Verify GitHub matches Cargo.toml
+        env:
+          # Deliberately the built-in token, which cannot write repository settings. That is the
+          # point: an expired or absent REPO_METADATA_TOKEN cannot make this step pass.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/identity.sh --check
+
+      - name: The release channels the README names exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # tests/docs.rs binds prose to artifacts in the tree; it cannot check a remote without
+        # breaking hermeticity. This is that half, and it is what would have caught the README
+        # claiming crates.io and the Homebrew tap did not exist for three releases after they did.
+        run: scripts/identity.sh --channels

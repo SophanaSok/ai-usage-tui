@@ -34,7 +34,6 @@ pub struct App {
     /// looks exactly like a monitor with nothing to report, so this is rendered, not logged.
     pub degraded: bool,
     pub last_refresh: String,
-    pub pulse: u64,
     pub refresh_interval: Duration,
     pub refreshed_at: Instant,
     /// Every source path and billing setting, for the collector-less refresh path.
@@ -355,7 +354,6 @@ impl App {
             status: String::new(),
             degraded: false,
             last_refresh: String::from("never"),
-            pulse: 0,
             refresh_interval,
             refreshed_at: Instant::now(),
             roots,

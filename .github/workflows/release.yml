@@ -288,6 +288,17 @@ jobs:
           echo "macos x86  $MACOS_X86_SHA"
           echo "windows    $WINDOWS_SHA"
 
+          # The one description and the one topic list, from the manifest crates.io publishes.
+          # These used to be hand-copied into each template, which is how the .rb, the .json, the
+          # .nuspec, Cargo.toml, src/cli.rs and the README ended up carrying five wordings.
+          DESCRIPTION="$(python3 -c 'import tomllib;print(tomllib.load(open("Cargo.toml","rb"))["package"]["description"])')"
+          TOPICS="$(python3 -c 'import tomllib;print(" ".join(tomllib.load(open("Cargo.toml","rb"))["package"]["metadata"]["identity"]["topics"]))')"
+          [ -n "$DESCRIPTION" ] || { echo "::error::Cargo.toml has no package.description"; exit 1; }
+          [ -n "$TOPICS" ] || { echo "::error::Cargo.toml has no package.metadata.identity.topics"; exit 1; }
+          echo "--- identity ---"
+          echo "description  $DESCRIPTION"
+          echo "topics       $TOPICS"
+
           # Rendered under `rendered/` preserving each template's path below `packaging/`, so the
           # Chocolatey pair keeps its layout. Flattening with `basename` put chocolateyinstall.ps1
           # beside the nuspec, whose `<file src="tools/**" target="tools/">` then matched nothing:
@@ -304,6 +315,8 @@ jobs:
             out="rendered/${f#packaging/}"
             mkdir -p "$(dirname "$out")"
             sed -e "s|__TAG__|${TAG}|g" \
+                -e "s|__DESCRIPTION__|${DESCRIPTION}|g" \
+                -e "s|__TOPICS__|${TOPICS}|g" \
                 -e "s|__VERSION__|${VERSION}|g" \
                 -e "s|__LINUX_SHA256__|${LINUX_SHA}|g" \
                 -e "s|__LINUX_ARM_SHA256__|${LINUX_ARM_SHA}|g" \
@@ -322,7 +335,10 @@ jobs:
           # Written as an explicit if rather than `! grep ... || { ... }`: the negation form
           # made a failure anywhere in this step exit with no output at all, which is how the
           # first dry run failed in 9ms with nothing to go on.
-          if grep -rn "PLACEHOLDER\|__TAG__\|__VERSION__\|_SHA256__" rendered/; then
+          # Any __UPPER_SNAKE__ token, not a hand-maintained list of them. __DESCRIPTION__ and
+          # __TOPICS__ were added after this check was written, and a named list is exactly the
+          # thing that gets forgotten -- which is the same failure this whole change is about.
+          if grep -rnE "PLACEHOLDER|__[A-Z][A-Z0-9_]*__" rendered/; then
             echo "::error::unrendered placeholder left in packaging manifest (shown above)"
             exit 1
           fi

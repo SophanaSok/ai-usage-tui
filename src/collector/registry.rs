@@ -30,6 +30,16 @@ pub struct SourceSpec {
     /// The source's canonical id, owned by its module. Also its `[collectors.<id>]` table and
     /// the `Collector::name()` it reports.
     pub id: &'static str,
+    /// What the product calls this source in prose: the README, the crate description and the
+    /// GitHub topics. Distinct from `id`, which is the config key -- `claude_code` is a table
+    /// name, "Claude Code" is what a reader is looking for.
+    ///
+    /// `tests/docs.rs` requires an H3 section per label under the README's "Data sources", and
+    /// requires every `contributes_rows` label to appear in `CARGO_PKG_DESCRIPTION`, in the
+    /// README's headline, and as a topic. So a collector cannot be added without the project
+    /// admitting in public that it exists -- which is exactly how Gemini CLI shipped in v0.7.0
+    /// and stayed missing from the README's first paragraph.
+    pub label: &'static str,
     /// Whether the source is collected without being asked for. Everything that reads local
     /// files is on; anything that reaches the network is opt-in.
     pub default_enabled: bool,
@@ -59,6 +69,7 @@ pub struct SourceSpec {
 pub const SOURCES: &[SourceSpec] = &[
     SourceSpec {
         id: crate::collector::opencode::ID,
+        label: "OpenCode",
         contributes_rows: true,
         supports_billing: false,
         default_enabled: true,
@@ -70,6 +81,7 @@ pub const SOURCES: &[SourceSpec] = &[
     // and invisible to the OpenCode collector.
     SourceSpec {
         id: crate::collector::claude_code::ID,
+        label: "Claude Code",
         contributes_rows: true,
         supports_billing: true,
         default_enabled: true,
@@ -81,6 +93,7 @@ pub const SOURCES: &[SourceSpec] = &[
     // the OpenCode collector.
     SourceSpec {
         id: crate::collector::codex::ID,
+        label: "Codex CLI",
         contributes_rows: true,
         supports_billing: true,
         default_enabled: true,
@@ -92,6 +105,7 @@ pub const SOURCES: &[SourceSpec] = &[
     // usage otherwise -- which `--doctor` reports rather than showing an empty source.
     SourceSpec {
         id: crate::collector::gemini::ID,
+        label: "Gemini CLI",
         contributes_rows: true,
         supports_billing: true,
         default_enabled: true,
@@ -101,6 +115,7 @@ pub const SOURCES: &[SourceSpec] = &[
     },
     SourceSpec {
         id: crate::collector::journal::ID,
+        label: "Ollama",
         contributes_rows: true,
         supports_billing: false,
         default_enabled: true,
@@ -111,6 +126,7 @@ pub const SOURCES: &[SourceSpec] = &[
     // Off by default: the only source here that reaches the network.
     SourceSpec {
         id: crate::collector::pricing_refresh::ID,
+        label: "Pricing tables",
         contributes_rows: false,
         supports_billing: false,
         default_enabled: false,

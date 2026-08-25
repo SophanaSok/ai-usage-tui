@@ -255,7 +255,17 @@ pub fn load_gemini(
     let start = offsets.files.get(&path).copied().unwrap_or(0) as usize;
     // A file that shrank was rotated or truncated; start over rather than reading from a stale
     // offset into the middle of a record.
-    let start = if start > text.len() { 0 } else { start };
+    //
+    // The boundary check is not redundant with the length check. A file rewritten in place to the
+    // same length or longer keeps the offset in range while putting it inside a multi-byte
+    // sequence, and `&text[start..]` panics on a non-boundary index. `catch_unwind` in
+    // `background.rs` contains that, so the symptom is this source restart-looping and going
+    // `Dead` after MAX_RESTARTS -- not a crash, just Gemini quietly disappearing.
+    let start = if start > text.len() || !text.is_char_boundary(start) {
+        0
+    } else {
+        start
+    };
     let (objects, consumed) = complete_objects(&text[start..]);
 
     let mut usages = Vec::new();

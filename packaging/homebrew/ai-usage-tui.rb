@@ -2,7 +2,7 @@
 # Do not hand-edit the version or checksums -- they drifted from the published artifact names
 # before (the tarball is tagged v0.2.0 but this file asked for 0.2.0) and every URL 404'd.
 class AiUsageTui < Formula
-  desc "A btop-inspired dashboard for local and hosted AI usage"
+  desc "__DESCRIPTION__"
   homepage "https://github.com/SophanaSok/ai-usage-tui"
   version "__VERSION__"
   license "MIT"

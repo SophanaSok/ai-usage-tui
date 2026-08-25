@@ -371,6 +371,49 @@ fn the_text_output_path_also_survives_a_closed_pipe() {
 }
 
 #[test]
+fn the_flags_that_describe_the_cli_survive_a_closed_pipe_too() {
+    // `--json` and `--once` were covered; the four flags that describe the CLI itself were not,
+    // and two of them panicked. `print_help` ended with a bare `println!()`, and
+    // `print_completions` discarded the write error clap_complete swallows -- so
+    // `ai-usage-tui --help | head` aborted with "failed printing to stdout: Broken pipe" while
+    // `--man | head`, which returns io::Result, ended cleanly. Three near-identical paths, one
+    // of them right.
+    //
+    // These take no `hermetic()`: they read no source, which is the point of running before the
+    // config is loaded.
+    for flag in [
+        vec!["--help"],
+        vec!["--version"],
+        vec!["--man"],
+        vec!["--completions", "bash"],
+    ] {
+        let mut child = bin()
+            .args(&flag)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
+
+        drop(child.stdout.take());
+
+        let mut stderr = String::new();
+        if let Some(mut handle) = child.stderr.take() {
+            let _ = handle.read_to_string(&mut stderr);
+        }
+        let status = child.wait().expect("wait");
+
+        assert!(
+            !stderr.contains("panicked"),
+            "{flag:?} panicked writing to a closed pipe:\n{stderr}"
+        );
+        assert!(
+            status.success(),
+            "{flag:?} on a closed pipe should exit cleanly, got {status}"
+        );
+    }
+}
+
+#[test]
 fn version_and_help_exit_zero() {
     for flag in ["--version", "--help"] {
         let output = bin().arg(flag).output().expect("run");

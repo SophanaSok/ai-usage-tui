@@ -39,13 +39,13 @@ fn main() -> Result<()> {
 fn dispatch() -> Result<()> {
     let parsed_cli = parse_cli(env::args().skip(1))?;
     if parsed_cli.help {
-        print_help();
+        print_help()?;
         return Ok(());
     }
     // Before the config is read: these describe the CLI itself and must work regardless of
     // whether a config file exists or parses.
     if let Some(shell) = parsed_cli.completions {
-        ai_usage_tui::cli::print_completions(shell);
+        ai_usage_tui::cli::print_completions(shell)?;
         return Ok(());
     }
     if parsed_cli.man {
@@ -165,6 +165,22 @@ fn run_tui(
     budget_engine: BudgetEngine,
     dispatcher: AlertDispatcher,
 ) -> Result<()> {
+    // Restore the terminal from inside the panic hook, before the default hook prints.
+    //
+    // `catch_unwind` below already restores it -- but it runs after the unwind has begun, and by
+    // then the default hook has written the panic message and location to stderr *while the
+    // alternate screen is still up*. `LeaveAlternateScreen` then discards that scrollback, so a
+    // user who hit a panic saw a clean prompt and no explanation. The hook runs first, so the
+    // message lands on the real screen.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // Best-effort and deliberately ignoring errors: we are already panicking, and a failed
+        // restore must not panic again inside the hook.
+        let _ = disable_raw_mode();
+        let _ = execute!(stdout(), LeaveAlternateScreen);
+        default_hook(info);
+    }));
+
     enable_raw_mode()?;
     let mut out = stdout();
     execute!(out, EnterAlternateScreen)?;

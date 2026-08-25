@@ -1,17 +1,18 @@
 # ai-usage-tui
 
-> A btop-inspired terminal dashboard for AI token usage, cost, and model-routing analytics.
+> A btop-inspired terminal dashboard for AI coding-agent token usage, cost and budgets — reads Claude Code, Codex CLI, Gemini CLI, OpenCode and Ollama, live TUI or JSON/CSV.
 
 [![CI](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/ci.yml)
 [![Release](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/release.yml/badge.svg)](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/release.yml)
+[![crates.io](https://img.shields.io/crates/v/ai-usage-tui.svg)](https://crates.io/crates/ai-usage-tui)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 [Quick start](#quick-start) · [Install](#installation) · [Configuration](#configuration) · [Docs](#more-documentation) · [Contributing](CONTRIBUTING.md)
 
 `ai-usage-tui` reads OpenCode's local usage database, Claude Code's session
-logs, and Codex CLI's session logs, can journal completed Ollama responses, and
-presents the combined data in
-an interactive TUI or as JSON, CSV, or plain text. It tracks requests, input/output/reasoning/cache
+logs, Codex CLI's session logs and Gemini CLI's telemetry log, can journal
+completed Ollama responses, and presents the combined data in an interactive TUI
+or as JSON, CSV, or plain text. It tracks requests, input/output/reasoning/cache
 tokens, cost provenance, budgets, and opt-in model-routing events.
 
 ![Dashboard showing token totals, model activity, and cost provenance](docs/assets/dashboard.png)
@@ -40,7 +41,7 @@ real account, project, or spend appears in any image here.*
 
 ## What it shows
 
-- Usage grouped by provider and model, across OpenCode, Claude Code, Codex CLI, and Ollama
+- Usage grouped by provider and model, across OpenCode, Claude Code, Codex CLI, Gemini CLI, and Ollama
 - Input, output, reasoning, cache-read, and cache-write tokens
 - Today (local calendar day), trailing 7-day, trailing 30-day, all-time, or custom-day ranges
 - `LOCAL`, `CLOUD`, `FREE`, `PAID`, and `UNKNOWN` classifications
@@ -234,12 +235,9 @@ scoop bucket add sophanasok https://github.com/SophanaSok/scoop-bucket
 scoop install ai-usage-tui                      # Windows
 ```
 
-> **Not published yet.** The tap and bucket are created by the maintainer as a
-> one-time step (see [`docs/release-process.md`](docs/release-process.md), *First
-> publish*). Until then the rendered `ai-usage-tui.rb` and `ai-usage-tui.json`
-> are attached to each release and can be used directly —
-> `brew install --formula <url>` and `scoop install <url>` — or use
-> [`scripts/install.sh`](scripts/install.sh) above.
+A Chocolatey package is rendered at release time too and attached to each
+release, but it is not pushed to the Chocolatey gallery; `choco pack` the
+attached `ai-usage-tui.nuspec` and its `tools/` directory to install from it.
 
 ### Build or install from source
 
@@ -253,9 +251,7 @@ cargo install ai-usage-tui --locked
 cargo binstall ai-usage-tui
 ```
 
-> **Not published yet.** `ai-usage-tui` is not on crates.io, so both commands
-> above will fail until the maintainer claims the name. Build from a clone in
-> the meantime:
+Or build from a clone:
 
 ```sh
 git clone https://github.com/SophanaSok/ai-usage-tui
@@ -272,7 +268,7 @@ cargo build --release --locked
 ## Data sources
 
 ```text
-OpenCode DB / Claude Code logs / Codex logs / Ollama journal
+OpenCode DB / Claude Code logs / Codex logs / Gemini telemetry / Ollama journal
         -> one source registry -> background collectors -> TUI
                                \-> one-shot read -> JSON / CSV / budgets
 ```

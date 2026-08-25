@@ -73,7 +73,6 @@ fn test_app(usages: Vec<Usage>) -> App {
         status: String::new(),
         degraded: false,
         last_refresh: String::new(),
-        pulse: 0,
         refresh_interval: Duration::from_secs(30),
         refreshed_at: Instant::now(),
         roots: crate::collector::SourceRoots {

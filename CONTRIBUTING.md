@@ -177,10 +177,21 @@ that looked right.
   so without it a machine with any journaled Ollama usage sees `ollama` rows in a run meant
   to be fixture-only (`tests/cli.rs` `hermetic()` pins all four; lib tests set them on
   `SourceRoots`).
-- **`tests/docs.rs` is part of the build.** It fails when the README's CLI or environment tables
-  disagree with `src/cli.rs`, when `--help` and the parser disagree, or when the README pins a
-  release other than `Cargo.toml`'s. A doc-only PR can fail CI on it; the assertion names the
-  flag or variable that drifted.
+- **`tests/docs.rs` is part of the build.** It fails when the README's CLI, panel or environment
+  tables disagree with the code, when the README pins a release other than `Cargo.toml`'s, or when
+  anything states the project's identity differently from `Cargo.toml` — the README tagline, the
+  packaging templates, clap's `about`, the source list, the GitHub topics. A doc-only PR can fail
+  CI on it; the assertion names what drifted.
+
+  **`Cargo.toml` is the single source of truth for the description, keywords and topics.** Change
+  it there; the README tagline has to match and the test says so. The packaging manifests carry
+  `__DESCRIPTION__` and are rendered at release time — never paste the string into them. GitHub's
+  About box is pushed by `.github/workflows/identity.yml`; see `docs/release-process.md`.
+
+  **Adding a data source means adding its `label` to `registry::SOURCES`**, a `### ` section under
+  the README's "Data sources", a topic in `[package.metadata.identity]`, and a mention in the
+  README's opening. All four are enforced, because Gemini CLI shipped in v0.7.0 and never reached
+  the README's first paragraph.
 - **Tests must discriminate.** A regression test that also passes against the buggy code is
   worse than no test. Restore the bug in a scratch copy and confirm the test fails.
 
