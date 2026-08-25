@@ -214,11 +214,12 @@ Remaining:
   computed from the whole range. The footer carries the query and a "showing N of M", because a
   list that silently shortened is how a filtered view gets read as a smaller bill.
 
-  Worth knowing before adding more: the footer's key hints in `ui::mod.rs` are a **fifth**
-  hand-written copy of the bindings, which `ui::keys` was meant to end. The dispatch, the `?`
-  overlay and `--help` all read the table; the footer does not, because it abbreviates and
-  reflows by width. Driving it from the table too is a small, contained job for whoever touches
-  it next.
+  The footer's key hints were the **fifth** hand-written copy of the bindings, the one
+  `ui::keys` did not end because the footer abbreviates and reflows by width. **Resolved:** each
+  binding carries its footer spelling (`Binding::hint`), `keys::footer_forms` derives the three
+  forms, and the footer takes the widest that *measures* as fitting. The `width >= 120` it
+  replaced was the full line's width on the day it was written — the same kind of drift that
+  hid `q quit` on 80 columns once — and a sweep test now renders every width from 16 to 200.
 - **Resolved for Claude Code.** Escalations are derived from collected sessions, but pass/fail
   and retry counts cannot be inferred from usage metadata and must not be guessed; what closed
   this was a shipped hook, not more derivation. `--claude-code-hook` (`src/harness/`) reads a
