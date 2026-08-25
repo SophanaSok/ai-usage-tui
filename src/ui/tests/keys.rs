@@ -68,25 +68,16 @@ fn the_footer_is_never_truncated_at_any_width() {
     }
 }
 
-/// The form changes exactly where the wider one stops fitting — measured, not at a number
-/// someone wrote down. `full` is the full line's width today; if a panel is added it grows, and
-/// this test moves with it.
+/// The form changes exactly where the wider one stops fitting — measured with the footer's own
+/// `hint_line`, so nothing here is a copy of the table or of the layout. Add a panel and every
+/// width below moves with it.
 #[test]
 fn the_footer_takes_the_widest_form_that_fits() {
     let [full, compact, minimal] = crate::ui::keys::footer_forms();
-    let width = |form: &[crate::ui::keys::Hint]| {
-        // ` k word` per hint, two spaces between hints.
-        1 + form
-            .iter()
-            .map(|h| h.key.len() + 1 + h.word.len())
-            .sum::<usize>()
-            + 2 * (form.len() - 1)
-    };
+    let width = |form: &[crate::ui::keys::Hint]| crate::ui::hint_line(form).width();
     let (full_w, compact_w, minimal_w) = (width(&full), width(&compact), width(&minimal));
-    assert_eq!(
-        full_w, 120,
-        "the full line is 120 columns today; update this if a hint changed"
-    );
+    assert!(full_w > compact_w && compact_w > minimal_w);
+    let fold: String = crate::ui::keys::panel_keys().map(|(key, _)| key).collect();
 
     let render = |width: usize| -> String {
         let line = crate::ui::footer(width as u16, None);
@@ -110,7 +101,7 @@ fn the_footer_takes_the_widest_form_that_fits() {
     );
     let at_compact = render(full_w - 1);
     assert!(
-        at_compact.contains("btpgwsl panels") && !at_compact.contains("budgets"),
+        at_compact.contains(&format!("{fold} panels")) && !at_compact.contains("budgets"),
         "one column short of the full form, the panels fold: {at_compact:?}"
     );
     assert!(render(compact_w).contains("panels"));

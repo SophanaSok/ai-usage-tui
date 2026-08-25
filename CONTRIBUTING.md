@@ -119,9 +119,12 @@ tailing and how to parse a file that contains things you must not read.
 ### Add a dashboard panel
 
 Write `src/ui/panels/yours.rs` with a single `draw_yours(frame, area, app)`, add a variant to
-`Panel` in `src/ui/app.rs`, a key binding in `src/ui/mod.rs`, and a match arm in `draw`. Nothing
-else needs to know it exists. Anything the panel needs should be computed once per refresh into
-`DerivedView`, never inside the draw call.
+`Panel` in `src/ui/app.rs`, a `Binding` to `BINDINGS` in `src/ui/keys.rs` with a
+`hint: Some((key, word))` for the footer, a match arm in `draw`, and a row in the README's panel
+table. That is everything: the event loop, the `?` overlay, `--help` and the footer all read the
+table, `ui::keys::tests` fails without the hint, and `tests/docs.rs` fails without the README row.
+Anything the panel needs should be computed once per refresh into `DerivedView`, never inside
+the draw call.
 
 ### Correct or add pricing
 

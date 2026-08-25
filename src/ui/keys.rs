@@ -44,12 +44,10 @@ pub enum Action {
 
 pub struct Binding {
     /// The character that triggers it. Aliases that are not characters — `Esc`, `Ctrl-C`, the
-    /// arrow keys — are handled beside the table in the event loop and named in `alias`.
+    /// arrow keys — are handled beside the table in the event loop and named in `what`.
     pub key: char,
     /// How the key column reads in the overlay and in `--help`.
     pub shown_as: &'static str,
-    /// Extra keys that do the same thing, for the description only.
-    pub alias: Option<&'static str>,
     pub action: Action,
     /// One line, in the user's terms rather than the code's.
     pub what: &'static str,
@@ -64,7 +62,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: '1',
         shown_as: "1 2 3 4",
-        alias: None,
         action: Action::Range(Range::Today),
         what: "range: today, 7 days, 30 days, all time",
         hint: Some(("1-4", "range")),
@@ -72,7 +69,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: '2',
         shown_as: "",
-        alias: None,
         action: Action::Range(Range::Week),
         what: "",
         hint: None,
@@ -80,7 +76,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: '3',
         shown_as: "",
-        alias: None,
         action: Action::Range(Range::Month),
         what: "",
         hint: None,
@@ -88,7 +83,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: '4',
         shown_as: "",
-        alias: None,
         action: Action::Range(Range::All),
         what: "",
         hint: None,
@@ -96,7 +90,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: 'r',
         shown_as: "r",
-        alias: None,
         action: Action::Refresh,
         what: "refresh now",
         hint: Some(("r", "refresh")),
@@ -104,7 +97,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: 'b',
         shown_as: "b",
-        alias: None,
         action: Action::Panel(Panel::Budgets),
         what: "budgets",
         hint: Some(("b", "budgets")),
@@ -112,7 +104,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: 't',
         shown_as: "t",
-        alias: None,
         action: Action::Panel(Panel::Routing),
         what: "routing analytics and derived escalations",
         hint: Some(("t", "routing")),
@@ -120,7 +111,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: 'p',
         shown_as: "p",
-        alias: None,
         action: Action::Panel(Panel::Projects),
         what: "cost per project",
         hint: Some(("p", "projects")),
@@ -128,7 +118,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: 'g',
         shown_as: "g",
-        alias: None,
         action: Action::Panel(Panel::TimeSeries),
         what: "spend over time",
         hint: Some(("g", "graph")),
@@ -136,7 +125,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: 'w',
         shown_as: "w",
-        alias: None,
         action: Action::Panel(Panel::Burn),
         what: "burn rate and time to budget",
         hint: Some(("w", "burn")),
@@ -144,7 +132,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: 's',
         shown_as: "s",
-        alias: None,
         action: Action::Panel(Panel::Sessions),
         what: "sessions",
         hint: Some(("s", "sessions")),
@@ -152,7 +139,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: 'l',
         shown_as: "l",
-        alias: None,
         action: Action::Panel(Panel::Limits),
         what: "subscription limits, from Omarchy's agents panel",
         hint: Some(("l", "limits")),
@@ -160,7 +146,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: 'j',
         shown_as: "j / k",
-        alias: Some("also arrow keys"),
         action: Action::SelectNext,
         what: "move the selection (also arrow keys)",
         hint: Some(("j/k", "move")),
@@ -168,7 +153,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: 'k',
         shown_as: "",
-        alias: None,
         action: Action::SelectPrev,
         what: "",
         hint: None,
@@ -176,7 +160,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: '>',
         shown_as: "< >",
-        alias: Some("also , and ."),
         action: Action::SortNext,
         what: "sort by the next / previous column",
         hint: None,
@@ -184,7 +167,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: '<',
         shown_as: "",
-        alias: None,
         action: Action::SortPrev,
         what: "",
         hint: None,
@@ -193,7 +175,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: '.',
         shown_as: "",
-        alias: None,
         action: Action::SortNext,
         what: "",
         hint: None,
@@ -201,7 +182,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: ',',
         shown_as: "",
-        alias: None,
         action: Action::SortPrev,
         what: "",
         hint: None,
@@ -209,7 +189,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: 'o',
         shown_as: "o",
-        alias: None,
         action: Action::SortReverse,
         what: "reverse the sort order",
         hint: None,
@@ -217,7 +196,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: '/',
         shown_as: "/",
-        alias: None,
         action: Action::Search,
         what: "filter the rows shown (Enter keeps it, Esc clears it)",
         hint: None,
@@ -225,7 +203,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: '\n',
         shown_as: "Enter",
-        alias: None,
         action: Action::DrillIn,
         what: "on a project row: show just that project's sessions",
         hint: None,
@@ -233,7 +210,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: '\u{8}',
         shown_as: "Backspace",
-        alias: Some("also Esc"),
         action: Action::Back,
         what: "leave a project and go back to the list",
         hint: None,
@@ -241,7 +217,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: '?',
         shown_as: "?",
-        alias: None,
         action: Action::ToggleHelp,
         what: "key reference (press again to close)",
         hint: Some(("?", "help")),
@@ -249,7 +224,6 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         key: 'q',
         shown_as: "q",
-        alias: Some("also Ctrl-C"),
         action: Action::Quit,
         // Esc is no longer unconditionally quit: inside a project it goes back. Saying "also
         // Esc" here would be wrong exactly when a reader is most likely to look.
@@ -388,6 +362,18 @@ mod tests {
         for binding in BINDINGS {
             if let Action::Panel(panel) = binding.action {
                 assert!(binding.hint.is_some(), "{panel:?} has no footer hint");
+            }
+            // The footer's spelling is hand-written beside the key it spells, and the two forms
+            // read different ones: the full form prints the spelling, the fold prints the keys.
+            // A slip such as `("s", "limits")` on the `l` binding would ship a footer naming the
+            // wrong key with every length unchanged, so nothing else would notice.
+            if let Some((spelling, _)) = binding.hint {
+                assert!(
+                    spelling.starts_with(binding.key),
+                    "{:?}'s footer hint {spelling:?} does not start with its key {:?}",
+                    binding.action,
+                    binding.key
+                );
             }
         }
         let [full, compact, minimal] = footer_forms();
