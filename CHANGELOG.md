@@ -1,5 +1,41 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **`--claude-code-hook`: Claude Code's own hooks as a routing harness.** Escalations were
+  derived from collected usage, but a pass or a fail cannot be inferred from usage metadata and
+  the roadmap said so: "a shipped hook or wrapper that emits `--record-routing` events from a
+  real agent harness is what would close this, not more derivation." This is that hook.
+  `contrib/claude-code/settings.json` registers the flag on `PostToolUse` and
+  `PostToolUseFailure` for the `Bash` tool; the payload is read from stdin, and when it observed
+  a test run — a recognised runner whose exit status the shell did not discard — one routing
+  event is journaled: pass or fail, the model in use, and the attempt's requests, tokens and
+  cost — every request in the transcript no earlier event of the session attributed — priced by
+  the billing decision and rate table the dashboard already applies. On a Max or Pro account
+  the attempt is `on quota`, exactly as its rows are in the model table.
+
+  Three things were checked against what Claude Code 2.1.245 does rather than what its
+  reference says, and all three differ. A non-zero exit fires `PostToolUseFailure` with the
+  status in `error`, not `PostToolUse` with an `exit_code`; `PostToolUse`'s Bash response
+  carries no exit code at all, so the outcome is which event fired and the snippet registers
+  both; and the assistant line that issued a tool call is appended to the transcript *after*
+  the tool and its hooks have run, so at hook time the transcript ends one request early. The
+  first version of the hook bounded the attempt by time and lost that request from every
+  attempt — its timestamp is before the hook, its line arrives after. The attempt is bounded
+  by a cursor instead, the requests the session's events have already attributed, so each is
+  counted once, one run late.
+
+  What the hook withholds is the point. `cargo test 2>&1 | tail -20` exits with `tail`'s
+  status, `cargo build && cargo test` fails when the build does, and `cargo test || true` never
+  fails: a line whose status is not the runner's own is not an observation in that direction,
+  and the reason is printed. No counter is ever sent — a hook cannot count retries — so the
+  panel's RETRY, ESC and DEFECT columns read `—` for this agent, not `0%`. The attempt is
+  attributed from the transcript with the collector's own `parse_line`, which reads the usage
+  block, the model and the timestamp and nothing else; a test plants a credential in the
+  content and fails if it reaches the event.
+
 ## 0.10.0 - 2026-08-25
 
 ### Fixed

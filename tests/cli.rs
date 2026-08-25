@@ -1082,3 +1082,196 @@ fn an_omarchy_record_is_written_only_when_asked() {
 
     let _ = std::fs::remove_dir_all(&temp);
 }
+
+/// `--claude-code-hook` is the third write path: a Claude Code hook payload in, a routing event
+/// out, attributed from the transcript the payload names. The payloads are the ones Claude Code
+/// 2.1.245 sent, and the failure arrives as `PostToolUseFailure` — the shape that matters.
+#[test]
+fn a_claude_code_hook_records_the_test_runs_it_observed_and_nothing_else() {
+    use std::io::Write;
+    let dir = scratch("claude-hook");
+    let journal = dir.join("usage.db");
+    let transcript = dir.join("t.jsonl");
+    // Built as JSON, not spliced into a literal: a Windows path's backslashes are escapes.
+    let line = |ts: &str, req: &str, model: &str, output: u64| {
+        serde_json::json!({
+            "type": "assistant", "timestamp": ts, "requestId": req, "sessionId": "s",
+            "cwd": dir.to_string_lossy(),
+            "message": {
+                "id": "m", "role": "assistant", "model": model,
+                "content": [{"type": "tool_use", "name": "Bash", "input": {"command": "cargo test"}}],
+                "usage": {"input_tokens": 100, "output_tokens": output}
+            }
+        })
+        .to_string()
+            + "\n"
+    };
+    // Two requests before the first run — the second written twice, as Claude Code does.
+    std::fs::write(
+        &transcript,
+        line("2026-08-25T21:42:04.025Z", "req_1", "claude-sonnet-5", 50)
+            + &line("2026-08-25T21:42:05.506Z", "req_2", "claude-opus-5", 80)
+            + &line("2026-08-25T21:42:05.819Z", "req_2", "claude-opus-5", 80),
+    )
+    .expect("write transcript");
+
+    let payload = |event: &str, command: &str, tool_use_id: &str| {
+        let mut payload = serde_json::json!({
+            "session_id": "s",
+            "transcript_path": transcript.to_string_lossy(),
+            "cwd": dir.to_string_lossy(),
+            "hook_event_name": event,
+            "tool_name": "Bash",
+            "tool_input": {"command": command, "description": "x"},
+            "tool_use_id": tool_use_id,
+            "duration_ms": 10
+        });
+        if event == "PostToolUse" {
+            payload["tool_response"] = serde_json::json!({
+                "stdout": "", "stderr": "", "interrupted": false, "isImage": false, "noOutputExpected": false
+            });
+        } else {
+            payload["error"] = serde_json::json!("Exit code 1");
+            payload["is_interrupt"] = serde_json::json!(false);
+        }
+        payload.to_string()
+    };
+    let hook = |body: &str| -> String {
+        let mut child = bin()
+            .arg("--claude-code-hook")
+            .arg("--journal")
+            .arg(&journal)
+            .arg("--claude-dir")
+            .arg(dir.join("no-claude-logs"))
+            .arg("--claude-billing")
+            .arg("subscription")
+            .arg("--omarchy-dir")
+            .arg(dir.join("no-omarchy"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(body.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().expect("wait");
+        assert!(
+            output.status.success(),
+            "--claude-code-hook exited {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let aggregates = || -> serde_json::Value {
+        let output = bin()
+            .arg("--routing-json")
+            .arg("--journal")
+            .arg(&journal)
+            .output()
+            .expect("run --routing-json");
+        assert!(output.status.success());
+        serde_json::from_slice(&output.stdout).expect("routing json parses")
+    };
+
+    // An ordinary Bash call records nothing and does not create the journal.
+    let out = hook(&payload("PostToolUse", "git status", "toolu_0"));
+    assert!(out.starts_with("Nothing to record"), "{out}");
+    assert!(
+        !journal.exists(),
+        "a skipped payload must not touch the journal"
+    );
+
+    // A passing run: two requests (not three lines), on quota, by the model that ran it.
+    let out = hook(&payload("PostToolUse", "cargo test --locked", "toolu_1"));
+    assert!(out.starts_with("Recorded a passing test run"), "{out}");
+    let json = aggregates();
+    assert_eq!(json["events"], 1, "{json}");
+    let agg = &json["aggregates"][0];
+    assert_eq!(agg["agent"], "claude-code", "{json}");
+    assert_eq!(agg["model"], "claude-opus-5", "{json}");
+    assert_eq!(agg["provider"], "anthropic", "{json}");
+    assert_eq!(agg["tasks"], 1, "{json}");
+    assert_eq!(agg["tokens"], 150 + 180, "{json}");
+    assert_eq!(agg["test_passes"], 1, "{json}");
+    assert_eq!(agg["quota_tasks"], 1, "{json}");
+    assert_eq!(agg["cost_basis"], "quota", "{json}");
+    assert_eq!(agg["cost"], serde_json::Value::Null, "{json}");
+    for counter in ["retries", "escalations", "review_defects", "retry_rate"] {
+        assert_eq!(agg[counter], serde_json::Value::Null, "{counter}: {json}");
+    }
+
+    // The same tool call delivered again is the same run.
+    let out = hook(&payload("PostToolUse", "cargo test --locked", "toolu_1"));
+    assert!(out.starts_with("Already recorded"), "{out}");
+    assert_eq!(aggregates()["events"], 1);
+
+    // One more request, then a failing run: the attempt is that request alone.
+    let append = |text: String| {
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap();
+        file.write_all(text.as_bytes()).unwrap();
+    };
+    append(line(
+        "2026-08-25T21:42:06.718Z",
+        "req_3",
+        "claude-opus-5",
+        20,
+    ));
+    let out = hook(&payload(
+        "PostToolUseFailure",
+        "cargo test --locked",
+        "toolu_2",
+    ));
+    assert!(out.starts_with("Recorded a failing test run"), "{out}");
+    let json = aggregates();
+    assert_eq!(json["events"], 2, "{json}");
+    let agg = &json["aggregates"][0];
+    assert_eq!(agg["tasks"], 2, "{json}");
+    assert_eq!(agg["test_passes"], 1, "{json}");
+    assert_eq!(agg["test_failures"], 1, "{json}");
+    assert_eq!(
+        agg["tokens"],
+        330 + 120,
+        "the second attempt is only req_3: {json}"
+    );
+
+    // A failure whose status is not the runner's is not a failure.
+    let out = hook(&payload(
+        "PostToolUseFailure",
+        "cargo build && cargo test",
+        "toolu_3",
+    ));
+    assert!(out.starts_with("Nothing to record"), "{out}");
+    assert_eq!(aggregates()["events"], 2);
+
+    // A run with nothing new in the transcript is still a run, attributed to nothing — and it
+    // must not move the cursor, or the next request would never be counted.
+    let out = hook(&payload("PostToolUse", "cargo test --locked", "toolu_4"));
+    assert!(out.starts_with("Recorded a passing test run"), "{out}");
+    append(line(
+        "2026-08-25T21:42:08.116Z",
+        "req_4",
+        "claude-opus-5",
+        30,
+    ));
+    let out = hook(&payload("PostToolUse", "cargo test --locked", "toolu_5"));
+    assert!(out.starts_with("Recorded a passing test run"), "{out}");
+    let json = aggregates();
+    assert_eq!(json["events"], 4, "{json}");
+    let agg = &json["aggregates"][0];
+    assert_eq!(agg["tasks"], 4, "{json}");
+    assert_eq!(
+        agg["tokens"],
+        450 + 130,
+        "req_4 belongs to the last attempt; an empty attempt must not have consumed it: {json}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

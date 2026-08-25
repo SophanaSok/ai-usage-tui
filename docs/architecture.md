@@ -54,4 +54,6 @@ See [`data-model.md`](data-model.md#budget-configuration) for budget schema.
 
 `routing::aggregate` (`src/routing.rs`) aggregates routing events by agent, model, and provider. Aggregations power the TUI routing view (`t` key) and `--routing-json` / `--routing-csv` exports.
 
+`harness::claude_code` (`src/harness/`) is the one shipped emitter: `--claude-code-hook` turns a Claude Code `PostToolUse`/`PostToolUseFailure` payload into a routing event when it observed a test run, with `harness::shell` deciding whether the command line's exit status was the runner's. It reads the transcript the payload names with the Claude Code collector's own `parse_line`, prices the attempt with the same billing decision and `PricingEngine`, and writes through `journal::record_routing_event` — the same path `--record-routing` takes.
+
 See [`routing-analytics.md`](routing-analytics.md) for event schema and aggregation logic.

@@ -5,6 +5,7 @@ pub mod collector;
 pub mod config;
 pub mod escalation;
 pub mod export;
+pub mod harness;
 pub mod helpers;
 pub mod logging;
 pub mod model;

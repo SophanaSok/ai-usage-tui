@@ -56,6 +56,8 @@ pub struct Cli {
     pub check_budgets: bool,
     pub webhook_url: Option<String>,
     pub record_routing: bool,
+    /// Read a Claude Code hook payload from stdin and journal the test run it observed.
+    pub claude_code_hook: bool,
     pub routing_json: bool,
     pub routing_csv_path: Option<PathBuf>,
 }
@@ -100,6 +102,7 @@ impl Default for Cli {
             check_budgets: false,
             webhook_url: None,
             record_routing: false,
+            claude_code_hook: false,
             routing_json: false,
             routing_csv_path: None,
         }
@@ -252,6 +255,9 @@ struct Args {
     /// Read a routing event JSON from stdin and journal it
     #[arg(long, group = "action")]
     record_routing: bool,
+    /// Read a Claude Code PostToolUse/PostToolUseFailure hook payload from stdin and journal a routing event if it observed a test run
+    #[arg(long, group = "action")]
+    claude_code_hook: bool,
     /// Refresh the cached OpenCode Zen model catalog
     #[arg(long, group = "action")]
     refresh_zen: bool,
@@ -272,6 +278,7 @@ const COLLECTION_ACTIONS: &[&str] = &[
     "refresh_zen",
     "check_budgets",
     "record_routing",
+    "claude_code_hook",
     "omarchy_record",
     "doctor",
 ];
@@ -389,6 +396,7 @@ impl Cli {
             check_budgets: args.check_budgets,
             webhook_url: args.webhook,
             record_routing: args.record_routing,
+            claude_code_hook: args.claude_code_hook,
             routing_json: args.routing_json,
             routing_csv_path: args.routing_csv,
             source_enabled: Default::default(),
@@ -619,6 +627,7 @@ mod tests {
             "--refresh-zen",
             "--check-budgets",
             "--record-routing",
+            "--claude-code-hook",
             "--omarchy-record",
             "--doctor",
         ] {
@@ -643,6 +652,7 @@ mod tests {
             ["--check-budgets", "--routing-json"],
             ["--refresh-zen", "--refresh-pricing"],
             ["--record-ollama", "--record-routing"],
+            ["--claude-code-hook", "--record-routing"],
         ] {
             let args = if pair[1] == "--csv" {
                 vec![pair[0], pair[1], "/tmp/x.csv"]

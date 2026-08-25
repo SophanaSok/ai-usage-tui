@@ -110,6 +110,20 @@ fn dispatch() -> Result<()> {
             })?;
         return record_routing(&path);
     }
+    if cli.claude_code_hook {
+        let path = cli
+            .journal_path
+            .clone()
+            .or_else(ai_usage_tui::utils::journal_path)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "could not determine a home directory; pass an explicit path (see --help)"
+                )
+            })?;
+        return ai_usage_tui::harness::claude_code::record_from_stdin(&SourceRoots::from_cli(
+            &cli, path,
+        ));
+    }
     if cli.check_budgets {
         return check_budgets(&cli, &config);
     }

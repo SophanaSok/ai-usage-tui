@@ -219,10 +219,30 @@ Remaining:
   overlay and `--help` all read the table; the footer does not, because it abbreviates and
   reflows by width. Driving it from the table too is a small, contained job for whoever touches
   it next.
-- **Routing analytics still needs a harness for the half that matters.** Escalations are now
-  derived from collected sessions, but pass/fail and retry counts cannot be inferred from usage
-  metadata and must not be guessed. A shipped hook or wrapper that emits `--record-routing`
-  events from a real agent harness is what would close this, not more derivation.
+- **Resolved for Claude Code.** Escalations are derived from collected sessions, but pass/fail
+  and retry counts cannot be inferred from usage metadata and must not be guessed; what closed
+  this was a shipped hook, not more derivation. `--claude-code-hook` (`src/harness/`) reads a
+  `PostToolUse`/`PostToolUseFailure` payload and journals a test run's pass or fail, attributed
+  to the model that ran it and priced as the dashboard prices its rows;
+  `contrib/claude-code/settings.json` registers it.
+
+  Four things are worth knowing before touching it. **The docs were wrong about the payload**
+  — a non-zero Bash exit fires `PostToolUseFailure`, and `PostToolUse` carries no exit code —
+  which is why the snippet registers both events and why the fixtures in the tests are captured
+  payloads rather than the reference's. **The transcript lags the hook by one request:** the
+  line that issued the tool call is appended after the hook has run, so the attempt is bounded
+  by a cursor over requests already attributed (`journal::attributed_requests`), never by
+  time — the first version used a time window and silently lost that request from every
+  attempt, which one real run showed in a `cost_basis` of `unpriced` on a Max account. **A
+  pipe is not an observation:** `cargo test | tail`
+  exits with `tail`'s status, so `harness::shell` withholds the result whenever the line's
+  status is not the runner's own, in either direction, and says so. That rule is in one place
+  and one test table on purpose. And **counters are never sent**, so RETRY, ESC and DEFECT read
+  `—` for this agent; a harness that can count them is a different harness.
+
+  Still open: Codex and Gemini have no equivalent hook surface today, and a subagent's run is
+  attributed to whatever transcript its payload names, which has not been verified against a
+  real subagent session.
 - **Resolved.** Derived escalations are exported. `--json` carries an `escalations` object —
   sessions examined and escalated, the rate, unclassified changes, and the transitions with their
   spend after the move — derived from the same filtered rows the export reports, so a
