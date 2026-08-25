@@ -216,3 +216,83 @@ fn an_escalation_onto_a_subscription_model_is_not_zero_dollars_after() {
     assert!(rendered.contains("on quota after"), "{rendered}");
     assert!(!rendered.contains("$0.00 after"), "{rendered}");
 }
+
+/// An agent whose spend cannot be priced must not rank as the cheapest work on the machine.
+///
+/// This is the bug the provenance counters exist for, and it was two failures stacked. `aggregate`
+/// summed `cost.unwrap_or(0.0)`, so an all-unpriced agent arrived with `cost: 0.0`;
+/// `cost_per_success` then divided that by its passes and returned `Some(0.0)` rather than "no
+/// figure". The panel's default sort is `$/SUCCESS` **ascending**, and `cost_order` holds only a
+/// `None` at the end — so the row it was written to protect against sailed past it into first
+/// place, rendered green as `free`.
+#[test]
+fn an_unpriced_agent_does_not_rank_as_the_cheapest_per_success() {
+    let mut app = test_app(Vec::new());
+    // Deliberately ordered with the unpriced agent first, so a panel that merely echoes its
+    // input fails this.
+    app.set_routing_for_test(vec![
+        routing_agg_with_gaps("unpriced", "some/unknown-model", 4, 0.0, 4, 0, 4, 0),
+        routing_agg("priced", "anthropic/claude-opus-5", 4, 4.00, 4, 0),
+    ]);
+    // `set_routing_for_test` applies the sorts, standing in for `recompute`.
+    let rendered = render_routing(&app, 84, 6);
+
+    let priced = rendered.find("priced").expect("priced row");
+    let unpriced = rendered.find("unpriced").expect("unpriced row");
+    assert!(
+        priced < unpriced,
+        "an agent with no defensible cost outranked one at $1.00 per success:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("free"),
+        "unpriced work rendered as free:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("unpriced  "),
+        "expected the cell to say so plainly; a floor of $0.0000 is not a figure:\n{rendered}"
+    );
+}
+
+/// Subscription work is the common case of the above, and the one a Max account hits on day one.
+///
+/// Opus on a plan arrives as `cost: null, cost_status: quota`. It is real spend with no
+/// per-request figure — not free, and not zero.
+#[test]
+fn subscription_billed_work_reads_as_on_quota_not_free() {
+    let mut app = test_app(Vec::new());
+    app.set_routing_for_test(vec![routing_agg_with_gaps(
+        "architect",
+        "anthropic/claude-opus-5",
+        6,
+        0.0,
+        6,
+        0,
+        0,
+        6,
+    )]);
+    let rendered = render_routing(&app, 84, 5);
+    assert!(rendered.contains("on quota"), "{rendered}");
+    assert!(!rendered.contains("free"), "{rendered}");
+    assert!(!rendered.contains("$0.0000"), "{rendered}");
+}
+
+/// Partly priced spend reads as a floor, in the vocabulary the escalations block already uses.
+#[test]
+fn partly_unpriced_spend_per_success_reads_as_a_floor() {
+    let mut app = test_app(Vec::new());
+    app.set_routing_for_test(vec![routing_agg_with_gaps(
+        "junior",
+        "openrouter/mystery",
+        10,
+        2.00,
+        4,
+        0,
+        3,
+        0,
+    )]);
+    let rendered = render_routing(&app, 84, 5);
+    assert!(
+        rendered.contains("≥ $0.5000"),
+        "expected a floor, got:\n{rendered}"
+    );
+}

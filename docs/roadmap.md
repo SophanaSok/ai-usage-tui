@@ -34,9 +34,13 @@ The two things worth defending, and the reason to prefer depth over breadth belo
 
 Numbering follows the original audit. Everything not listed here has shipped.
 
-### P0 — Routing analytics reports a cost it cannot defend
+### P0 — Resolved. Routing analytics reported a cost it could not defend
 
-Found while planning v0.9.0, and the reason the arc is ordered the way it is.
+**Resolved.** Found while planning v0.9.0, and the reason the arc is ordered the way it is.
+`RoutingAggregates.cost` is a floor now, read with `priced_tasks` / `unpriced_tasks` /
+`quota_tasks` / `free_tasks`; the `$/SUCCESS` cell reports its basis in the escalations block's
+vocabulary; and only a real figure or a genuine zero takes part in the sort. What follows is kept
+because the shape of the bug is worth not reintroducing.
 
 `routing.rs::aggregate` does `entry.cost += event.cost.unwrap_or(0.0)` and `RoutingAggregates.cost`
 is a bare `f64`, so an unpriced or subscription-billed model reaches `cost_per_success` as
@@ -62,7 +66,7 @@ a model never retried and when nothing reported a count, because `RoutingEvent.r
 is `retries / tasks` rendered `{:.0}%`, so an emitter writing `retries: 3` on one task renders
 `300%`.
 
-### P1 — A pricing refresh never reaches the running dashboard
+### P1 — Resolved. A pricing refresh never reached the running dashboard
 
 `CollectorState.pricing` is loaded once in `CollectorHandle::spawn` and never replaced, while
 `pricing_refresh::poll` writes a refreshed cache to disk and returns no rows. So on a running
@@ -70,9 +74,16 @@ dashboard a successful refresh changes nothing until restart: rows stay `UNKNOWN
 the rate is now known, the log says the refresh succeeded, and the screen silently disagrees.
 Nothing documents this. Convention 8.
 
-Note the interaction with incremental pricing: `apply_pricing` currently re-prices all accumulated
-history inside the write lock on every poll, and narrowing it to newly merged rows is only safe
-while the engine is immutable. Whichever lands second has to account for the other.
+**Resolved.** `Collector::refreshes_pricing` declares that a source's work re-prices everything
+else -- only `zen_pricing` answers true -- and the loop rebuilds the engine and re-prices the
+collected rows. The rebuild happens *before* the write lock is taken, because parsing ~3,450 keys
+while holding it would block `snapshot()` on the render thread.
+
+**Still open, and now with a constraint attached:** `apply_pricing` re-prices all accumulated
+history inside the write lock on every poll. Narrowing it to newly merged rows is the obvious fix
+and is only correct if the reload path above keeps re-pricing *everything* -- the rows collected
+before a refresh are exactly the ones whose price was missing. Whoever does the incremental work
+has to leave `reload_pricing` whole.
 
 ### P2 — Pricing depth
 
@@ -260,6 +271,23 @@ Remaining:
   `opencode/deepseek-v4-flash-free`. Both are free-cloud, so cost is unaffected, but note that
   `reviewer` and `reasoning` then share a model — which weakens rule 3 (prefer a reviewer on a
   different provider from the agent that wrote the code) when `reasoning` did the writing.
+
+### P2 — The update story, half done
+
+`--doctor` reports which channel this binary came from and the exact command to upgrade it, and
+`[update] check = true` opts in to a release-tag check. What is not done:
+
+- **Nothing surfaces a new release outside `--doctor`.** A user who never runs it never learns.
+  The dashboard header is the obvious place and is deliberately not used yet: it refreshes several
+  times a second and must not acquire a network call or a clock read (convention 5). A cached
+  answer written by the opt-in check, read from disk on start, would fit.
+- **`scripts/install.sh` does not detect an existing install**, so upgrading by re-running it is
+  silent about what it replaced.
+- **Channel detection is inference, not fact.** A binary copied out of `~/.cargo/bin` reports as
+  cargo. Recording the channel at install time would be exact, but only `install.sh` and the
+  packaging manifests could write it, and a file the binary trusts about itself is a new thing to
+  keep honest. The current guess is conservative -- an unrecognised path says so rather than
+  naming a command that would install a second copy.
 
 ### P3 — Small, known, unclaimed
 

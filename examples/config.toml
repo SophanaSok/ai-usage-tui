@@ -16,6 +16,18 @@ refresh_interval = 30
 # `enabled = false` switches a source off everywhere -- the dashboard and --once/--json/--csv
 # alike. `interval` applies only to the dashboard's background polling; the one-shot paths read
 # once and exit.
+# Looking for a newer release.
+#
+# Off by default, and the only setting in this file that would let the tool reach the network
+# outside an explicit --refresh-pricing / --refresh-zen. With it on, `--doctor` -- and only
+# `--doctor` -- asks GitHub for the latest release tag. Never automatic, never on the dashboard's
+# refresh path, no usage data sent.
+#
+# `--doctor` always reports which channel this binary came from and the exact command to upgrade
+# it; that is read off the binary's own path and needs no network, so it is not gated on this.
+[update]
+check = false
+
 [collectors.opencode]
 enabled = true
 interval = 30

@@ -108,11 +108,41 @@ aggregate carries:
 
 - `tasks`: number of events
 - `tokens`: sum of `tokens`
-- `cost`: sum of `cost`; an event without one contributes `0`
+- `cost`: spend on the tasks that carried a price. **A floor, not a total.** Read it with the
+  four counters below, exactly as `Transition::cost_after` is read with `unpriced_after` and
+  `quota_after`
+- `priced_tasks`, `unpriced_tasks`, `quota_tasks`, `free_tasks`: which of the four an event
+  contributed to, classified from its `cost_status`
+
+  An event without a price used to contribute `0` to `cost`. That made an unpriced or
+  subscription-billed model divide to `$0.0000` per success — and because the panel sorts by that
+  figure ascending by default, such a model ranked as the cheapest work on the machine and
+  rendered green as `free`. On a Max or Pro account that is where all of the Opus work lands
 - `retries`, `escalations`, `review_defects`: sums
 - `test_passes`, `test_failures`: events with `test_result` `true` / `false`
 
-The JSON export adds `retry_rate`, `escalation_rate` and `defect_rate` (per task, in percent).
+`cost_per_success` is `cost / test_passes`, and the panel renders **what that figure is standing
+on** rather than the figure alone. The vocabulary is `ESCALATIONS`', deliberately — a reader who
+has learned it two panels up should not have to learn a second dialect:
+
+| Cell | Means |
+| --- | --- |
+| `$0.4200` | every contributing task was priced |
+| `$0.4200+q` | priced, plus some work billed against a plan |
+| `on quota` | all of it billed against a plan: real spend, no per-request figure |
+| `≥ $0.4200` | some task should carry a price and does not, so this is a floor |
+| `unpriced` | nothing was priced; a floor of `$0.0000` would be true and say nothing |
+| `free` | every contributing task was genuinely free or local |
+| `—` | nothing passed, so there is no denominator |
+
+Only `$x` and `free` are points on a scale, so only those two sort; the rest are held at the end
+of the `$/SUCCESS` ordering in both directions, the way an unknown row cost is in the model table.
+
+The JSON export adds `retry_rate`, `escalation_rate` and `defect_rate` (per task, in percent),
+`cost_per_success` (null unless exact or free) and `cost_basis` (one of `exact`, `plus_quota`,
+`quota`, `floor`, `unpriced`, `free`, `no_successes`). Its `cost` is `null` rather than `0` when
+nothing was priced. The CSV appends `priced_tasks`, `unpriced_tasks`, `quota_tasks` and
+`free_tasks` after the existing columns, never between them.
 The TUI adds `success_rate` (passes over observed results) and `cost_per_success` (cost over
 passes); both are `—` when unobserved, never `0`.
 
@@ -142,5 +172,6 @@ created         unix seconds (the timestamp column)
 
 - Routing events are opt-in; they are only recorded when explicitly sent via `--record-routing`.
 - No prompt or completion content is stored.
-- Cost is optional; if omitted, only token counts are aggregated.
+- Cost is optional. An event without one is counted in `unpriced_tasks` and contributes nothing
+  to `cost`, so the aggregate stays a floor rather than quietly gaining a zero.
 - Test result is optional; pass rate is calculated only from events that include it.

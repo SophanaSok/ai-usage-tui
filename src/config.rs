@@ -12,6 +12,25 @@ use crate::model::Range;
 /// recognise is a typo, and silently dropping it is how `# webhook` under the wrong table
 /// disabled every budget while the dashboard went on looking healthy. `load_config` already
 /// treats a malformed *value* as fatal; an unrecognised *key* now gets the same policy.
+/// Whether to look for a newer release, and nothing else.
+///
+/// Off by default and it stays that way. This is the second thing in the tool that would reach
+/// the network -- `zen_pricing` is the first, and it is off by default for the same reason. A
+/// tool whose pitch is "reads usage metadata, writes nothing, transmits nothing" does not get to
+/// contact a server because it would be convenient.
+///
+/// Note what is *not* gated on this: `--doctor` always reports which channel this binary came
+/// from and how to upgrade it. That is read off the binary's own path and needs no network, so
+/// there is nothing to opt in to.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateConfig {
+    /// Ask GitHub for the latest release tag when `--doctor` runs. Never automatic, never on the
+    /// dashboard's refresh path, and never during any other command.
+    #[serde(default)]
+    pub check: bool,
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigFile {
@@ -27,6 +46,7 @@ pub struct ConfigFile {
     pub collectors: Option<CollectorsConfig>,
     pub budgets: Option<BudgetsConfig>,
     pub omarchy: Option<OmarchyConfig>,
+    pub update: Option<UpdateConfig>,
 }
 
 /// Omarchy's agents panel: where its records are, and whether to read them.

@@ -12,6 +12,7 @@ pub mod omarchy;
 pub mod pricing;
 pub mod routing;
 pub mod ui;
+pub mod update;
 pub mod utils;
 
 pub use collector::background::{Collector, CollectorHandle};

@@ -364,6 +364,12 @@ impl Collector for ZenPricingCollector {
         refresh_pricing()?;
         Ok(Vec::new())
     }
+
+    /// The one collector this is true for: it produces no rows and changes every other row's
+    /// price. See `Collector::refreshes_pricing`.
+    fn refreshes_pricing(&self) -> bool {
+        true
+    }
 }
 
 /// One-shot read for the source registry.
