@@ -1092,11 +1092,19 @@ fn a_claude_code_hook_records_the_test_runs_it_observed_and_nothing_else() {
     let dir = scratch("claude-hook");
     let journal = dir.join("usage.db");
     let transcript = dir.join("t.jsonl");
+    // Built as JSON, not spliced into a literal: a Windows path's backslashes are escapes.
     let line = |ts: &str, req: &str, model: &str, output: u64| {
-        format!(
-            "{{\"type\":\"assistant\",\"timestamp\":\"{ts}\",\"requestId\":\"{req}\",\"sessionId\":\"s\",\"cwd\":\"{}\",\"message\":{{\"id\":\"m\",\"role\":\"assistant\",\"model\":\"{model}\",\"content\":[{{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{{\"command\":\"cargo test\"}}}}],\"usage\":{{\"input_tokens\":100,\"output_tokens\":{output}}}}}}}\n",
-            dir.display()
-        )
+        serde_json::json!({
+            "type": "assistant", "timestamp": ts, "requestId": req, "sessionId": "s",
+            "cwd": dir.to_string_lossy(),
+            "message": {
+                "id": "m", "role": "assistant", "model": model,
+                "content": [{"type": "tool_use", "name": "Bash", "input": {"command": "cargo test"}}],
+                "usage": {"input_tokens": 100, "output_tokens": output}
+            }
+        })
+        .to_string()
+            + "\n"
     };
     // Two requests before the first run — the second written twice, as Claude Code does.
     std::fs::write(
@@ -1108,16 +1116,25 @@ fn a_claude_code_hook_records_the_test_runs_it_observed_and_nothing_else() {
     .expect("write transcript");
 
     let payload = |event: &str, command: &str, tool_use_id: &str| {
-        let outcome = if event == "PostToolUse" {
-            r#""tool_response":{"stdout":"","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false}"#.to_string()
+        let mut payload = serde_json::json!({
+            "session_id": "s",
+            "transcript_path": transcript.to_string_lossy(),
+            "cwd": dir.to_string_lossy(),
+            "hook_event_name": event,
+            "tool_name": "Bash",
+            "tool_input": {"command": command, "description": "x"},
+            "tool_use_id": tool_use_id,
+            "duration_ms": 10
+        });
+        if event == "PostToolUse" {
+            payload["tool_response"] = serde_json::json!({
+                "stdout": "", "stderr": "", "interrupted": false, "isImage": false, "noOutputExpected": false
+            });
         } else {
-            r#""error":"Exit code 1","is_interrupt":false"#.to_string()
-        };
-        format!(
-            r#"{{"session_id":"s","transcript_path":"{}","cwd":"{}","hook_event_name":"{event}","tool_name":"Bash","tool_input":{{"command":"{command}","description":"x"}},"tool_use_id":"{tool_use_id}",{outcome},"duration_ms":10}}"#,
-            transcript.display(),
-            dir.display()
-        )
+            payload["error"] = serde_json::json!("Exit code 1");
+            payload["is_interrupt"] = serde_json::json!(false);
+        }
+        payload.to_string()
     };
     let hook = |body: &str| -> String {
         let mut child = bin()
