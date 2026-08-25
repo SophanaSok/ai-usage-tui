@@ -17,9 +17,40 @@ use std::path::PathBuf;
 /// One constant so those can never drift apart.
 pub const ID: &str = "journal";
 
+/// The journal's usage rows. A row that cannot be read is skipped and counted, never silently
+/// dropped: the count reaches the source's status line — the `--once` header — and `--doctor`
+/// through the source report, and the log through the live collector. Not an error,
+/// deliberately: `load_usage` fails as a whole on any source error, and one corrupt Ollama row
+/// must not take every command down.
 pub fn load_journal(path: &Path) -> Result<Vec<Usage>> {
+    let (usages, skipped) = load_journal_counting(path)?;
+    if let Some(skipped) = skipped {
+        crate::logging::error("journal", &skipped.to_string());
+    }
+    Ok(usages)
+}
+
+/// Rows a read had to skip: how many, and the first reason, for whoever surfaces it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SkippedRows {
+    pub count: usize,
+    pub first: String,
+}
+
+impl std::fmt::Display for SkippedRows {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} usage_event row(s) could not be read and were skipped; first: {}",
+            self.count, self.first
+        )
+    }
+}
+
+/// `load_journal`, with what was skipped for the caller to surface.
+pub(crate) fn load_journal_counting(path: &Path) -> Result<(Vec<Usage>, Option<SkippedRows>)> {
     if !path.exists() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
     }
     let conn = Connection::open_with_flags(
         path,
@@ -32,7 +63,7 @@ pub fn load_journal(path: &Path) -> Result<Vec<Usage>> {
         |row| row.get(0),
     )?;
     if !has_events {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
     }
     // A journal written by an older build has no `event_id` column, and this is a read-only
     // path that cannot migrate it. Select the column only when it actually exists.
@@ -72,7 +103,23 @@ pub fn load_journal(path: &Path) -> Result<Vec<Usage>> {
             project: None,
         })
     })?;
-    Ok(rows.filter_map(Result::ok).collect())
+    let mut usages = Vec::new();
+    let mut skipped = 0usize;
+    let mut first_error = None;
+    for (index, row) in rows.enumerate() {
+        match row {
+            Ok(usage) => usages.push(usage),
+            Err(error) => {
+                skipped += 1;
+                first_error.get_or_insert_with(|| format!("row {}: {}", index + 1, error));
+            }
+        }
+    }
+    let skipped = (skipped > 0).then(|| SkippedRows {
+        count: skipped,
+        first: first_error.unwrap_or_default(),
+    });
+    Ok((usages, skipped))
 }
 
 /// A token or request count read back from SQLite.
@@ -265,7 +312,21 @@ pub fn load_routing(path: &Path) -> Result<Vec<RoutingEvent>> {
             created: row.get(14)?,
         })
     })?;
-    Ok(rows.filter_map(Result::ok).collect())
+    // Strict, unlike `load_journal`: a row this tool wrote and cannot read back is a corrupt
+    // journal, and the two callers already put an error where it is seen — the dashboard's
+    // status line, and a refused export rather than a partial table. `filter_map(Result::ok)`
+    // dropped the row and reported the rest as the whole.
+    rows.enumerate()
+        .map(|(index, row)| {
+            row.map_err(|error| {
+                anyhow::anyhow!(
+                    "routing_event row {} could not be read ({error}); the journal is corrupt \
+                     or was written by a newer version",
+                    index + 1
+                )
+            })
+        })
+        .collect()
 }
 
 pub fn record_routing(path: &Path) -> Result<()> {
@@ -527,7 +588,7 @@ impl Collector for JournalCollector {
 pub(crate) fn read(
     roots: &crate::collector::SourceRoots,
 ) -> crate::collector::registry::SourceRead {
-    let usages = load_journal(&roots.journal)?;
+    let (usages, skipped) = load_journal_counting(&roots.journal)?;
     let present = roots.journal.exists();
     Ok((
         crate::collector::SourceReport {
@@ -535,12 +596,19 @@ pub(crate) fn read(
             present,
             path: Some(roots.journal.clone()),
             rows: usages.len(),
-            status: if present {
-                format!("journal: {}", roots.journal.display())
-            } else {
-                "journal: not initialized".to_string()
+            // The status line is what the `--once` header shows; a row count that quietly
+            // omitted the rows it could not read would be a smaller bill. `--doctor` gets the
+            // first reason as well.
+            status: match (present, &skipped) {
+                (true, Some(skipped)) => format!(
+                    "journal: {} ({} rows unreadable)",
+                    roots.journal.display(),
+                    skipped.count
+                ),
+                (true, None) => format!("journal: {}", roots.journal.display()),
+                (false, _) => "journal: not initialized".to_string(),
             },
-            detail: None,
+            detail: skipped.map(|s| s.to_string()),
         },
         usages,
     ))
@@ -807,6 +875,58 @@ mod tests {
             record_routing_event(&journal, &event("new-task", 2)).expect("record"),
             0
         );
+    }
+
+    #[test]
+    fn a_routing_row_that_cannot_be_read_fails_the_read_rather_than_vanishing() {
+        // Restore the bug with `filter_map(Result::ok)`: the row is dropped and the read reports
+        // the rest as the whole. A negative count cannot become a `u32`.
+        let scratch = scratch_journal("corrupt-routing");
+        let journal = scratch.journal.clone();
+        record_routing_event(&journal, &event("good", 1)).expect("record");
+        record_routing_event(&journal, &event("bad", 2)).expect("record");
+        let conn = Connection::open(&journal).expect("open");
+        conn.execute(
+            "UPDATE routing_event SET retries = -1 WHERE task = 'bad'",
+            [],
+        )
+        .expect("corrupt a row");
+        drop(conn);
+
+        let error = load_routing(&journal).expect_err("a corrupt row is an error");
+        assert!(error.to_string().contains("row 2"), "{error}");
+    }
+
+    #[test]
+    fn a_usage_row_that_cannot_be_read_is_counted_and_the_rest_survive() {
+        // Not strict, deliberately: `load_usage` fails as a whole on any source error, and one
+        // corrupt Ollama row must not take every command down. But the count reaches the
+        // source report, so `--doctor` says it — restore the bug and `skipped` is `None`.
+        let scratch = scratch_journal("corrupt-usage");
+        let journal = scratch.journal.clone();
+        let conn = Connection::open(&journal).expect("open");
+        conn.execute_batch(
+            "CREATE TABLE usage_event (
+                id INTEGER PRIMARY KEY, event_id TEXT, provider TEXT NOT NULL, model TEXT NOT NULL,
+                category TEXT NOT NULL, cost_status TEXT NOT NULL, requests INTEGER NOT NULL,
+                input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+                reasoning_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL,
+                cache_write_tokens INTEGER NOT NULL, cost REAL, created INTEGER NOT NULL
+            );
+            INSERT INTO usage_event (provider, model, category, cost_status, requests,
+                input_tokens, output_tokens, reasoning_tokens, cache_read_tokens,
+                cache_write_tokens, cost, created)
+            VALUES ('ollama', 'm', 'LOCAL', 'local', 1, 10, 10, 0, 0, 0, NULL, 1),
+                   ('ollama', 'm', 'LOCAL', 'local', 1, 10, 10, 0, 0, 0, NULL, 'soon');",
+        )
+        .expect("plant rows");
+        drop(conn);
+
+        let (usages, skipped) = load_journal_counting(&journal).expect("read");
+        assert_eq!(usages.len(), 1, "the readable row survives");
+        let skipped = skipped.expect("the unreadable row is counted");
+        assert_eq!(skipped.count, 1);
+        assert!(skipped.first.contains("row 2"), "{}", skipped.first);
     }
 
     #[test]

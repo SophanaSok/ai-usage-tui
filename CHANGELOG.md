@@ -113,6 +113,16 @@
   `limit` must be above zero, `warn` and `critical` are percentages, and `warn` must sit below
   `critical`. The error names the entry by number and says what it needs.
 
+- **A journal row that cannot be read is no longer dropped in silence.** Both journal readers
+  ended in `filter_map(Result::ok)`, so a corrupt row — or one written by a newer version —
+  vanished and the rest were reported as the whole. Convention 8. The routing reader is strict
+  now: its two callers already put an error where it is seen, on the dashboard's status line and
+  as a refused export rather than a partial table. The usage reader keeps the rows it can read,
+  because one corrupt Ollama row must not take every command down, but counts the ones it
+  cannot: the count is on the source's status line — the `--once` header and `--json`'s
+  `source` — and `--doctor` adds the first reason; the live dashboard's collector writes it to
+  the log.
+
 ## 0.9.0 - 2026-08-25
 
 ### Added

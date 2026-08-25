@@ -95,6 +95,74 @@ fn doctor_reports_every_source_and_where_it_looked() {
     assert!(text.contains("CONFIG"), "no config section:\n{text}");
 }
 
+/// A usage row the journal cannot read is counted where the user looks, not dropped.
+#[test]
+fn doctor_reports_journal_rows_it_could_not_read() {
+    let dir = scratch("corrupt-journal");
+    let journal = dir.join("usage.db");
+    let conn = rusqlite::Connection::open(&journal).expect("open");
+    conn.execute_batch(
+        "CREATE TABLE usage_event (
+            id INTEGER PRIMARY KEY, event_id TEXT, provider TEXT NOT NULL, model TEXT NOT NULL,
+            category TEXT NOT NULL, cost_status TEXT NOT NULL, requests INTEGER NOT NULL,
+            input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+            reasoning_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL,
+            cache_write_tokens INTEGER NOT NULL, cost REAL, created INTEGER NOT NULL
+        );
+        INSERT INTO usage_event (provider, model, category, cost_status, requests, input_tokens,
+            output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created)
+        VALUES ('ollama', 'm', 'LOCAL', 'local', 1, 10, 10, 0, 0, 0, NULL, 1),
+               ('ollama', 'm', 'LOCAL', 'local', 1, 10, 10, 0, 0, 0, NULL, 'soon');",
+    )
+    .expect("plant rows");
+    drop(conn);
+
+    let nowhere = |name: &str| format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
+    let run = |action: &str| {
+        let output = bin()
+            .args([action, "--all", "--db"])
+            .arg(nowhere("no-such.db"))
+            .arg("--claude-dir")
+            .arg(nowhere("no-such-claude-dir"))
+            .arg("--codex-dir")
+            .arg(nowhere("no-such-codex-home"))
+            .arg("--omarchy-dir")
+            .arg(nowhere("no-such-omarchy-dir"))
+            .arg("--journal")
+            .arg(&journal)
+            .output()
+            .expect("run");
+        assert!(
+            output.status.success(),
+            "{action}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).expect("utf8")
+    };
+
+    // `--doctor` carries the first reason beside the source.
+    let text = run("--doctor");
+    assert!(
+        text.contains("could not be read") && text.contains("row 2"),
+        "the skipped row is not reported:\n{text}"
+    );
+    // The source's status line — the `--once` header, and `--json`'s `source` — carries the
+    // count.
+    let json: serde_json::Value = serde_json::from_str(&run("--json")).expect("json parses");
+    let source = json["source"].as_str().unwrap_or_default();
+    assert!(
+        source.contains("1 rows unreadable"),
+        "the status line does not carry the count: {source}"
+    );
+    assert_eq!(
+        json["usage"].as_array().map(Vec::len),
+        Some(1),
+        "the readable row survives"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The journal's only write path, end to end. `--record-ollama` had no test at all, and the
 /// three fixtures written for it (`ollama_single.json`, `ollama_stream.jsonl`,
 /// `opencode_sample.json`) were referenced from nowhere in the tree.
