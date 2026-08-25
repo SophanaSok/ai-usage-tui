@@ -169,6 +169,46 @@ fn render_panel(
         .collect()
 }
 
+/// Render a panel and keep the buffer, for assertions on style rather than text.
+fn render_panel_buffer(
+    w: u16,
+    h: u16,
+    draw: impl FnOnce(&mut ratatui::Frame, ratatui::layout::Rect),
+) -> Buffer {
+    use ratatui::{backend::TestBackend, Terminal};
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("backend");
+    terminal
+        .draw(|frame| draw(frame, frame.area()))
+        .expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+/// The text of one buffer row, and whether its first inner cell carries the selection
+/// highlight the tables share.
+fn buffer_row(buffer: &Buffer, y: u16) -> (String, bool) {
+    let text: String = (0..buffer.area.width)
+        .map(|x| buffer.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+        .collect();
+    let highlighted = buffer
+        .cell((1, y))
+        .is_some_and(|c| c.style().bg == Some(Color::Rgb(37, 57, 67)));
+    (text, highlighted)
+}
+
+/// The row of the buffer whose text contains `needle`, or a panic naming what was rendered.
+fn find_row(buffer: &Buffer, needle: &str) -> (String, bool) {
+    for y in 0..buffer.area.height {
+        let row = buffer_row(buffer, y);
+        if row.0.contains(needle) {
+            return row;
+        }
+    }
+    let all: Vec<String> = (0..buffer.area.height)
+        .map(|y| buffer_row(buffer, y).0)
+        .collect();
+    panic!("no row contains {needle:?}:\n{}", all.join("\n"));
+}
+
 fn render_burn(app: &App, w: u16, h: u16) -> String {
     use ratatui::{backend::TestBackend, Terminal};
     let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("backend");

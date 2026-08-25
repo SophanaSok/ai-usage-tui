@@ -97,6 +97,14 @@
   caption promises no real account appears. `--omarchy-dir` is required now, like the other four,
   and the images are regenerated from the fixture alone.
 
+- **The Projects and Routing panels draw their cursor, and the row it is on.** Both rendered a
+  plain table with no highlight and no viewport: `j` moved a cursor nothing showed, past the fold
+  where nothing was drawn, and on Projects `Enter` then drilled into a project the user had not
+  seen. The model and session tables already did this right; these two now use the same
+  highlight and the same `TableState`, so the selected row is marked and scrolls into view. The
+  routing cursor was also clamped to the *model* table's length — cosmetic while nothing drew it,
+  and a row the user could see and never reach once something did.
+
 ## 0.9.0 - 2026-08-25
 
 ### Added

@@ -239,6 +239,52 @@ fn the_cursor_is_not_clamped_by_the_model_table() {
     assert_eq!(app.drilldown_project(), Some("/w/d"));
 }
 
+/// The cursor is drawn, and the row it is on is drawn.
+///
+/// The projects table had neither: no highlight, and a plain `render_widget` that showed the
+/// first rows that fit and never scrolled. So `j` moved a cursor nothing showed, past the fold
+/// where nothing was drawn, and `Enter` drilled into a project the user had not seen.
+#[test]
+fn the_selected_project_is_highlighted_and_scrolled_into_view() {
+    let usages: Vec<Usage> = (0..12)
+        .map(|i| {
+            usage(
+                Some(&format!("/w/p{i:02}")),
+                Some("s"),
+                Some(12.0 - i as f64),
+                100,
+            )
+        })
+        .collect();
+    let mut app = test_app(usages);
+    app.recompute();
+    app.toggle_panel(Panel::Projects);
+    app.selected = 11;
+    app.recompute();
+    assert_eq!(app.selected, 11);
+
+    // Six rows: two borders, a header, three data rows. The twelfth project is below the fold.
+    let buffer = render_panel_buffer(60, 6, |frame, area| {
+        crate::ui::panels::projects::draw_projects(frame, area, &app)
+    });
+    let (row, highlighted) = find_row(&buffer, "p11");
+    assert!(
+        highlighted,
+        "the selected project is not highlighted:\n{row}"
+    );
+
+    // And the anti-test: a visible row that is not selected is not highlighted. With the
+    // cursor on row 10 the viewport shows rows 8 to 10, so row 9 is the neighbour on screen.
+    app.selected = 10;
+    let buffer = render_panel_buffer(60, 6, |frame, area| {
+        crate::ui::panels::projects::draw_projects(frame, area, &app)
+    });
+    let (_, p10_highlighted) = find_row(&buffer, "p10");
+    let (row, p09_highlighted) = find_row(&buffer, "p09");
+    assert!(p10_highlighted, "the selected row lost its highlight");
+    assert!(!p09_highlighted, "an unselected row is highlighted:\n{row}");
+}
+
 /// Leaving a drilldown finds the project by name, not by the row number it was at.
 ///
 /// Sorting, a `/` filter, or a refresh that adds a project can all move a project to a different

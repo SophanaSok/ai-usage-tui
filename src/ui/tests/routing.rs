@@ -174,6 +174,35 @@ fn sorting_by_pass_orders_by_the_rate_the_column_shows() {
     );
 }
 
+#[test]
+fn the_selected_routing_row_is_highlighted_scrolled_into_view_and_reachable() {
+    // Same defect as the projects table, plus one of its own: `visible_rows` clamped the routing
+    // cursor to the *model* table, so with no models loaded it could not leave row zero.
+    use crate::ui::app::Panel;
+    let mut app = test_app(Vec::new());
+    app.toggle_panel(Panel::Routing);
+    app.set_routing_for_test(
+        (0..12)
+            .map(|i| routing_agg(&format!("agent{i:02}"), "m", 4, (i + 1) as f64, 4, 0))
+            .collect(),
+    );
+    assert_eq!(
+        app.visible_rows(),
+        12,
+        "the cursor is bounded by the routing table"
+    );
+    app.selected = 11;
+
+    let buffer = render_panel_buffer(84, 6, |frame, area| {
+        crate::ui::panels::routing::draw_routing(frame, area, &app)
+    });
+    let (row, highlighted) = find_row(&buffer, "agent11");
+    assert!(
+        highlighted,
+        "the selected aggregate is not highlighted:\n{row}"
+    );
+}
+
 /// The text of one agent's row, from its name to its token count.
 fn routing_row<'a>(rendered: &'a str, agent: &str) -> &'a str {
     let start = rendered.find(agent).expect("the agent row");

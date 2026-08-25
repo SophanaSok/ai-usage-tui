@@ -513,6 +513,10 @@ impl App {
             // past the last project — harmless while nothing acted on the row, and wrong the
             // moment Enter drills into whatever is under it.
             Panel::Projects => self.view.projects.len(),
+            // Same for routing: nothing acts on its row yet, but a cursor clamped to the model
+            // table cannot reach an aggregate past the model count, and now that the panel draws
+            // the cursor, that is a row the user can see and never land on.
+            Panel::Routing => self.view.routing.len(),
             _ => self.view.rows.len(),
         }
     }
