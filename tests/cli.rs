@@ -1275,3 +1275,56 @@ fn a_claude_code_hook_records_the_test_runs_it_observed_and_nothing_else() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The update cache is what carries an opted-in check's answer to the dashboard, and `--doctor`
+/// has to tell the truth about it even when the check itself is off — otherwise a user who
+/// turned the check off and still sees a notice in the header has nowhere to find out why.
+///
+/// No network: the cache is planted, which is exactly the state an earlier opted-in run leaves.
+#[test]
+fn doctor_reports_a_cached_update_answer_it_did_not_fetch() {
+    let dir = scratch("update-cache");
+    let data_home = dir.join("data");
+    std::fs::create_dir_all(data_home.join("ai-usage-tui")).expect("data home");
+    let cache = data_home.join("ai-usage-tui").join("update-check.json");
+
+    let doctor = |tag: &str| -> String {
+        std::fs::write(
+            &cache,
+            format!("{{\"latest\":\"{tag}\",\"checked\":1700000000}}"),
+        )
+        .expect("plant the cache");
+        let output = hermetic(bin().arg("--doctor"))
+            // Overrides the pin `hermetic` sets: this test wants the cache read.
+            .env("XDG_DATA_HOME", &data_home)
+            .output()
+            .expect("run --doctor");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).expect("utf8")
+    };
+
+    // A release this build has not caught up with: reported, and named as what the header shows.
+    let text = doctor("v99.0.0");
+    assert!(
+        text.contains("not checked"),
+        "the check should still be off:\n{text}"
+    );
+    assert!(
+        text.contains("v99.0.0") && text.contains("earlier check"),
+        "the cached answer is not reported:\n{text}"
+    );
+    assert!(
+        text.contains("dashboard header shows it"),
+        "--doctor does not say the header is showing it:\n{text}"
+    );
+
+    // One the build has passed: still disclosed, but not claimed to be on screen.
+    let text = doctor("v0.0.1");
+    assert!(text.contains("v0.0.1"), "{text}");
+    assert!(
+        !text.contains("dashboard header shows it"),
+        "a superseded cache is claimed to be on screen:\n{text}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

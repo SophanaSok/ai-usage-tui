@@ -66,6 +66,14 @@ pub struct App {
     /// immutable data, and re-reading the table per refresh would put file I/O behind the
     /// render loop.
     pub(super) pricing: PricingEngine,
+    /// A newer release, if an opted-in `--doctor` run left one in the update cache. Read once
+    /// here, exactly as `pricing` is: the header redraws several times a second and convention 5
+    /// keeps file reads off that path. A release that appears mid-session is therefore seen at
+    /// the next start, which is the trade the cache exists to make.
+    ///
+    /// `pub` so the screenshot renderer can clear it, as it pins the clock: it is a fact about
+    /// the machine that built the image, and it does not belong in a README.
+    pub update_notice: Option<String>,
     pub alerts: Vec<Alert>,
     /// Alerts are handed to a worker thread; the webhook POST is blocking and must never
     /// happen on the render path.
@@ -368,6 +376,7 @@ impl App {
             sorts: std::collections::HashMap::new(),
             show_help: false,
             pricing: PricingEngine::load(),
+            update_notice: crate::update::header_notice(),
             alerts: Vec::new(),
             alert_sink,
             view: DerivedView::default(),

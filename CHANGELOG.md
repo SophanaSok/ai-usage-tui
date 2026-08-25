@@ -36,6 +36,43 @@
   block, the model and the timestamp and nothing else; a test plants a credential in the
   content and fails if it reaches the event.
 
+- **A new release is surfaced on the dashboard, not only by `--doctor`.** `[update] check = true`
+  has been able to ask GitHub for the latest release tag since v0.9.0, but the answer was printed
+  once and forgotten, so a user who never ran `--doctor` never learned a release existed. The
+  check now writes its answer to `update-check.json` beside the pricing cache, and the dashboard
+  reads it **once at startup** and names a newer release in its header. The indirection is the
+  feature: the header redraws several times a second and must never acquire a network call or a
+  clock read, so the check stays exactly where it was and only its answer travels.
+
+  What is cached is the tag, never the verdict — a cache written before an upgrade would
+  otherwise go on claiming an update after it — so the comparison is made against the running
+  binary every time and a stale cache can only understate. `--doctor` reports a cached answer
+  even when the check is off, because a user who turned it off and still sees the header notice
+  has nowhere else to find out why.
+
+  The notice also broke the header the way the footer broke once. It is 11 columns wide, an
+  80-column header fitted exactly without it, and a `Paragraph` truncates in silence — so the
+  collector status, the one thing on that bar that must never disappear quietly, went off the
+  end. `LIVE PROVIDER MONITOR` is decoration and now yields to it, by measurement rather than at
+  a written-down width.
+
+  And it became the third thing to leak the author's machine into the README images. The
+  screenshot renderer builds a real `App`, so on any machine with a cached answer every image
+  would have carried `↑ vX.Y.Z` — a fact about one install, pinned into the README until the
+  next regeneration, where it would read as a claim about the release being documented. It is
+  cleared there now, as the clock is pinned; the two before it were the real OpenCode database
+  and Omarchy's real rate-limit window.
+
+- **`scripts/install.sh` says what it replaced.** Re-running it to upgrade was silent, so an
+  upgrade and a fresh install looked identical. It now names the version it is replacing, says
+  "reinstalling" when the tag already matches, and reports when the existing binary's version
+  could not be read at all. It also covers the case that actually bites and that nothing
+  anywhere caught before: after installing, if the name still resolves to a *different* copy
+  earlier on `PATH`, it says so and names both paths — two copies from two channels, with the
+  user upgrading one and running the other, is the failure `--doctor`'s channel detection was
+  written for. Deliberately never "upgrading" or "downgrading": ordering two versions needs more
+  than a string comparison and `sort -V` is not POSIX, so both are named instead.
+
 ### Changed
 
 - **The footer reads the bindings table, and fits itself by measuring.** `ui::keys` was written

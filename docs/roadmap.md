@@ -309,17 +309,39 @@ Remaining:
   `reviewer` and `reasoning` then share a model — which weakens rule 3 (prefer a reviewer on a
   different provider from the agent that wrote the code) when `reasoning` did the writing.
 
-### P2 — The update story, half done
+### P2 — The update story
 
 `--doctor` reports which channel this binary came from and the exact command to upgrade it, and
-`[update] check = true` opts in to a release-tag check. What is not done:
+`[update] check = true` opts in to a release-tag check.
 
-- **Nothing surfaces a new release outside `--doctor`.** A user who never runs it never learns.
-  The dashboard header is the obvious place and is deliberately not used yet: it refreshes several
-  times a second and must not acquire a network call or a clock read (convention 5). A cached
-  answer written by the opt-in check, read from disk on start, would fit.
-- **`scripts/install.sh` does not detect an existing install**, so upgrading by re-running it is
-  silent about what it replaced.
+- **Resolved. A new release is surfaced outside `--doctor`.** The opt-in check writes its answer
+  to `update-check.json`; the dashboard reads it *once at startup* (`App::update_notice`, beside
+  `pricing`, for the same reason) and names the release in its header. The cache is the whole
+  point: the header redraws several times a second and convention 5 keeps both the network call
+  and the clock read off that path. The verdict is deliberately **not** stored — only the tag —
+  so a cache written before an upgrade stops claiming an update after it, and a stale cache can
+  only understate. `--doctor` discloses a cached answer even when the check is off, because
+  otherwise a user who turned the check off and still sees a notice has nowhere to look.
+
+  Two things worth knowing. **The notice broke the header the way the footer broke once:** it is
+  11 columns, an 80-column header fitted exactly before it, and a `Paragraph` truncates in
+  silence — so the collector status, the one thing that must never vanish quietly, went off the
+  end. `LIVE PROVIDER MONITOR` now yields to it, measured rather than thresholded. And **only
+  `--doctor` writes the cache**, so a user who never runs it still never learns. Closing that
+  needs a periodic writer: a collector on the `zen_pricing` shape, or the `contrib/` timer.
+  Deliberately not added here — it would turn an explicit "ask when I run `--doctor`" opt-in
+  into a recurring background request, which is a different consent than the one given.
+
+  It was also the third thing to leak this machine into the README images: `render-screenshots`
+  builds a real `App`, so a cached answer put `↑ vX.Y.Z` in all seven headers. Cleared in the
+  renderer. Anything `App::new` reads from a real path is a candidate for the same mistake — the
+  first two were the OpenCode database and Omarchy's records.
+- **Resolved. `scripts/install.sh` detects an existing install.** It names the version it is
+  replacing (or says the version could not be read), says "reinstalling" when the tag matches,
+  and — the case that actually bites — warns after installing when `command -v` still resolves
+  to a different copy earlier on `PATH`, naming both. Deliberately does not say "upgrading" or
+  "downgrading": ordering two versions needs more than string comparison and `sort -V` is not
+  POSIX, so both are named instead, which cannot be wrong.
 - **Channel detection is inference, not fact.** A binary copied out of `~/.cargo/bin` reports as
   cargo. Recording the channel at install time would be exact, but only `install.sh` and the
   packaging manifests could write it, and a file the binary trusts about itself is a new thing to

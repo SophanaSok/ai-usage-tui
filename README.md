@@ -105,6 +105,11 @@ into `~/.local/bin` — `--dir PATH` to choose somewhere else, `--version vX.Y.Z
 to pin a release. It refuses to install anything it could not verify, and names
 the source build on a platform with no prebuilt binary.
 
+Re-run it to upgrade. It names the version it replaced, and — the case that
+actually bites — warns when a copy installed by some other channel sits earlier
+on your `PATH` and will go on being the one that runs. `--doctor` names the
+channel each copy came from.
+
 ### Manual download
 
 If you would rather not pipe a script into your shell:
@@ -896,6 +901,12 @@ On Windows, `USERPROFILE` (or `HOMEDRIVE` + `HOMEPATH`) stands in for `HOME`,
   dashboard's refresh path. It is a plain GET of a public endpoint: no usage
   data, no identifiers, no query parameters. The User-Agent names the tool and
   its version because GitHub's API requires one.
+- That answer is cached in the tool's own data directory, and the dashboard
+  reads it **once at startup** to show a newer release in its header. The cache
+  is what keeps the header offline: it redraws several times a second and never
+  makes a request or reads a clock. Nothing else writes it, so with the check
+  off the header stays silent — except for an answer an earlier opted-in run
+  already left, which `--doctor` discloses.
 - Reporting **how this copy was installed and how to upgrade it** needs no
   network at all. `--doctor` reads it off the running binary's own path, so it
   is always on and works offline.
@@ -912,6 +923,7 @@ Default local storage paths (when the corresponding XDG variable is unset):
 | Ollama and routing journal | `~/.local/share/ai-usage-tui/usage.db` |
 | Zen pricing cache | `~/.local/share/ai-usage-tui/zen-pricing.toml` |
 | Zen model catalog | `~/.local/share/ai-usage-tui/zen-models.json` |
+| Latest-release answer, written only by an opted-in `--doctor` | `~/.local/share/ai-usage-tui/update-check.json` |
 | Configuration | `~/.config/ai-usage-tui/config.toml` |
 
 ## Troubleshooting
