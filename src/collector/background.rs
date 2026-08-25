@@ -36,6 +36,16 @@ pub trait Collector: Send + 'static {
     fn refreshes_pricing(&self) -> bool {
         false
     }
+
+    /// A note about the last successful poll that belongs on the status line — rows the read
+    /// had to skip, for instance. Read after `poll` returns `Ok`; `None` clears it.
+    ///
+    /// A poll that succeeds with something missing is the case `is_degraded`'s own doc
+    /// describes ("the totals on screen might be missing data without saying so"), and until
+    /// this existed the only place such a note could go was a log that is off by default.
+    fn warning(&self) -> Option<String> {
+        None
+    }
 }
 
 /// What a collector thread is doing, as far as the dashboard is concerned.
@@ -79,6 +89,10 @@ pub struct Health {
     pub interval: Duration,
     pub last_ok: Option<Instant>,
     pub last_error: Option<String>,
+    /// From the collector's last successful poll: something it read around rather than
+    /// through. Shown on the status line and counted as degraded, because it is data the
+    /// totals on screen are missing.
+    pub warning: Option<String>,
     pub consecutive_failures: u32,
     pub restarts: u32,
 }
@@ -90,6 +104,7 @@ impl Health {
             interval,
             last_ok: None,
             last_error: None,
+            warning: None,
             consecutive_failures: 0,
             restarts: 0,
         }
@@ -109,7 +124,7 @@ impl Health {
     }
 
     pub fn is_degraded(&self, now: Instant) -> bool {
-        self.liveness.is_degraded() || self.is_stale(now)
+        self.liveness.is_degraded() || self.is_stale(now) || self.warning.is_some()
     }
 }
 
@@ -168,7 +183,7 @@ impl CollectorState {
             .or_insert_with(|| Health::new(Duration::from_secs(30)))
     }
 
-    fn merge(&mut self, name: &str, usages: Vec<Usage>, source: String) {
+    fn merge(&mut self, name: &str, usages: Vec<Usage>, source: String, warning: Option<String>) {
         for u in usages {
             if self.seen.insert(usage_key(&u)) {
                 self.usages.push(u);
@@ -181,6 +196,7 @@ impl CollectorState {
         health.liveness = Liveness::Live;
         health.last_ok = Some(Instant::now());
         health.last_error = None;
+        health.warning = warning;
         health.consecutive_failures = 0;
     }
 
@@ -287,6 +303,7 @@ impl CollectorHandle {
                         Ok(Ok(usages)) => {
                             let source = format!("{}: ok", name);
                             let count = usages.len();
+                            let warning = collector.warning();
                             // Built *before* the lock is taken. A new cache on disk is worth
                             // nothing until the engine reads it -- but reading and parsing it
                             // while holding the write lock would block `snapshot()` on the render
@@ -295,7 +312,7 @@ impl CollectorHandle {
                             let reloaded =
                                 refreshes_pricing.then(|| Arc::new(PricingEngine::load()));
                             let mut s = write_state(&state);
-                            s.merge(&name, usages, source);
+                            s.merge(&name, usages, source, warning);
                             match reloaded {
                                 Some(pricing) => s.reload_pricing(pricing),
                                 None => s.apply_pricing(),
@@ -395,9 +412,11 @@ impl CollectorHandle {
                 } else {
                     health.liveness.label()
                 };
-                match &health.last_error {
-                    Some(error) => format!("{} {}: {}", name, label, error),
-                    None => format!("{} {}", name, label),
+                match (&health.last_error, &health.warning) {
+                    (Some(error), _) => format!("{} {}: {}", name, label, error),
+                    // Live, and saying what it could not read.
+                    (None, Some(warning)) => format!("{}: {}", name, warning),
+                    (None, None) => format!("{} {}", name, label),
                 }
             })
             .collect();
@@ -541,8 +560,8 @@ mod tests {
             input: 100,
             ..Default::default()
         };
-        state.merge("a", vec![u1.clone()], "a: ok".into());
-        state.merge("a", vec![u1], "a: ok".into());
+        state.merge("a", vec![u1.clone()], "a: ok".into(), None);
+        state.merge("a", vec![u1], "a: ok".into(), None);
         assert_eq!(state.usages.len(), 1);
     }
 
@@ -578,8 +597,8 @@ mod tests {
         };
         // Separate merges on purpose: the old key was compared against a snapshot taken at
         // the top of each merge, so collapsing only showed up ACROSS polls, not within one.
-        state.merge("opencode", vec![first], "opencode: ok".into());
-        state.merge("opencode", vec![second], "opencode: ok".into());
+        state.merge("opencode", vec![first], "opencode: ok".into(), None);
+        state.merge("opencode", vec![second], "opencode: ok".into(), None);
         assert_eq!(
             state.usages.len(),
             2,
@@ -602,8 +621,8 @@ mod tests {
             created: 1_700_000_060,
             ..first.clone()
         };
-        state.merge("opencode", vec![first], "opencode: ok".into());
-        state.merge("opencode", vec![second], "opencode: ok".into());
+        state.merge("opencode", vec![first], "opencode: ok".into(), None);
+        state.merge("opencode", vec![second], "opencode: ok".into(), None);
         assert_eq!(state.usages.len(), 2);
     }
 
@@ -620,9 +639,9 @@ mod tests {
             ..Default::default()
         };
         // The collector re-reads the same rows every poll; replays must be idempotent.
-        state.merge("opencode", vec![usage.clone()], "opencode: ok".into());
-        state.merge("opencode", vec![usage.clone()], "opencode: ok".into());
-        state.merge("opencode", vec![usage], "opencode: ok".into());
+        state.merge("opencode", vec![usage.clone()], "opencode: ok".into(), None);
+        state.merge("opencode", vec![usage.clone()], "opencode: ok".into(), None);
+        state.merge("opencode", vec![usage], "opencode: ok".into(), None);
         assert_eq!(state.usages.len(), 1);
     }
 
@@ -714,15 +733,38 @@ mod tests {
                 ..Default::default()
             }],
             "opencode: ok".into(),
+            None,
         );
         assert_eq!(read_state(&state).usages.len(), 1);
+    }
+
+    #[test]
+    fn a_warning_from_a_successful_poll_marks_the_source_degraded_and_says_why() {
+        // A poll that succeeds with something missing is data the totals are missing without
+        // saying so — `is_degraded`'s own definition — and it used to reach only the log.
+        let mut state = CollectorState::new(Arc::new(PricingEngine::bundled()));
+        state.register("journal", Duration::from_secs(60));
+        state.merge(
+            "journal",
+            Vec::new(),
+            "journal: ok".into(),
+            Some("1 row(s) unreadable".into()),
+        );
+        let health = state.health.get("journal").expect("registered");
+        assert!(health.is_degraded(Instant::now()));
+        assert_eq!(health.warning.as_deref(), Some("1 row(s) unreadable"));
+
+        // And it clears when the next poll has nothing to say.
+        state.merge("journal", Vec::new(), "journal: ok".into(), None);
+        let health = state.health.get("journal").expect("registered");
+        assert!(!health.is_degraded(Instant::now()));
     }
 
     #[test]
     fn degraded_collectors_are_named_in_the_status_line() {
         let mut state = CollectorState::for_test();
         state.register("opencode", Duration::from_secs(30));
-        state.merge("opencode", vec![], "opencode: ok".into());
+        state.merge("opencode", vec![], "opencode: ok".into(), None);
         state.register("claude_code", Duration::from_secs(30));
         state.record_error("claude_code", "permission denied".into());
 
@@ -800,6 +842,7 @@ mod pricing_reload_tests {
             "test",
             vec![unpriced_row("claude-sonnet-4-5")],
             "test: ok".into(),
+            None,
         );
         state.apply_pricing();
 

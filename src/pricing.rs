@@ -764,6 +764,8 @@ pub fn apply_estimated_pricing(usages: &mut [Usage], engine: &PricingEngine) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn a_tier_key_that_does_not_parse_is_reported_and_not_applied_to_every_request() {
         // Restore the bug with `stripped.parse().unwrap_or(0)`: the tier's threshold becomes 0,
@@ -795,8 +797,6 @@ mod tests {
         assert_eq!(engine.resolve_tier("m", base, 1_000_000).input, Some(100.0));
         assert_eq!(engine.resolve_tier("m", base, 1_000).input, base.input);
     }
-
-    use super::*;
 
     #[test]
     fn free_models_return_zero_cost() {

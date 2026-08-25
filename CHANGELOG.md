@@ -120,8 +120,10 @@
   as a refused export rather than a partial table. The usage reader keeps the rows it can read,
   because one corrupt Ollama row must not take every command down, but counts the ones it
   cannot: the count is on the source's status line — the `--once` header and `--json`'s
-  `source` — and `--doctor` adds the first reason; the live dashboard's collector writes it to
-  the log.
+  `source` — `--doctor` adds the row's id and the first reason, and the live dashboard marks the
+  source degraded in its header with the count, rather than writing it to a log that is off by
+  default. A file that cannot be stepped past a point is the whole read's error, distinct from a
+  row that steps and does not map.
 
 - **`--doctor` tells the truth about pricing, and a tier that cannot be read prices nothing.**
   `PricingEngine::load` collected warnings — the refreshed cache is unreadable, invalid, or too

@@ -396,10 +396,6 @@ impl Collector for ZenPricingCollector {
     }
 }
 
-/// One-shot read for the source registry.
-///
-/// Not a usage source: the cached catalog only enriches pricing. It is reported anyway, because
-/// "why is this row unpriced" is often answered by whether this file is there.
 /// One-shot read for the source registry: whether the refreshed pricing cache exists.
 ///
 /// The cache is what `--refresh-pricing` writes and `PricingEngine::load` reads. This used to

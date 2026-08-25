@@ -307,15 +307,17 @@ Remaining:
 
 ### P3 — Small, known, unclaimed
 
-Each of these is an afternoon at most, and each is a reasonable first outside contribution.
+Each open item here is an afternoon at most, and each is a reasonable first outside contribution.
 
-- **Resolved differently: `src/collector/zen.rs` stays untested, and the defect was elsewhere.**
-  There was nothing to split — `refresh_zen_catalog`'s entire "parse" is `to_vec_pretty` on a
-  `Value` — and a test that the path ends in `zen-models.json` is what convention 6 forbids. The
-  real defect was that `--doctor`'s `zen_pricing` line described that catalog, which nothing
-  prices from, and told a user with `UNKNOWN COST` rows to run `--refresh-zen`. It now reports
-  the pricing cache `--refresh-pricing` writes and `PricingEngine::load` reads, and a `PRICING`
-  section carries the engine's warnings, which had no production reader at all.
+One that was listed here is resolved, differently from how it was written: `src/collector/zen.rs`
+stays untested, because there was nothing to split — `refresh_zen_catalog`'s entire "parse" is
+`to_vec_pretty` on a `Value` — and a test that the path ends in `zen-models.json` is what
+convention 6 forbids. The real defect was that `--doctor`'s `zen_pricing` line described that
+catalog, which nothing prices from, and told a user with `UNKNOWN COST` rows to run
+`--refresh-zen`. It now reports the pricing cache `--refresh-pricing` writes and
+`PricingEngine::load` reads, and a `PRICING` section carries the engine's warnings, which had no
+production reader at all.
+
 - **The README's "Data sources" section is the longest one left**, at roughly 140 lines. The two
   provider billing essays already moved to `docs/provider-support.md`; the per-provider parsing
   detail is the obvious next candidate, leaving a table and the paths.

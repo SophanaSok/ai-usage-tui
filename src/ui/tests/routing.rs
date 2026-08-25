@@ -215,13 +215,8 @@ fn a_refresh_leaves_the_routing_panel_in_its_default_order() {
     use crate::collector::SourceRoots;
     use serde_json::json;
 
-    let dir = std::env::temp_dir().join(format!(
-        "ai-usage-tui-routing-refresh-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
-    let journal = dir.join("usage.db");
+    let scratch = ScratchDir::new("routing-refresh");
+    let journal = scratch.0.join("usage.db");
     // The pricier-per-success agent has the most tokens, so token order and cost order differ.
     for (agent, tokens, cost) in [("pricey", 500_000, 8.0), ("cheap", 1_000, 0.5)] {
         record_routing_event(
@@ -249,7 +244,45 @@ fn a_refresh_leaves_the_routing_panel_in_its_default_order() {
         ["cheap", "pricey"],
         "cheapest per delivered result should lead after a refresh"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn switching_panels_clamps_the_cursor_to_the_new_list() {
+    // The cursor is an index into whichever list is showing. Left where the model table put
+    // it, on a shorter routing table it pointed past the end: no row highlighted, `k` unable to
+    // bring it back, and on Projects `Enter` a silent no-op.
+    use crate::ui::app::Panel;
+    let usages: Vec<Usage> = (0..8)
+        .map(|i| {
+            let mut u = usage(None, None, Some(1.0), 100);
+            u.model = format!("model-{i}");
+            u
+        })
+        .collect();
+    let mut app = test_app(usages);
+    app.recompute();
+    assert_eq!(app.rows().len(), 8);
+    app.selected = 5;
+    app.set_routing_for_test(vec![
+        routing_agg("alpha", "m", 4, 1.0, 4, 0),
+        routing_agg("beta", "m", 4, 2.0, 4, 0),
+    ]);
+
+    app.toggle_panel(Panel::Routing);
+    assert!(
+        app.selected < app.visible_rows(),
+        "cursor at {} on a list of {}",
+        app.selected,
+        app.visible_rows()
+    );
+    let buffer = render_panel_buffer(84, 6, |frame, area| {
+        crate::ui::panels::routing::draw_routing(frame, area, &app)
+    });
+    let (row, highlighted) = find_row(&buffer, "beta");
+    assert!(
+        highlighted,
+        "no row carries the cursor after the switch:\n{row}"
+    );
 }
 
 /// The text of one agent's row, from its name to its token count.

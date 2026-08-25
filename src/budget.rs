@@ -192,7 +192,7 @@ impl BudgetsConfig {
             }
             if !(entry.limit.is_finite() && entry.limit > 0.0) {
                 return Err(anyhow::anyhow!(
-                    "{at}: `limit` must be greater than 0, got {}",
+                    "{at}: `limit` must be a finite number greater than 0, got {}",
                     entry.limit
                 ));
             }
@@ -200,8 +200,8 @@ impl BudgetsConfig {
                 if let Some(pct) = value {
                     if !(pct.is_finite() && pct > 0.0 && pct <= 100.0) {
                         return Err(anyhow::anyhow!(
-                            "{at}: `{key}` is a percentage of `limit` and must be between 0 and \
-                             100, got {pct}"
+                            "{at}: `{key}` is a percentage of `limit` and must be above 0 and at \
+                             most 100, got {pct}"
                         ));
                     }
                 }
@@ -209,9 +209,20 @@ impl BudgetsConfig {
             let warn = entry.warn.unwrap_or(DEFAULT_WARN_PCT);
             let critical = entry.critical.unwrap_or(DEFAULT_CRITICAL_PCT);
             if warn >= critical {
+                // Say which side was implied: a `warn = 95` with no `critical` fails against a
+                // number the user never typed.
+                let shown = |value: f64, given: bool| {
+                    if given {
+                        format!("{value}")
+                    } else {
+                        format!("{value}, the default")
+                    }
+                };
                 return Err(anyhow::anyhow!(
-                    "{at}: `warn` ({warn}) must be below `critical` ({critical}), or the warning \
-                     level can never be reached"
+                    "{at}: `warn` ({}) must be below `critical` ({}), or the warning level can \
+                     never be reached",
+                    shown(warn, entry.warn.is_some()),
+                    shown(critical, entry.critical.is_some())
                 ));
             }
         }
@@ -234,12 +245,11 @@ impl BudgetEngine {
                 // without one gets an empty scope, which matches nothing rather than everything.
                 scope: match e.scope {
                     BudgetScopeKind::Global => BudgetScope::Global,
-                    BudgetScopeKind::Provider => {
-                        BudgetScope::Provider(e.name.clone().unwrap_or_default())
-                    }
-                    BudgetScopeKind::Model => {
-                        BudgetScope::Model(e.name.clone().unwrap_or_default())
-                    }
+                    // Trimmed once here, so the scope the engine matches on is the one
+                    // validation approved: `" openai"` passes the emptiness check and would
+                    // otherwise never equal a row's `openai`.
+                    BudgetScopeKind::Provider => BudgetScope::Provider(trimmed_name(e)),
+                    BudgetScopeKind::Model => BudgetScope::Model(trimmed_name(e)),
                 },
                 period: e.period,
                 limit: e.limit,
@@ -300,6 +310,16 @@ impl BudgetEngine {
             })
             .collect()
     }
+}
+
+/// The entry's name with the padding a user may have typed inside the quotes removed.
+fn trimmed_name(entry: &BudgetEntry) -> String {
+    entry
+        .name
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn period_cutoff(period: BudgetPeriod) -> i64 {
@@ -656,6 +676,19 @@ mod tests {
         );
         // And the anti-test: a named one is fine.
         validate(vec![entry(BudgetScopeKind::Provider, Some("openai"), 10.0)]).unwrap();
+        // Padding inside the quotes passes validation and is trimmed on the way in, so the
+        // scope the engine matches is the one validation approved — not `" openai "`, which
+        // would have matched nothing and sat at OK like the nameless entry it replaced.
+        let padded = entry(BudgetScopeKind::Provider, Some(" openai "), 10.0);
+        validate(vec![padded.clone()]).unwrap();
+        let engine = BudgetEngine::from_config(&BudgetsConfig {
+            entry: vec![padded],
+            ..Default::default()
+        });
+        assert_eq!(
+            engine.budgets()[0].scope,
+            BudgetScope::Provider("openai".into())
+        );
     }
 
     #[test]
@@ -687,13 +720,16 @@ mod tests {
         let mut over = entry(BudgetScopeKind::Global, None, 10.0);
         over.warn = Some(150.0);
         let error = validate(vec![over]).unwrap_err();
-        assert!(error.contains("between 0 and 100"), "{error}");
+        assert!(error.contains("at most 100"), "{error}");
 
         // A warn above the default critical is the same inversion with one side implied.
         let mut implied = entry(BudgetScopeKind::Global, None, 10.0);
         implied.warn = Some(95.0);
         let error = validate(vec![implied]).unwrap_err();
-        assert!(error.contains("must be below"), "{error}");
+        assert!(
+            error.contains("must be below") && error.contains("90, the default"),
+            "{error}"
+        );
 
         let mut fine = entry(BudgetScopeKind::Global, None, 10.0);
         fine.warn = Some(50.0);

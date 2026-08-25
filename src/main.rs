@@ -443,7 +443,8 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
     // bundled rates happened in silence and an `UNKNOWN COST` row had no explanation anywhere.
     let _ = writeln!(out, "\nPRICING");
     let engine = ai_usage_tui::pricing::PricingEngine::load();
-    let _ = writeln!(out, "  bundled      {} models priced", engine.model_count());
+    // The count is the loaded table's: the bundled one, plus the cache below when it is in use.
+    let _ = writeln!(out, "  models       {} priced", engine.model_count());
     match ai_usage_tui::collector::pricing_refresh::pricing_cache_path() {
         Some(path) if path.exists() => {
             let days = std::fs::metadata(&path)
@@ -451,12 +452,23 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
                 .ok()
                 .and_then(|modified| modified.elapsed().ok())
                 .map(|age| age.as_secs() / 86_400);
+            // A cache the engine refused — too old, unreadable, invalid — names its path in a
+            // warning; a cache line that read as "in use" beside that warning was two answers.
+            let shown = path.display().to_string();
+            let disposition = if engine.warnings().iter().any(|w| w.contains(&shown)) {
+                "ignored — see warning"
+            } else {
+                "in use"
+            };
             match days {
                 Some(days) => {
-                    let _ = writeln!(out, "  cache        {} ({days} days old)", path.display());
+                    let _ = writeln!(
+                        out,
+                        "  cache        {shown} ({days} days old; {disposition})"
+                    );
                 }
                 None => {
-                    let _ = writeln!(out, "  cache        {}", path.display());
+                    let _ = writeln!(out, "  cache        {shown} ({disposition})");
                 }
             }
         }

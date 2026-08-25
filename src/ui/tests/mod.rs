@@ -169,6 +169,25 @@ fn render_panel(
         .collect()
 }
 
+/// A scratch directory removed when the test ends, panicking or not.
+struct ScratchDir(PathBuf);
+
+impl ScratchDir {
+    fn new(name: &str) -> Self {
+        let dir =
+            std::env::temp_dir().join(format!("ai-usage-tui-ui-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        Self(dir)
+    }
+}
+
+impl Drop for ScratchDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Render a panel and keep the buffer, for assertions on style rather than text.
 fn render_panel_buffer(
     w: u16,

@@ -540,6 +540,10 @@ impl App {
         } else {
             panel
         };
+        // The cursor is an index into whichever list is showing, and the lists differ in
+        // length. Left where it was, a cursor from the model table could sit past the end of
+        // the routing table: nothing highlighted, `k` unable to bring it back, `Enter` a no-op.
+        self.selected = self.selected.min(self.visible_rows().saturating_sub(1));
     }
 
     /// Order each panel's list by its current sort.

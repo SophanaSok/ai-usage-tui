@@ -73,13 +73,43 @@ pub(crate) fn load_journal_counting(path: &Path) -> Result<(Vec<Usage>, Option<S
         |row| row.get(0),
     )?;
     let mut stmt = conn.prepare(if has_event_id {
-        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, event_id FROM usage_event"
+        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, event_id, id FROM usage_event"
     } else {
-        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, NULL AS event_id FROM usage_event"
+        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, NULL AS event_id, id FROM usage_event"
     })?;
-    let rows = stmt.query_map([], |row| {
-        let category: String = row.get(2)?;
-        let cost_status: String = row.get(3)?;
+    let mut rows = stmt.query([])?;
+    let mut usages = Vec::new();
+    let mut skipped = 0usize;
+    let mut first_error = None;
+    let mut position = 0usize;
+    // Driven by hand rather than through `query_map`'s iterator, so the two kinds of failure
+    // are told apart: a step error (`next()?`) means the file cannot be read past this point
+    // and is the whole read's error, while a row that steps but does not map is one row.
+    // Through the iterator, a step error ended the scan after one counted row and everything
+    // after it vanished uncounted.
+    while let Some(row) = rows.next()? {
+        position += 1;
+        match usage_from_row(row) {
+            Ok(usage) => usages.push(usage),
+            Err(error) => {
+                skipped += 1;
+                first_error
+                    .get_or_insert_with(|| format!("{}: {error}", row_name(row, 13, position)));
+            }
+        }
+    }
+    let skipped = (skipped > 0).then(|| SkippedRows {
+        count: skipped,
+        first: first_error.unwrap_or_default(),
+    });
+    Ok((usages, skipped))
+}
+
+/// One `usage_event` row, or why it could not be read.
+fn usage_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Usage> {
+    let category: String = row.get(2)?;
+    let cost_status: String = row.get(3)?;
+    {
         Ok(Usage {
             event_id: row.get(12).ok().flatten(),
             provider: row.get(0)?,
@@ -102,24 +132,17 @@ pub(crate) fn load_journal_counting(path: &Path) -> Result<(Vec<Usage>, Option<S
             session_id: None,
             project: None,
         })
-    })?;
-    let mut usages = Vec::new();
-    let mut skipped = 0usize;
-    let mut first_error = None;
-    for (index, row) in rows.enumerate() {
-        match row {
-            Ok(usage) => usages.push(usage),
-            Err(error) => {
-                skipped += 1;
-                first_error.get_or_insert_with(|| format!("row {}: {}", index + 1, error));
-            }
-        }
     }
-    let skipped = (skipped > 0).then(|| SkippedRows {
-        count: skipped,
-        first: first_error.unwrap_or_default(),
-    });
-    Ok((usages, skipped))
+}
+
+/// How a row is named in an error: by its `id`, which is what a user would look for in the
+/// file, or — if even that cannot be read — by its position in the scan, in a different word
+/// so the two are never confused.
+fn row_name(row: &rusqlite::Row<'_>, id_column: usize, position: usize) -> String {
+    match row.get::<_, i64>(id_column) {
+        Ok(id) => format!("id {id}"),
+        Err(_) => format!("position {position}"),
+    }
 }
 
 /// A token or request count read back from SQLite.
@@ -287,13 +310,38 @@ pub fn load_routing(path: &Path) -> Result<Vec<RoutingEvent>> {
         return Ok(Vec::new());
     }
     let mut stmt = conn.prepare(
-        "SELECT task, phase, agent, model, provider, category, cost_status, requests, tokens, cost, retries, escalations, test_result, review_defects, created FROM routing_event",
+        "SELECT task, phase, agent, model, provider, category, cost_status, requests, tokens, cost, retries, escalations, test_result, review_defects, created, id FROM routing_event",
     )?;
-    let rows = stmt.query_map([], |row| {
-        let category: String = row.get(5)?;
-        let cost_status: String = row.get(6)?;
-        let test_result: Option<i64> = row.get(12)?;
-        let cost: Option<f64> = row.get(9)?;
+    // Strict, unlike `load_journal`: a row this tool wrote and cannot read back is a corrupt
+    // journal, and the two callers already put an error where it is seen — the dashboard's
+    // status line, and a refused export rather than a partial table. `filter_map(Result::ok)`
+    // dropped the row and reported the rest as the whole.
+    let mut rows = stmt.query([])?;
+    let mut events = Vec::new();
+    let mut position = 0usize;
+    while let Some(row) = rows.next()? {
+        position += 1;
+        match routing_from_row(row) {
+            Ok(event) => events.push(event),
+            Err(error) => {
+                return Err(anyhow::anyhow!(
+                    "routing_event {} could not be read ({error}); the journal is corrupt or \
+                     was written by a newer version",
+                    row_name(row, 15, position)
+                ))
+            }
+        }
+    }
+    Ok(events)
+}
+
+/// One `routing_event` row, or why it could not be read.
+fn routing_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutingEvent> {
+    let category: String = row.get(5)?;
+    let cost_status: String = row.get(6)?;
+    let test_result: Option<i64> = row.get(12)?;
+    let cost: Option<f64> = row.get(9)?;
+    {
         Ok(RoutingEvent {
             task: row.get(0)?,
             phase: row.get(1)?,
@@ -311,22 +359,7 @@ pub fn load_routing(path: &Path) -> Result<Vec<RoutingEvent>> {
             review_defects: row.get(13)?,
             created: row.get(14)?,
         })
-    })?;
-    // Strict, unlike `load_journal`: a row this tool wrote and cannot read back is a corrupt
-    // journal, and the two callers already put an error where it is seen — the dashboard's
-    // status line, and a refused export rather than a partial table. `filter_map(Result::ok)`
-    // dropped the row and reported the rest as the whole.
-    rows.enumerate()
-        .map(|(index, row)| {
-            row.map_err(|error| {
-                anyhow::anyhow!(
-                    "routing_event row {} could not be read ({error}); the journal is corrupt \
-                     or was written by a newer version",
-                    index + 1
-                )
-            })
-        })
-        .collect()
+    }
 }
 
 pub fn record_routing(path: &Path) -> Result<()> {
@@ -570,6 +603,9 @@ fn test_result(json: &Value) -> Result<Option<bool>> {
 pub struct JournalCollector {
     pub journal_path: PathBuf,
     pub interval_secs: u64,
+    /// What the last poll had to skip, for the live status line. The log is off by default,
+    /// so a count that reached only the log reached the dashboard's user nowhere.
+    pub skipped: Option<String>,
 }
 
 impl Collector for JournalCollector {
@@ -580,7 +616,15 @@ impl Collector for JournalCollector {
         Duration::from_secs(self.interval_secs)
     }
     fn poll(&mut self) -> Result<Vec<Usage>> {
-        load_journal(&self.journal_path)
+        let (usages, skipped) = load_journal_counting(&self.journal_path)?;
+        if let Some(skipped) = &skipped {
+            crate::logging::error(ID, &skipped.to_string());
+        }
+        self.skipped = skipped.map(|s| format!("{} row(s) unreadable", s.count));
+        Ok(usages)
+    }
+    fn warning(&self) -> Option<String> {
+        self.skipped.clone()
     }
 }
 
@@ -601,7 +645,7 @@ pub(crate) fn read(
             // first reason as well.
             status: match (present, &skipped) {
                 (true, Some(skipped)) => format!(
-                    "journal: {} ({} rows unreadable)",
+                    "journal: {} ({} row(s) unreadable)",
                     roots.journal.display(),
                     skipped.count
                 ),
@@ -622,6 +666,7 @@ pub(crate) fn collector(
     Box::new(JournalCollector {
         journal_path: roots.journal.clone(),
         interval_secs,
+        skipped: None,
     })
 }
 
@@ -870,7 +915,9 @@ mod tests {
             events[1].retries, None,
             "the new row can say it was not reported"
         );
-        // An identity is still unique after the rebuild.
+        // An identity is still unique once the recorder has run on the rebuilt table. (The
+        // recorder's own `CREATE UNIQUE INDEX IF NOT EXISTS` would satisfy this too; the
+        // oldest-shape test below observes the index the rebuild itself creates.)
         assert_eq!(
             record_routing_event(&journal, &event("new-task", 2)).expect("record"),
             0
@@ -894,7 +941,7 @@ mod tests {
         drop(conn);
 
         let error = load_routing(&journal).expect_err("a corrupt row is an error");
-        assert!(error.to_string().contains("row 2"), "{error}");
+        assert!(error.to_string().contains("id 2"), "{error}");
     }
 
     #[test]
@@ -926,7 +973,21 @@ mod tests {
         assert_eq!(usages.len(), 1, "the readable row survives");
         let skipped = skipped.expect("the unreadable row is counted");
         assert_eq!(skipped.count, 1);
-        assert!(skipped.first.contains("row 2"), "{}", skipped.first);
+        assert!(skipped.first.contains("id 2"), "{}", skipped.first);
+
+        // The live dashboard reads the count off the collector, not the log — which is off by
+        // default, so a count that reached only the log reached its user nowhere.
+        let mut collector = JournalCollector {
+            journal_path: journal.clone(),
+            interval_secs: 60,
+            skipped: None,
+        };
+        assert_eq!(collector.poll().expect("poll").len(), 1);
+        assert_eq!(
+            collector.warning().as_deref(),
+            Some("1 row(s) unreadable"),
+            "the collector must carry the count to the status line"
+        );
     }
 
     #[test]
