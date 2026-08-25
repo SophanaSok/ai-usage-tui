@@ -1,6 +1,6 @@
 [package]
 name = "ai-usage-tui"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 rust-version = "1.88"
 description = "A btop-inspired terminal dashboard for AI coding-agent token usage, cost and budgets — reads Claude Code, Codex CLI, Gemini CLI, OpenCode and Ollama, live TUI or JSON/CSV."
