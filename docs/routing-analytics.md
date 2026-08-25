@@ -9,7 +9,7 @@ The `t` panel has two blocks, and the split between them is deliberate.
 | Block | Where it comes from | What it can say |
 | --- | --- | --- |
 | **ESCALATIONS** | Derived from usage already collected. No setup. | Which sessions reached for a pricier model than they opened with, and what that cost |
-| **ROUTING** | Recorded by your harness via `--record-routing` | Cost per passing test, retry / escalation / defect rates |
+| **ROUTING** | Recorded by your harness via `--record-routing`, or by the Claude Code hook | Cost per passing test, retry / escalation / defect rates |
 
 They are never merged. A measured pass rate and an inferred transition would be
 indistinguishable in one table, which is the same failure `CostStatus` exists to prevent one
@@ -80,6 +80,80 @@ Events are deduplicated on `event_id`, which is yours if you send a non-empty on
 updated. An empty `event_id` is treated as absent rather than as one identity shared by every
 event from a template whose variable was unset. Two events with the same agent, model and task recorded in the same second therefore
 collapse into one unless one of them carries an `event_id` — send one when batching.
+
+## Recording from Claude Code
+
+`--claude-code-hook` is a shipped emitter: Claude Code's own hooks, recording every test run
+the agent makes. [`contrib/claude-code/settings.json`](../contrib/claude-code/settings.json)
+registers it on `PostToolUse` and `PostToolUseFailure` for the `Bash` tool; the
+[README there](../contrib/claude-code/README.md) covers installing and verifying it. The hook
+reads the payload Claude Code writes to its stdin and, when that payload observed a test run,
+journals one event through the same path `--record-routing` takes.
+
+**Which event fired is the result.** Checked against what Claude Code 2.1.245 sends, not its
+reference: a Bash command that exits non-zero fires `PostToolUseFailure` (with the status in
+`error`), and `PostToolUse`'s response for Bash carries no exit code at all. Register one event
+without the other and only passes, or only failures, are recorded.
+
+**What counts as a test run.** The command line must contain a recognised runner at the head of
+a simple command — `cargo test`, `pytest`, `npm test`, `go test`, `just test`, `make check` and
+some forty others, through wrappers like `npx`, `uv run`, `timeout` and leading `VAR=value`
+assignments; the list is `RUNNERS` in `src/harness/shell.rs`. Matching is on the command's
+leading tokens, so `grep "cargo test"`, `echo cargo test` and `cat test.log` are not test runs.
+
+**Whose status the hook sees.** The exit status is the *line's*, not the runner's, and the two
+differ in ways that would record a wrong result. So a line is an observation only when its
+status is the runner's own, in that direction:
+
+| Line | Recorded |
+| --- | --- |
+| `cargo test`, `RUST_BACKTRACE=1 cargo test`, `cargo build; cargo test` | pass and fail |
+| `cargo build && cargo test` | pass only — a failure may be the build's, before a test ran |
+| `cargo test && cargo clippy` | pass only — a failure may be clippy's |
+| `cargo test 2>&1 \| tail -20` | nothing — the status is `tail`'s |
+| `cargo test; echo done`, `cargo test \|\| true`, `cargo test &` | nothing — the runner's status is discarded |
+| `cargo check \|\| cargo test` | nothing — the tests ran only if the check failed |
+| anything with `$(…)`, backticks or a heredoc | nothing — a runner inside them is text, not a run |
+
+A withheld observation is printed with its reason (`Nothing to record: …`), which `claude
+--debug` shows. Run the test command plainly, as the last thing on the line, and both directions
+are recorded. An interrupted command, and one run with `run_in_background`, has no outcome in
+its payload and is never recorded.
+
+**What the event carries.**
+
+| Field | Source |
+| --- | --- |
+| `test_result` | Which hook fired |
+| `agent` | `claude-code`, or `claude-code:<agent_type>` inside a subagent |
+| `model`, `provider` | The last request in the transcript the payload names — the model in use — and `anthropic` |
+| `requests`, `tokens` | The attempt: every request in the transcript that no earlier event of this session has attributed. One API request is written as several assistant lines sharing a `requestId`; they count once |
+| `cost`, `cost_status` | The attempt priced as the dashboard prices its rows: the same billing decision (`--claude-billing`, `~/.claude.json`, Omarchy's record) and the same rate table. A Max or Pro account's attempt is `quota` — real work, no per-request figure — and the panel renders it `on quota`. Any request that should carry a price and does not makes the whole attempt `unavailable` |
+| `task`, `phase` | The working directory, as the Projects panel names it, and `test` |
+| `event_id` | `claude-code:<session_id>:<tool_use_id>`, so a re-delivered hook cannot record a run twice |
+| `retries`, `escalations`, `review_defects` | **Never sent.** A hook cannot count them, so they stay not reported and the panel reads `—`, not `0%` |
+
+The transcript is read with the Claude Code collector's own `parse_line`, which takes the usage
+block, the model and the timestamp from each assistant line and nothing else; a test plants a
+credential in the content and fails if it reaches the event. A transcript that cannot be read
+still records the run — the pass or fail was observed — with nothing attributed, and says so in
+the log (`AI_USAGE_LOG`).
+
+**The attempt runs one request late.** Claude Code appends the assistant line that issued a
+tool call *after* the tool and its hooks have run, so when the hook reads the transcript it
+ends one request early — and that request's timestamp is earlier than the hook's, which is why
+the attempt is bounded by a cursor and not a clock. The cursor is how many requests this
+session's earlier events attributed; everything past it is this attempt. Each request is counted
+exactly once, and the request that issued a test command lands in the attempt behind the *next*
+run. Over a session the sums are the same; the first run's attempt is everything before it, and
+the last run's issuing request is attributed to no run. For the same reason `model` is the model
+in use when the hook ran, which right after a model switch is the model before it.
+
+**What it does not do.** It does not run on Codex or Gemini, which have no equivalent hook
+surface today. It attributes a subagent's run to whatever transcript its payload names, which
+has not been verified against a real subagent session. An attempt with no request in it — a
+session whose first Bash call is a test run — records `tokens: 0` and `unavailable`, and does
+not advance the cursor.
 
 ## Exporting Analytics
 

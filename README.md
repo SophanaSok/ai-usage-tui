@@ -730,8 +730,13 @@ should look like something your harness measured. See
 [docs/routing-analytics.md](docs/routing-analytics.md).
 
 Routing events are separate, opt-in records for evaluating model-selection
-outcomes. Nothing records them for you — emit one per task from whatever drives
-your agents. Record an event as JSON on stdin:
+outcomes. For Claude Code, [`contrib/claude-code/`](contrib/claude-code/README.md)
+registers `--claude-code-hook` on its `PostToolUse` and `PostToolUseFailure` hooks:
+every test run the agent makes is journaled, pass or fail, attributed to the model
+that ran it and to the requests the attempt took — and nothing the hook could not
+observe is sent, so retries and defects stay "not reported" rather than `0`. For
+any other harness, emit one event per task from whatever drives your agents, as
+JSON on stdin:
 
 ```sh
 echo '{
@@ -816,6 +821,7 @@ does not load it automatically.
 | `--check-budgets` | Print actionable budget alerts as JSON |
 | `--webhook URL` | POST budget alerts to this URL (overrides `budgets.webhook`) |
 | `--record-routing` | Read one routing event from stdin and journal it |
+| `--claude-code-hook` | Read a Claude Code `PostToolUse`/`PostToolUseFailure` hook payload from stdin and journal a routing event when it observed a test run |
 | `--routing-json` | Print aggregated routing analytics as JSON |
 | `--routing-csv PATH` | Write aggregated routing analytics as CSV |
 

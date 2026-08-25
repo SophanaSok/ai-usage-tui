@@ -335,6 +335,40 @@ pub fn load_routing(path: &Path) -> Result<Vec<RoutingEvent>> {
     Ok(events)
 }
 
+/// How many requests the events whose `event_id` starts with `prefix` have attributed between
+/// them: a harness's cursor into a transcript it reads more of each time.
+///
+/// An event that attributed nothing stores `requests: 1` — the recorder's floor — and `tokens:
+/// 0`; a request that was attributed always has tokens, so the zero is what says the event
+/// counted no request and must not advance the cursor past one.
+///
+/// A plain prefix comparison rather than `LIKE`, whose `_` and `%` would be wildcards inside
+/// the session id the prefix carries.
+pub fn attributed_requests(path: &Path, prefix: &str) -> Result<u64> {
+    if !path.exists() {
+        return Ok(0);
+    }
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+    )?;
+    conn.busy_timeout(Duration::from_millis(250))?;
+    let has_event_id: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('routing_event') WHERE name = 'event_id')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_event_id {
+        return Ok(0);
+    }
+    let attributed: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(CASE WHEN tokens > 0 THEN requests ELSE 0 END), 0) FROM routing_event WHERE substr(event_id, 1, length(?1)) = ?1",
+        params![prefix],
+        |row| row.get(0),
+    )?;
+    Ok(count(attributed))
+}
+
 /// One `routing_event` row, or why it could not be read.
 fn routing_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutingEvent> {
     let category: String = row.get(5)?;
