@@ -631,13 +631,32 @@ mod tests {
         assert_eq!(events[0].test_result, Some(true));
         assert_eq!(events[1].test_result, Some(false));
 
-        let mut junk = event("t3", 3);
-        junk["test_result"] = json!("maybe");
-        let error = record_routing_event(&journal, &junk).expect_err("junk refused");
-        assert!(error.to_string().contains("test_result"), "{error}");
+        // The same emitter that sends `retries: 2.0` sends `test_result: 1.0`.
+        let mut float = event("t3", 3);
+        float["test_result"] = json!(1.0);
+        record_routing_event(&journal, &float).expect("record");
+        assert_eq!(
+            load_routing(&journal).expect("load")[2].test_result,
+            Some(true)
+        );
+
+        // Only the two documented words, and only 0 or 1: anything else is refused, not stored
+        // as "unobserved" under a success message.
+        for junk in [
+            json!("maybe"),
+            json!("passed"),
+            json!("true"),
+            json!(2),
+            json!(-1),
+        ] {
+            let mut e = event("t4", 4);
+            e["test_result"] = junk.clone();
+            let error = record_routing_event(&journal, &e).expect_err("junk refused");
+            assert!(error.to_string().contains("test_result"), "{junk}: {error}");
+        }
         assert_eq!(
             load_routing(&journal).expect("load").len(),
-            2,
+            3,
             "nothing was stored"
         );
     }
@@ -783,10 +802,55 @@ mod tests {
             events[1].retries, None,
             "the new row can say it was not reported"
         );
-        // The unique index was recreated with the table.
+        // An identity is still unique after the rebuild.
         assert_eq!(
             record_routing_event(&journal, &event("new-task", 2)).expect("record"),
             0
         );
+    }
+
+    #[test]
+    fn the_oldest_journal_shape_is_migrated_in_the_right_order() {
+        // Before `event_id` existed at all: no column, no index. The `ALTER TABLE` that adds the
+        // column has to run before the rebuild, whose `SELECT` names it.
+        let scratch = scratch_journal("migrate-oldest");
+        let journal = scratch.journal.clone();
+        let conn = Connection::open(&journal).expect("open");
+        conn.execute_batch(
+            "CREATE TABLE routing_event (
+                id INTEGER PRIMARY KEY,
+                task TEXT NOT NULL, phase TEXT NOT NULL, agent TEXT NOT NULL,
+                model TEXT NOT NULL, provider TEXT NOT NULL, category TEXT NOT NULL,
+                cost_status TEXT NOT NULL, requests INTEGER NOT NULL, tokens INTEGER NOT NULL,
+                cost REAL, retries INTEGER NOT NULL, escalations INTEGER NOT NULL,
+                test_result INTEGER, review_defects INTEGER NOT NULL, created INTEGER NOT NULL
+            );
+            INSERT INTO routing_event (task, phase, agent, model, provider, category,
+                cost_status, requests, tokens, cost, retries, escalations, test_result,
+                review_defects, created)
+            VALUES ('old-task', '', 'a', 'm', 'p', 'UNKNOWN', 'unavailable', 1, 10, NULL,
+                2, 0, NULL, 0, 1);",
+        )
+        .expect("oldest schema");
+        drop(conn);
+
+        assert_eq!(
+            record_routing_event(&journal, &event("new-task", 2)).expect("record"),
+            1
+        );
+        let mut events = load_routing(&journal).expect("load");
+        events.sort_by_key(|e| e.created);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].retries, Some(2));
+        assert_eq!(events[1].retries, None);
+        let conn = Connection::open(&journal).expect("open");
+        let indexed: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'routing_event_event_id')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query");
+        assert!(indexed, "the identity index was not created by the rebuild");
     }
 }
