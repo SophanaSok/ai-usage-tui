@@ -74,7 +74,8 @@ fn main() -> ExitCode {
     // prevent. This was not hypothetical: the first run of this renderer did it. Omarchy's
     // records are the fifth source and were the second time: left unpinned, the header carried
     // the author's real rate-limit window and the billing decision read their plan tier, so every
-    // Claude row in the demo went `quota` and the images said so.
+    // Claude row in the demo went `quota` and the images said so. The update cache was the third,
+    // and it has no flag because there is nothing to point elsewhere: see `update_notice` below.
     let (Some(journal), Some(_), Some(_), Some(_), Some(_)) = (
         cli.journal_path.clone(),
         cli.claude_dir.as_ref(),
@@ -113,6 +114,12 @@ fn main() -> ExitCode {
         None,
     );
     app.last_refresh = FIXED_CLOCK.to_string();
+    // `App::new` reads the update cache an opted-in `--doctor` leaves behind, so on a machine
+    // where one exists every image would carry `↑ vX.Y.Z` in its header — a fact about the
+    // author's install, pinned into the README until the next regeneration, and one that would
+    // read as a claim about the release being documented. Cleared for the same reason the clock
+    // is pinned.
+    app.update_notice = None;
 
     if app.usages.is_empty() {
         eprintln!("no usage loaded — the images would all be empty; check --claude-dir");

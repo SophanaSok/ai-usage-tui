@@ -25,6 +25,10 @@ refresh_interval = 30
 #
 # `--doctor` always reports which channel this binary came from and the exact command to upgrade
 # it; that is read off the binary's own path and needs no network, so it is not gated on this.
+#
+# What the check finds is cached in the data directory, and the dashboard reads it once at
+# startup to name a newer release in its header. That is the only way a user who never runs
+# `--doctor` learns a release exists, and the cache is what keeps the header off the network.
 [update]
 check = false
 

@@ -542,11 +542,28 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
     let check = config.update.as_ref().is_some_and(|u| u.check);
     if check {
         match ai_usage_tui::update::latest_release_tag() {
-            Ok(tag) if ai_usage_tui::update::is_newer(env!("CARGO_PKG_VERSION"), &tag) => {
-                let _ = writeln!(out, "  latest       {tag} — newer than this build");
-            }
             Ok(tag) => {
-                let _ = writeln!(out, "  latest       {tag} — up to date");
+                if ai_usage_tui::update::is_newer(env!("CARGO_PKG_VERSION"), &tag) {
+                    let _ = writeln!(out, "  latest       {tag} — newer than this build");
+                } else {
+                    let _ = writeln!(out, "  latest       {tag} — up to date");
+                }
+                // The answer outlives this command: the dashboard reads it at startup and puts
+                // a newer release in its header. Without this the check was printed once and
+                // forgotten, so a user who never ran --doctor never learned a release existed.
+                // Cached either way -- an "up to date" answer is what stops a stale cache from
+                // going on claiming an update after the upgrade that satisfied it.
+                match ai_usage_tui::update::write_check_cache(&ai_usage_tui::update::CachedCheck {
+                    latest: tag,
+                    checked: ai_usage_tui::utils::now(),
+                }) {
+                    Ok(path) => {
+                        let _ = writeln!(out, "  cached       {}", path.display());
+                    }
+                    Err(error) => {
+                        let _ = writeln!(out, "  cached       could not be written: {error}");
+                    }
+                }
             }
             // Reported, not swallowed. A check that silently returns nothing is
             // indistinguishable from one that found nothing newer.
@@ -559,6 +576,22 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
             out,
             "  latest       not checked (set [update] check = true to look; needs the network)"
         );
+        // What the dashboard is showing, which is not nothing just because the check is off: an
+        // answer cached by an earlier opted-in run stays in the header until the upgrade that
+        // satisfies it. A user turning the check off and still seeing a notice deserves to find
+        // out from here where it came from.
+        if let Some(cached) = ai_usage_tui::update::read_check_cache() {
+            let _ = writeln!(
+                out,
+                "  cached       {} from an earlier check{}",
+                cached.latest,
+                if ai_usage_tui::update::is_newer(env!("CARGO_PKG_VERSION"), &cached.latest) {
+                    " — the dashboard header shows it"
+                } else {
+                    ""
+                }
+            );
+        }
     }
 
     if !found_any {

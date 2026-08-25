@@ -13,6 +13,7 @@
 #   - verifies the download against the release's own checksums.txt
 #   - unpacks into a scratch directory, because the archive also contains README.md and LICENSE
 #   - creates the target directory and says so when it is not on PATH
+#   - says what it replaced, and warns when another copy earlier on PATH will keep winning
 set -eu
 
 REPO="SophanaSok/ai-usage-tui"
@@ -113,6 +114,32 @@ BASE="https://github.com/$REPO/releases/download/$VERSION"
 
 echo "==> $BIN $VERSION for ${os}-${arch}"
 
+# --- what is already here -------------------------------------------------------------------
+# Re-running this script to upgrade used to be silent about what it replaced, so an upgrade and
+# a fresh install looked identical -- and neither mentioned the case that actually bites: a copy
+# installed by some other channel sitting earlier on PATH, which goes on being the one that runs.
+# Resolved before the install, because that is the state the user is in.
+installed_version() {
+    # `--version` prints "ai-usage-tui X.Y.Z". A binary that will not run -- wrong architecture,
+    # a half-written file -- yields nothing rather than stopping the install.
+    "$1" --version 2>/dev/null | awk 'NR == 1 { print $2 }'
+}
+
+was_on_path="$(command -v "$BIN" 2>/dev/null || true)"
+if [ -e "$DEST/$BIN" ]; then
+    previous="$(installed_version "$DEST/$BIN")"
+    if [ -z "$previous" ]; then
+        echo "    replacing $DEST/$BIN (its version could not be read)"
+    elif [ "$previous" = "${VERSION#v}" ]; then
+        echo "    reinstalling $previous over $DEST/$BIN"
+    else
+        # Deliberately not "upgrading" or "downgrading": ordering two versions correctly needs
+        # more than string comparison, and `sort -V` is not POSIX. Both are named instead, which
+        # cannot be wrong.
+        echo "    replacing $previous at $DEST/$BIN"
+    fi
+fi
+
 WORK="$(mktemp -d)"
 # shellcheck disable=SC2064  # WORK is expanded now on purpose; it never changes.
 trap "rm -rf '$WORK'" EXIT INT TERM
@@ -168,9 +195,24 @@ fi
 echo "==> installed $DEST/$BIN"
 
 # --- PATH -----------------------------------------------------------------------------------
+# Three outcomes, and only the first is the happy one: the name resolves to what was just
+# installed; it resolves to a different copy, which is the one that will keep running; or the
+# directory is not on PATH at all.
 case ":${PATH}:" in
     *":${DEST}:"*)
-        echo "==> run it with: $BIN"
+        now_on_path="$(command -v "$BIN" 2>/dev/null || true)"
+        if [ -n "$now_on_path" ] && [ "$now_on_path" != "$DEST/$BIN" ]; then
+            other="$(installed_version "$now_on_path")"
+            echo
+            echo "Warning: \`$BIN\` still runs $now_on_path${other:+ ($other)}, not the copy"
+            echo "just installed -- it comes earlier on your PATH. Two copies installed by"
+            echo "different channels is the usual cause; \`$DEST/$BIN --doctor\` names the"
+            echo "channel each one came from. Remove the one you do not want, or run this one"
+            echo "explicitly:"
+            echo "    $DEST/$BIN"
+        else
+            echo "==> run it with: $BIN"
+        fi
         ;;
     *)
         echo
@@ -179,5 +221,9 @@ case ":${PATH}:" in
         echo "(put that in ~/.bashrc, ~/.zshrc, or your shell's rc file)"
         echo
         echo "Until then, run it with: $DEST/$BIN"
+        if [ -n "$was_on_path" ]; then
+            echo
+            echo "Note: \`$BIN\` currently runs $was_on_path, which this did not replace."
+        fi
         ;;
 esac

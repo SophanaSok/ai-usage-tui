@@ -13,8 +13,17 @@
 //! - **"Is there anything to upgrade to?"** needs the network, so it is opt-in and off by
 //!   default, exactly as `zen_pricing` is. A tool whose pitch is "reads usage metadata, writes
 //!   nothing, transmits nothing" does not get to phone home because it would be convenient.
+//!
+//! The answer to the second question used to be printed by `--doctor` and then forgotten, so a
+//! user who never ran `--doctor` never learned that a release existed. It is now written to a
+//! small cache ([`check_cache_path`]) which the dashboard reads **once at startup** and shows in
+//! its header. That indirection is the point: the header redraws several times a second and must
+//! never acquire a network call or a clock read (convention 5), so the check stays where it
+//! always was and only its answer travels.
 
 use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
 
 /// The repository releases are published from.
 pub const RELEASES_URL: &str = "https://github.com/SophanaSok/ai-usage-tui/releases";
@@ -191,12 +200,143 @@ pub fn latest_release_tag() -> anyhow::Result<String> {
     Ok(response.json::<Release>()?.tag_name)
 }
 
+/// Where the opt-in check leaves its answer, beside the pricing cache.
+pub fn check_cache_path() -> Option<PathBuf> {
+    Some(crate::utils::data_dir()?.join("update-check.json"))
+}
+
+/// What the last opt-in check was told, and when.
+///
+/// Deliberately not "is an update available": that is a comparison against the running binary,
+/// and this file outlives the binary that wrote it. Storing the verdict would mean a cache
+/// written before an upgrade still claiming an update after it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CachedCheck {
+    /// The release tag GitHub reported, exactly as it reported it.
+    pub latest: String,
+    /// When it was asked, in unix seconds. Reported by `--doctor`; the notice does not read it,
+    /// because a stale answer is still a true one — it can only understate.
+    pub checked: i64,
+}
+
+/// Write the answer where the dashboard will find it. Temporary-then-rename, as the pricing
+/// cache is written, so a reader never sees half a file.
+pub fn write_check_cache_at(path: &Path, cached: &CachedCheck) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("update cache path has no parent directory"))?;
+    std::fs::create_dir_all(parent)?;
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, serde_json::to_vec_pretty(cached)?)?;
+    std::fs::rename(temporary, path)?;
+    Ok(())
+}
+
+/// Write it to the default location, returning where it went.
+pub fn write_check_cache(cached: &CachedCheck) -> anyhow::Result<PathBuf> {
+    let path = check_cache_path().ok_or_else(|| {
+        anyhow::anyhow!("could not determine a home directory; the update answer was not cached")
+    })?;
+    write_check_cache_at(&path, cached)?;
+    Ok(path)
+}
+
+/// Read the cached answer, or `None` when there is not one to read.
+///
+/// An absent file is the ordinary case — nobody has opted in — and is silent. A file that is
+/// there and cannot be read is not: that is a cache this tool wrote and cannot parse, and
+/// convention 8 says it reaches the log rather than being taken for "no answer".
+pub fn read_check_cache_at(path: &Path) -> Option<CachedCheck> {
+    let text = std::fs::read_to_string(path).ok()?;
+    match serde_json::from_str(&text) {
+        Ok(cached) => Some(cached),
+        Err(error) => {
+            crate::logging::warn("update", &format!("ignoring {}: {error}", path.display()));
+            None
+        }
+    }
+}
+
+/// Read it from the default location.
+pub fn read_check_cache() -> Option<CachedCheck> {
+    read_check_cache_at(&check_cache_path()?)
+}
+
+/// The newer release the last check found, or `None` when there is nothing to say.
+///
+/// `None` covers every "say nothing" case and they are all deliberate: no check has ever run,
+/// the answer is not newer than what is running, and — via [`is_newer`] — the tag is one this
+/// tool cannot parse. A cache that has gone stale can only *understate*, because the comparison
+/// is made against the running binary every time rather than stored.
+pub fn available_update(current: &str, cached: Option<&CachedCheck>) -> Option<String> {
+    let cached = cached?;
+    is_newer(current, &cached.latest).then(|| cached.latest.clone())
+}
+
+/// The notice as the dashboard header shows it, for the running binary.
+pub fn header_notice() -> Option<String> {
+    available_update(env!("CARGO_PKG_VERSION"), read_check_cache().as_ref())
+        .map(|tag| format!("↑ {tag}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn p(s: &str) -> PathBuf {
         PathBuf::from(s)
+    }
+
+    fn cached(latest: &str) -> CachedCheck {
+        CachedCheck {
+            latest: latest.to_string(),
+            checked: 1_700_000_000,
+        }
+    }
+
+    #[test]
+    fn the_cached_answer_round_trips_through_the_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("nested").join("update-check.json");
+        let answer = cached("v0.11.0");
+        write_check_cache_at(&path, &answer).unwrap();
+        assert_eq!(read_check_cache_at(&path), Some(answer));
+        // No leftovers: the temporary is renamed, not copied.
+        assert!(!path.with_extension("json.tmp").exists());
+    }
+
+    #[test]
+    fn an_absent_cache_is_silent_and_a_corrupt_one_is_not_an_answer() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let missing = dir.path().join("update-check.json");
+        assert_eq!(read_check_cache_at(&missing), None);
+
+        std::fs::write(&missing, "{ this is not json").unwrap();
+        assert_eq!(read_check_cache_at(&missing), None);
+    }
+
+    /// The verdict is taken against the running binary every time, never stored. A cache written
+    /// before an upgrade must not keep claiming an update after it.
+    #[test]
+    fn a_cache_the_binary_has_caught_up_with_says_nothing() {
+        assert_eq!(
+            available_update("0.10.0", Some(&cached("v0.11.0"))),
+            Some("v0.11.0".to_string())
+        );
+        assert_eq!(available_update("0.11.0", Some(&cached("v0.11.0"))), None);
+        assert_eq!(available_update("0.12.0", Some(&cached("v0.11.0"))), None);
+    }
+
+    #[test]
+    fn nothing_is_claimed_without_a_check_or_from_a_tag_that_cannot_be_read() {
+        assert_eq!(available_update("0.10.0", None), None);
+        for tag in ["nightly", "", "1.2.3.4"] {
+            assert_eq!(
+                available_update("0.10.0", Some(&cached(tag))),
+                None,
+                "{tag:?} was reported as an update"
+            );
+        }
     }
 
     #[test]

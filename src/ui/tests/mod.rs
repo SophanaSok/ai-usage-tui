@@ -27,6 +27,7 @@ mod breakdown;
 mod budgets;
 mod burn;
 mod coverage;
+mod header;
 mod keys;
 mod limits;
 mod projects;
@@ -91,6 +92,9 @@ fn test_app(usages: Vec<Usage>) -> App {
         sorts: Default::default(),
         show_help: false,
         budget_engine: BudgetEngine::empty(),
+        // Never the machine's real update cache, for the same reason as `pricing` below: a
+        // developer who has opted in would otherwise render a notice these tests never planted.
+        update_notice: None,
         // Bundled, not loaded: a refreshed cache on the developer's machine must not change
         // how a test ranks two models.
         pricing: crate::pricing::PricingEngine::bundled(),
