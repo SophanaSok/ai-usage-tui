@@ -636,16 +636,16 @@ impl App {
                 sort.descending,
                 crate::routing::cost_per_success_sort_key,
             ),
-            3 => sort_rows(routing, sort.descending, |a, b| {
-                a.test_passes.cmp(&b.test_passes)
-            }),
-            4 => sort_rows(routing, sort.descending, |a, b| a.retries.cmp(&b.retries)),
-            5 => sort_rows(routing, sort.descending, |a, b| {
-                a.escalations.cmp(&b.escalations)
-            }),
-            6 => sort_rows(routing, sort.descending, |a, b| {
-                a.review_defects.cmp(&b.review_defects)
-            }),
+            // PASS shows `success_rate`, so that is what sorting by PASS does. It sorted by the
+            // raw `test_passes` count, which ranked one-of-one at 100% below five-of-ten at 50%
+            // — the STARTED/`last_seen` bug on the sessions panel, in a different column.
+            3 => sort_rows_by_cost(routing, sort.descending, crate::routing::success_rate),
+            // The three rates are `None` for an agent whose harness never reported the count,
+            // and `cost_order` holds those at the end in both directions: never having been
+            // measured must not sort as the best or the worst on the machine.
+            4 => sort_rows_by_cost(routing, sort.descending, crate::routing::retry_rate),
+            5 => sort_rows_by_cost(routing, sort.descending, crate::routing::escalation_rate),
+            6 => sort_rows_by_cost(routing, sort.descending, crate::routing::defect_rate),
             8 => sort_rows(routing, sort.descending, |a, b| a.tasks.cmp(&b.tasks)),
             _ => sort_rows(routing, sort.descending, |a, b| a.tokens.cmp(&b.tokens)),
         }

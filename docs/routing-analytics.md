@@ -58,21 +58,28 @@ takes a default:
 | `agent`, `model`, `provider` | `unknown` |
 | `task`, `phase` | empty string |
 | `requests` | `1` (values below 1 are raised to 1) |
-| `tokens`, `retries`, `escalations`, `review_defects` | `0` |
+| `tokens` | `0` |
+| `retries`, `escalations`, `review_defects` | `null` — not reported, which is not `0` |
 | `category` | `UNKNOWN` |
-| `cost_status` | `unavailable` |
+| `cost_status` | `reported` when a `cost` is given, otherwise `unavailable` |
 | `cost` | `null` — no cost, not `$0.00` |
 | `test_result` | `null` — unobserved, not a failure |
 | `created` | now |
 
 The full optional set: `provider`, `phase`, `category`, `cost_status`, `requests`, `cost`,
-`retries`, `escalations`, `test_result` (`true`/`false`), `review_defects`, `created` (unix
-seconds).
+`retries`, `escalations`, `test_result`, `review_defects`, `event_id`, `created` (unix seconds).
+`test_result` is a boolean, `0`/`1`, or `"pass"`/`"fail"` in any case; `retries`, `escalations`,
+`review_defects`, `tokens` and `requests` are non-negative integers (an integral float such as
+`2.0` counts, for emitters in loosely typed languages). Anything else is refused with an error
+naming the field, before the journal is touched, rather than stored as `0` or `null` under a
+success message — an emitter that sends `"test_result":"pass"` to a recorder that
+silently drops it never learns.
 
-Events are deduplicated on the identity `routing:{agent}:{model}:{task}:{created}`; a second
-event with the same identity is ignored, not updated. Two events with the same agent, model and
-task recorded in the same second therefore collapse into one — pass `created` explicitly when
-batching.
+Events are deduplicated on `event_id`, which is yours if you send a non-empty one and otherwise
+`routing:{agent}:{model}:{task}:{created}`; a second event with the same identity is ignored, not
+updated. An empty `event_id` is treated as absent rather than as one identity shared by every
+event from a template whose variable was unset. Two events with the same agent, model and task recorded in the same second therefore
+collapse into one unless one of them carries an `event_id` — send one when batching.
 
 ## Exporting Analytics
 
@@ -88,7 +95,15 @@ ai-usage-tui --routing-csv routing.csv
 ```
 
 One row per aggregate. CSV columns:
-`agent,model,provider,tasks,tokens,cost,retries,escalations,test_passes,test_failures,review_defects`
+
+```text
+agent,model,provider,tasks,tokens,cost,retries,escalations,test_passes,
+test_failures,review_defects,priced_tasks,unpriced_tasks,quota_tasks,free_tasks,
+retries_observed,escalations_observed,review_defects_observed
+```
+
+`retries`, `escalations` and `review_defects` are empty, not `0`, when no task reported one;
+the three `_observed` columns say how many did.
 
 ## TUI Routing View
 
@@ -97,7 +112,8 @@ dashboard. The panel has two blocks:
 
 - **ROUTING — cost per delivered result**: one row per agent/model/provider, sorted cheapest per
   passing test first. Columns: `AGENT`, `MODEL`, `$/SUCCESS`, `PASS`, `RETRY`, `ESC`, `DEFECT`,
-  `TOKENS`, `TASKS`. A row with nothing passing sorts last and shows `—`, never `$0.00`.
+  `TOKENS`, `TASKS`. A row with nothing passing sorts last and shows `—`, never `$0.00`; a rate
+  no task reported shows `—`, never `0%`, and sorts to the end in either direction.
 - **ESCALATIONS — derived from sessions**: the derived block described above. Drawn only when
   there is at least one session to report.
 
@@ -118,7 +134,11 @@ aggregate carries:
   subscription-billed model divide to `$0.0000` per success — and because the panel sorts by that
   figure ascending by default, such a model ranked as the cheapest work on the machine and
   rendered green as `free`. On a Max or Pro account that is where all of the Opus work lands
-- `retries`, `escalations`, `review_defects`: sums
+- `retries`, `escalations`, `review_defects`: an `ObservedCount` each — the sum over the tasks
+  that reported one, how many tasks did (`observed`), and how many of those reported a count
+  above zero (`affected`). They were bare sums, so an emitter that never reported one and an
+  agent that never needed one both read `0%`; `test_passes`/`test_failures` had always carried
+  their denominator, and these now do too, once, rather than as three more copies of that guard
 - `test_passes`, `test_failures`: events with `test_result` `true` / `false`
 
 `cost_per_success` is `cost / test_passes`, and the panel renders **what that figure is standing
@@ -138,13 +158,18 @@ has learned it two panels up should not have to learn a second dialect:
 Only `$x` and `free` are points on a scale, so only those two sort; the rest are held at the end
 of the `$/SUCCESS` ordering in both directions, the way an unknown row cost is in the model table.
 
-The JSON export adds `retry_rate`, `escalation_rate` and `defect_rate` (per task, in percent),
-`cost_per_success` (null unless exact or free) and `cost_basis` (one of `exact`, `plus_quota`,
-`quota`, `floor`, `unpriced`, `free`, `no_successes`). Its `cost` is `null` rather than `0` when
-nothing was priced. The CSV appends `priced_tasks`, `unpriced_tasks`, `quota_tasks` and
-`free_tasks` after the existing columns, never between them.
+The JSON export adds `retry_rate`, `escalation_rate` and `defect_rate` — each the share of
+tasks that reported the count and had one, in percent, so none can exceed 100% (`retries /
+tasks` could: one task that retried three times was `300%`) — with `retries_observed`,
+`escalations_observed` and `review_defects_observed` beside them as the denominators. All of
+`retries`, `escalations`, `review_defects` and the three rates are `null` rather than `0` when
+no task reported. It also adds `cost_per_success` (null unless exact or free) and `cost_basis`
+(one of `exact`, `plus_quota`, `quota`, `floor`, `unpriced`, `free`, `no_successes`), and its
+`cost` is `null` rather than `0` when nothing was priced. The CSV appends `priced_tasks`,
+`unpriced_tasks`, `quota_tasks`, `free_tasks` and then the three `_observed` counts after the
+existing columns, never between them.
 The TUI adds `success_rate` (passes over observed results) and `cost_per_success` (cost over
-passes); both are `—` when unobserved, never `0`.
+passes); every rate is `—` when unobserved, never `0`, and sorts to the end either way.
 
 ## Schema
 
@@ -161,12 +186,17 @@ requests        integer, at least 1
 tokens          integer — one counter, no input/output split
 cost            number | null
 cost_status     reported | calculated | estimated | free | local | quota | unavailable
-retries         integer
-escalations     integer
+retries         integer | null — null is "not reported", which is not 0
+escalations     integer | null
 test_result     true | false | null
-review_defects  integer
+review_defects  integer | null
 created         unix seconds (the timestamp column)
 ```
+
+In journals written by v0.9.0 or earlier the three counters were `NOT NULL`, and an omitted
+field was stored as `0`. `--record-routing` rebuilds such a journal's table in place, once. Rows already there keep their
+zeros: that is what was recorded, and rewriting it as unknown would be inventing in the other
+direction.
 
 ## Data Caveats
 
@@ -174,4 +204,6 @@ created         unix seconds (the timestamp column)
 - No prompt or completion content is stored.
 - Cost is optional. An event without one is counted in `unpriced_tasks` and contributes nothing
   to `cost`, so the aggregate stays a floor rather than quietly gaining a zero.
-- Test result is optional; pass rate is calculated only from events that include it.
+- Test result is optional; pass rate is calculated only from events that include it. The same
+  holds for the three counters: a rate is taken over the events that reported one, and an event
+  that reported nothing is neither a clean run nor a failure.

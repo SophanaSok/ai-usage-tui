@@ -559,27 +559,36 @@ fn export_routing(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
         // index keeps working. `cost` keeps its position and its meaning changes from a total to
         // a floor -- which is why `priced_tasks` sits beside it: a reader who takes `cost` alone
         // now has a column that tells them whether they may.
+        // `retries`, `escalations` and `review_defects` keep their positions and are empty
+        // rather than `0` when no task reported one; the three `_observed` denominators are
+        // appended after everything else, for the same reason the four before them were.
+        let sum_or_empty = |count: ai_usage_tui::model::ObservedCount| {
+            count.sum().map(|n| n.to_string()).unwrap_or_default()
+        };
         let mut csv = String::from(
-            "agent,model,provider,tasks,tokens,cost,retries,escalations,test_passes,test_failures,review_defects,priced_tasks,unpriced_tasks,quota_tasks,free_tasks\n",
+            "agent,model,provider,tasks,tokens,cost,retries,escalations,test_passes,test_failures,review_defects,priced_tasks,unpriced_tasks,quota_tasks,free_tasks,retries_observed,escalations_observed,review_defects_observed\n",
         );
         for agg in &aggregates {
             csv.push_str(&format!(
-                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
                 csv_field(&agg.agent),
                 csv_field(&agg.model),
                 csv_field(&agg.provider),
                 agg.tasks,
                 agg.tokens,
                 agg.cost,
-                agg.retries,
-                agg.escalations,
+                sum_or_empty(agg.retries),
+                sum_or_empty(agg.escalations),
                 agg.test_passes,
                 agg.test_failures,
-                agg.review_defects,
+                sum_or_empty(agg.review_defects),
                 agg.priced_tasks,
                 agg.unpriced_tasks,
                 agg.quota_tasks,
                 agg.free_tasks,
+                agg.retries.observed,
+                agg.escalations.observed,
+                agg.review_defects.observed,
             ));
         }
         std::fs::write(path, csv)?;
@@ -606,11 +615,19 @@ fn export_routing(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
                     // so a script and the dashboard cannot disagree about one aggregate.
                     "cost_per_success": ai_usage_tui::routing::cost_per_success_sort_key(agg),
                     "cost_basis": ai_usage_tui::routing::cost_basis_label(agg),
-                    "retries": agg.retries,
-                    "escalations": agg.escalations,
+                    // `null`, not `0`, when no task reported the count — and the number of
+                    // tasks that did, so a script has the denominator the rate was taken over.
+                    // The rates are the share of those tasks affected: a percentage, bounded,
+                    // rather than `retries / tasks`, which exceeded 100% on the first task that
+                    // retried twice.
+                    "retries": agg.retries.sum(),
+                    "escalations": agg.escalations.sum(),
                     "test_passes": agg.test_passes,
                     "test_failures": agg.test_failures,
-                    "review_defects": agg.review_defects,
+                    "review_defects": agg.review_defects.sum(),
+                    "retries_observed": agg.retries.observed,
+                    "escalations_observed": agg.escalations.observed,
+                    "review_defects_observed": agg.review_defects.observed,
                     "retry_rate": ai_usage_tui::routing::retry_rate(agg),
                     "escalation_rate": ai_usage_tui::routing::escalation_rate(agg),
                     "defect_rate": ai_usage_tui::routing::defect_rate(agg),

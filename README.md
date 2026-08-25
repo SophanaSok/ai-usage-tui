@@ -715,8 +715,9 @@ on the first try can be the cheaper one. The panel ranks agent/model pairs by
 **cost per delivered result** — dollars spent per passing test — alongside the
 retry, escalation, and review-defect rates behind that figure.
 
-A pair that never reported a test result shows `—`, not `0%`. Never having been
-measured is not the same as failing everything.
+A pair that never reported a test result — or a retry, escalation or defect
+count — shows `—`, not `0%`. Never having been measured is not the same as
+failing everything, or as never needing a second attempt.
 
 The panel also shows an **escalations** block derived from usage already
 collected, which needs no setup at all: how often a session reached for a
@@ -747,9 +748,11 @@ echo '{
 
 `agent`, `model`, `task`, and `tokens` are the useful minimum fields. Optional
 fields include `provider`, `phase`, `category`, `cost_status`, `requests`,
-`cost`, `retries`, `escalations`, `test_result`, `review_defects`, and a Unix
-`created` timestamp. Missing optional counters default to zero, `requests`
-defaults to one, and missing strings use empty or `unknown` values.
+`cost`, `retries`, `escalations`, `test_result`, `review_defects`, an `event_id`,
+and a Unix `created` timestamp. A missing counter is stored as not reported —
+never as zero — and shows as `—`; `requests` defaults to one, and missing strings
+use empty or `unknown` values. A counter that is not a non-negative integer, or a
+`test_result` that is not a boolean, `0`/`1`, `"pass"` or `"fail"`, is refused.
 
 View aggregates with `t` in the TUI or export them:
 
@@ -759,11 +762,13 @@ ai-usage-tui --routing-csv routing.csv
 ```
 
 Routing output is aggregated by agent, model, and provider. JSON also includes
-retry, escalation, and defect rates. Routing CSV columns are:
+retry, escalation, and defect rates — the share of tasks that reported a count
+and had one, `null` when none did. Routing CSV columns are:
 
 ```text
 agent,model,provider,tasks,tokens,cost,retries,escalations,test_passes,
-test_failures,review_defects,priced_tasks,unpriced_tasks,quota_tasks,free_tasks
+test_failures,review_defects,priced_tasks,unpriced_tasks,quota_tasks,free_tasks,
+retries_observed,escalations_observed,review_defects_observed
 ```
 
 See [`docs/routing-analytics.md`](docs/routing-analytics.md) for the underlying

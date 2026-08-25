@@ -44,7 +44,10 @@ Budget alerts fire when spend exceeds the configured threshold and are displayed
 ## Routing Event
 
 The routing event captures agent-to-model routing decisions:
-task, phase, agent, model, provider, category, tokens, cost,
+event_id, task, phase, agent, model, provider, category, cost_status, requests, tokens, cost,
 retries, escalations, test_result, review_defects, created
+
+`retries`, `escalations` and `review_defects` are nullable: null is "not reported", which is not
+`0`. The schema block in [`routing-analytics.md`](routing-analytics.md) is authoritative.
 
 Stored in `routing_event` table. See [`routing-analytics.md`](routing-analytics.md).

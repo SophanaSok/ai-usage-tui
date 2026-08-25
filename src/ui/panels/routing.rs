@@ -56,9 +56,9 @@ pub fn draw_routing(frame: &mut Frame, area: Rect, app: &App) {
             Cell::from(short_model(&agg.model)),
             cost_per_success_cell(agg),
             success_cell(agg),
-            Cell::from(format!("{:.0}%", retry_rate(agg))),
-            Cell::from(format!("{:.0}%", escalation_rate(agg))),
-            Cell::from(format!("{:.0}%", defect_rate(agg))),
+            rate_cell(retry_rate(agg)),
+            rate_cell(escalation_rate(agg)),
+            rate_cell(defect_rate(agg)),
             Cell::from(format_count(agg.tokens)),
             Cell::from(agg.tasks.to_string()),
         ])
@@ -135,6 +135,17 @@ fn success_cell<'a>(agg: &RoutingAggregates) -> Cell<'a> {
                 Style::default().fg(colour),
             ))
         }
+        None => Cell::from(Span::styled("—", Style::default().fg(MUTED))),
+    }
+}
+
+/// A per-task rate, or `—` when no task reported the count behind it.
+///
+/// The same rule as `success_cell`, for the three columns that did not have it: an agent whose
+/// harness never counted retries must not read as one that never needed any.
+fn rate_cell<'a>(rate: Option<f64>) -> Cell<'a> {
+    match rate {
+        Some(rate) => Cell::from(format!("{rate:.0}%")),
         None => Cell::from(Span::styled("—", Style::default().fg(MUTED))),
     }
 }
