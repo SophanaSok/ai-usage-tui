@@ -20,3 +20,6 @@ __pycache__/
 
 # Generated man page and completions (just assets)
 dist/
+
+# Worktrees the Claude Code harness creates for isolated agents; never part of the tree.
+.claude/worktrees/

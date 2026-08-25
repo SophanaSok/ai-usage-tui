@@ -131,21 +131,5 @@ remove the tab, disable the timer and
 `rm ~/.local/state/omarchy/agents/usage/opencode.json` (one file per id).
 Linux/Omarchy only — the action has no meaning elsewhere.
 
-| Key | Action |
-| --- | --- |
-| `1` | Show today (local calendar day) |
-| `2` | Show the trailing 7 days |
-| `3` | Show the trailing 30 days |
-| `4` | Show all history |
-| `r` | Refresh now |
-| `b` | Toggle the budgets panel |
-| `t` | Toggle routing analytics |
-| `p` | Toggle the project cost panel |
-| `g` | Toggle spend over time |
-| `w` | Toggle the burn-rate panel |
-| `s` | Toggle the sessions panel |
-| `l` | Toggle the subscription-limits panel (Omarchy) |
-| `?` | Key reference overlay |
-| `j` / `Down` | Select the next model |
-| `k` / `Up` | Select the previous model |
-| `q` / `Esc` / `Ctrl-C` | Quit |
+The dashboard's keys are in the README's panel table, which `tests/docs.rs` checks against
+the bindings, and in the `?` overlay; they are not restated here.

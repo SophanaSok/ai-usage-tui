@@ -17,8 +17,9 @@ use ai_usage_tui::config::load_config;
 use ai_usage_tui::model::Range;
 use ai_usage_tui::ui::{render_svg, App, Panel};
 
-/// The geometry the README images are sized for. 132 columns is comfortably above the 110-column
-/// threshold where the footer switches to its compact form, so the images show the full key line.
+/// The geometry the README images are sized for. 132 columns is comfortably wider than the
+/// footer's full key line (120 today; `ui::keys::footer_forms` is the source), so the images
+/// show every hint rather than the folded form.
 const COLS: u16 = 132;
 const ROWS: u16 = 38;
 

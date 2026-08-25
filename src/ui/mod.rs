@@ -225,13 +225,13 @@ pub(super) fn draw(frame: &mut Frame, app: &App) {
 
 /// Key hints, sized to the terminal.
 ///
-/// The full list is 120 columns. It fit an 80-column terminal until the graph, burn and sessions
-/// panels were added, after which the tail — including how to quit — was simply cut off, because
-/// a `Paragraph` truncates without saying so. Below 120 columns this shows a compact form and
-/// leans on `?` for the rest.
+/// The full list is wider than an 80-column terminal, and a `Paragraph` truncates without saying
+/// so: when the graph, burn and sessions panels were added the tail — including how to quit —
+/// was simply cut off. The forms come from `keys::footer_forms`, widest first, and this takes
+/// the first that measures as fitting. There used to be a `width >= 120` here instead, which
+/// was the full line's width on the day it was written and a copy of the table's contents in
+/// disguise.
 pub(super) fn footer<'a>(width: u16, search: Option<(&str, usize, usize)>) -> Paragraph<'a> {
-    let key = |k: &'a str| Span::styled(k, Style::default().fg(CYAN).add_modifier(Modifier::BOLD));
-
     // A filter replaces the hints while it is on. Rows disappearing with nothing on screen to
     // say why is the whole failure mode this line exists to prevent, and it carries the counts
     // so a shortened list is never mistaken for a shrunken bill.
@@ -249,50 +249,33 @@ pub(super) fn footer<'a>(width: u16, search: Option<(&str, usize, usize)>) -> Pa
         ]))
         .style(Style::default().fg(MUTED));
     }
-    let spans = if width >= 120 {
-        vec![
-            key(" 1-4 "),
-            Span::raw("range  "),
-            key("r"),
-            Span::raw(" refresh  "),
-            key("b"),
-            Span::raw(" budgets  "),
-            key("t"),
-            Span::raw(" routing  "),
-            key("p"),
-            Span::raw(" projects  "),
-            key("g"),
-            Span::raw(" graph  "),
-            key("w"),
-            Span::raw(" burn  "),
-            key("s"),
-            Span::raw(" sessions  "),
-            key("l"),
-            Span::raw(" limits  "),
-            key("j/k"),
-            Span::raw(" move  "),
-            key("?"),
-            Span::raw(" help  "),
-            key("q"),
-            Span::raw(" quit"),
-        ]
-    } else {
-        vec![
-            key(" 1-4 "),
-            Span::raw("range  "),
-            key("r"),
-            Span::raw(" refresh  "),
-            key("btpgwsl"),
-            Span::raw(" panels  "),
-            key("j/k"),
-            Span::raw(" move  "),
-            key("?"),
-            Span::raw(" help  "),
-            key("q"),
-            Span::raw(" quit"),
-        ]
-    };
-    Paragraph::new(Line::from(spans)).style(Style::default().fg(MUTED))
+    let forms = keys::footer_forms();
+    let mut lines = forms.iter().map(|form| hint_line(form));
+    // The narrowest form is the fallback whatever the width: below it there is nothing shorter
+    // to say than how to get help and how to leave.
+    let last = lines
+        .next_back()
+        .expect("footer_forms has a narrowest form");
+    let line = lines
+        .find(|line| line.width() <= usize::from(width))
+        .unwrap_or(last);
+    Paragraph::new(line).style(Style::default().fg(MUTED))
+}
+
+/// ` k word  k word  …`, the key in the accent colour.
+fn hint_line<'a>(hints: &[keys::Hint]) -> Line<'a> {
+    let mut spans = vec![Span::raw(" ")];
+    for (index, hint) in hints.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(
+            hint.key.clone(),
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(format!(" {}", hint.word)));
+    }
+    Line::from(spans)
 }
 
 /// Full key reference, centred over the dashboard.

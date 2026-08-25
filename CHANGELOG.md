@@ -36,6 +36,24 @@
   block, the model and the timestamp and nothing else; a test plants a credential in the
   content and fails if it reaches the event.
 
+### Changed
+
+- **The footer reads the bindings table, and fits itself by measuring.** `ui::keys` was written
+  to end the hand-written copies of the key bindings; the footer kept its own, because it
+  abbreviates (`1-4`, `j/k`) and folds the panel keys into one run below a width. That width was `120` — the full line's width on the day it was written, and a fact
+  about the table's contents in disguise: one more panel and the line would have overrun it
+  and truncated again, which is exactly how `q quit` vanished from 80-column terminals once
+  before. Each binding now carries its footer spelling, `keys::footer_forms` derives the full,
+  folded and help-and-quit-only forms from the table — the fold is by `Action::Panel`, so a new
+  panel is in it without anyone remembering — and the footer takes the widest form whose
+  measured width fits. A test renders every width from 16 to 200 columns and fails if the line
+  is ever cut off; another pins that the form changes exactly one column short of fitting, with
+  the widths measured rather than written down. The review of this change also retired the
+  unchecked key table in `docs/omarchy.md`, which had already drifted (it still said `Esc`
+  quits), brought the "add a dashboard panel" recipe in `CONTRIBUTING.md` up to date with where
+  the bindings live and what a new one must carry, and dropped `Binding::alias`, a field
+  written on every binding and read by nothing.
+
 ## 0.10.0 - 2026-08-25
 
 ### Fixed
