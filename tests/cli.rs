@@ -197,6 +197,95 @@ fn recording_a_routing_event_round_trips_through_the_journal() {
     assert_eq!(agg["retries"], 2, "{json}");
     assert_eq!(agg["escalations"], 1, "{json}");
     assert_eq!(agg["review_defects"], 3, "{json}");
+    // `"pass"` was silently mapped to null before, and this test asserted the three counters
+    // beside it and not the result.
+    assert_eq!(agg["test_passes"], 1, "{json}");
+    // Two retries on one task is one task that retried: 100%, not 200%.
+    assert_eq!(agg["retry_rate"], 100.0, "{json}");
+    assert_eq!(agg["retries_observed"], 1, "{json}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An emitter that reports no counters — which an automated one cannot, having nothing to count
+/// — must export them as unknown, not as a clean run.
+#[test]
+fn unreported_routing_counters_export_as_null_not_zero() {
+    let dir = scratch("routing-unreported");
+    let journal = dir.join("usage.db");
+    let event = dir.join("event.json");
+    std::fs::write(
+        &event,
+        r#"{"task":"t-1","agent":"drafter","model":"claude-haiku-4-5","provider":"anthropic",
+            "tokens":500,"cost":0.01,"cost_status":"reported"}"#,
+    )
+    .expect("write event");
+    record(&journal, event.to_str().unwrap(), "--record-routing");
+
+    let output = bin()
+        .arg("--routing-json")
+        .arg("--journal")
+        .arg(&journal)
+        .output()
+        .expect("run --routing-json");
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("routing json parses");
+    let agg = json["aggregates"][0].as_object().expect("aggregate object");
+    for field in [
+        "retries",
+        "escalations",
+        "review_defects",
+        "retry_rate",
+        "escalation_rate",
+        "defect_rate",
+    ] {
+        // Present and null — an absent key would also index as null and prove nothing.
+        assert!(agg.contains_key(field), "{field} missing from {json}");
+        assert!(agg[field].is_null(), "{field} should be null, got {json}");
+    }
+    for field in [
+        "retries_observed",
+        "escalations_observed",
+        "review_defects_observed",
+    ] {
+        assert_eq!(agg[field], 0, "{field}: {json}");
+    }
+
+    let csv_path = dir.join("routing.csv");
+    let output = bin()
+        .arg("--routing-csv")
+        .arg(&csv_path)
+        .arg("--journal")
+        .arg(&journal)
+        .output()
+        .expect("run --routing-csv");
+    assert!(output.status.success());
+    let csv = std::fs::read_to_string(&csv_path).expect("csv");
+    let mut lines = csv.lines();
+    let header: Vec<&str> = lines.next().expect("header").split(',').collect();
+    let row: Vec<&str> = lines.next().expect("row").split(',').collect();
+    // Existing columns keep their positions; the denominators are appended after everything.
+    assert_eq!(
+        (header[6], header[7], header[10]),
+        ("retries", "escalations", "review_defects"),
+        "{csv}"
+    );
+    assert_eq!(
+        (row[6], row[7], row[10]),
+        ("", "", ""),
+        "an unreported count is an empty field, not 0:\n{csv}"
+    );
+    assert_eq!(
+        header[15..],
+        [
+            "retries_observed",
+            "escalations_observed",
+            "review_defects_observed"
+        ],
+        "{csv}"
+    );
+    assert_eq!(row[15..], ["0", "0", "0"], "{csv}");
 
     let _ = std::fs::remove_dir_all(&dir);
 }

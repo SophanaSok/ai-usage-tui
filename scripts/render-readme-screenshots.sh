@@ -86,6 +86,7 @@ record_routing '{"agent":"reviewer","model":"claude-sonnet-5","provider":"anthro
 cargo run --release --locked --quiet --manifest-path "${ROOT}/Cargo.toml" \
   --example render-screenshots -- \
   "${SVG_DIR}" --claude-dir "${CLAUDE_DIR}" --codex-dir "${CLAUDE_DIR}/no-codex-home" \
+  --omarchy-dir "${CLAUDE_DIR}/no-omarchy" \
   --db "${DEMO_DB}" --journal "${JOURNAL}" \
   --config "${CONFIG}" >/dev/null
 

@@ -39,7 +39,7 @@ const PANELS: [(&str, Panel); 7] = [
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let Some(out_dir) = args.next().map(PathBuf::from) else {
-        eprintln!("usage: render-screenshots <out-dir> [--claude-dir D] [--journal P] [--config P] [--db P]");
+        eprintln!("usage: render-screenshots <out-dir> --claude-dir D --codex-dir D --omarchy-dir D --journal P --db P [--config P]");
         return ExitCode::FAILURE;
     };
 
@@ -56,6 +56,7 @@ fn main() -> ExitCode {
         match flag.as_str() {
             "--claude-dir" => cli.claude_dir = Some(value),
             "--codex-dir" => cli.codex_dir = Some(value),
+            "--omarchy-dir" => cli.omarchy_dir = Some(value),
             "--journal" => cli.journal_path = Some(value),
             "--config" => cli.config_path = Some(value),
             "--db" => cli.db_path = Some(value),
@@ -69,16 +70,22 @@ fn main() -> ExitCode {
     // Every source is required, and none of them may be inferred. Left unset, the collectors
     // discover the machine's real OpenCode database and Claude Code transcripts, and the images
     // become a picture of the author's own spend — the exact thing the demo fixture exists to
-    // prevent. This was not hypothetical: the first run of this renderer did it.
-    let (Some(journal), Some(_), Some(_), Some(_)) = (
+    // prevent. This was not hypothetical: the first run of this renderer did it. Omarchy's
+    // records are the fifth source and were the second time: left unpinned, the header carried
+    // the author's real rate-limit window and the billing decision read their plan tier, so every
+    // Claude row in the demo went `quota` and the images said so.
+    let (Some(journal), Some(_), Some(_), Some(_), Some(_)) = (
         cli.journal_path.clone(),
         cli.claude_dir.as_ref(),
         cli.codex_dir.as_ref(),
+        cli.omarchy_dir.as_ref(),
         cli.db_path.as_ref(),
     ) else {
-        eprintln!("--journal, --claude-dir, --codex-dir and --db are all required: unset, they");
         eprintln!(
-            "fall back to this machine's real usage data, which must never reach a README image"
+            "--journal, --claude-dir, --codex-dir, --omarchy-dir and --db are all required: unset,"
+        );
+        eprintln!(
+            "they fall back to this machine's real usage data, which must never reach a README image"
         );
         return ExitCode::FAILURE;
     };

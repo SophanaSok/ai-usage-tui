@@ -67,8 +67,8 @@ pub fn aggregate(events: &[RoutingEvent]) -> Vec<RoutingAggregates> {
             CostStatus::Unavailable => entry.unpriced_tasks += 1,
             CostStatus::Free | CostStatus::Local => entry.free_tasks += 1,
         }
-        entry.retries += event.retries;
-        entry.escalations += event.escalations;
+        entry.retries.observe(event.retries);
+        entry.escalations.observe(event.escalations);
         if let Some(result) = event.test_result {
             if result {
                 entry.test_passes += 1;
@@ -76,7 +76,7 @@ pub fn aggregate(events: &[RoutingEvent]) -> Vec<RoutingAggregates> {
                 entry.test_failures += 1;
             }
         }
-        entry.review_defects += event.review_defects;
+        entry.review_defects.observe(event.review_defects);
     }
 
     let mut result: Vec<RoutingAggregates> = map.into_values().collect();
@@ -84,20 +84,18 @@ pub fn aggregate(events: &[RoutingEvent]) -> Vec<RoutingAggregates> {
     result
 }
 
-pub fn retry_rate(agg: &RoutingAggregates) -> f64 {
-    if agg.tasks == 0 {
-        0.0
-    } else {
-        agg.retries as f64 / agg.tasks as f64 * 100.0
-    }
+/// Share of tasks that needed at least one retry, over the tasks that reported a count.
+///
+/// `None` when none did — see `ObservedCount::rate`. This was `retries / tasks`, which returned
+/// `0.0` both for an agent that never retried and for one whose harness never said, and which
+/// an emitter writing `retries: 3` on one task rendered as `300%`.
+pub fn retry_rate(agg: &RoutingAggregates) -> Option<f64> {
+    agg.retries.rate()
 }
 
-pub fn escalation_rate(agg: &RoutingAggregates) -> f64 {
-    if agg.tasks == 0 {
-        0.0
-    } else {
-        agg.escalations as f64 / agg.tasks as f64 * 100.0
-    }
+/// Share of tasks that escalated, over the tasks that reported a count. `None` when none did.
+pub fn escalation_rate(agg: &RoutingAggregates) -> Option<f64> {
+    agg.escalations.rate()
 }
 
 /// Share of tasks whose recorded test result passed.
@@ -184,12 +182,10 @@ pub fn cost_basis_label(agg: &RoutingAggregates) -> &'static str {
     }
 }
 
-pub fn defect_rate(agg: &RoutingAggregates) -> f64 {
-    if agg.tasks == 0 {
-        0.0
-    } else {
-        agg.review_defects as f64 / agg.tasks as f64 * 100.0
-    }
+/// Share of tasks with at least one review defect, over the tasks that reported a count.
+/// `None` when none did.
+pub fn defect_rate(agg: &RoutingAggregates) -> Option<f64> {
+    agg.review_defects.rate()
 }
 
 pub fn load_routing_events(path: &std::path::Path) -> anyhow::Result<Vec<RoutingEvent>> {
@@ -251,10 +247,10 @@ mod tests {
         provider: &str,
         tokens: u64,
         cost: Option<f64>,
-        retries: u32,
-        escalations: u32,
+        retries: Option<u32>,
+        escalations: Option<u32>,
         test_result: Option<bool>,
-        review_defects: u32,
+        review_defects: Option<u32>,
     ) -> RoutingEvent {
         RoutingEvent {
             task: "test".to_string(),
@@ -294,10 +290,10 @@ mod tests {
                 "provider1",
                 100,
                 Some(0.01),
-                0,
-                0,
+                Some(0),
+                Some(0),
                 None,
-                0,
+                Some(0),
             ),
             make_event(
                 "agent1",
@@ -305,10 +301,10 @@ mod tests {
                 "provider1",
                 200,
                 Some(0.02),
-                1,
-                0,
+                Some(1),
+                Some(0),
                 Some(true),
-                0,
+                Some(0),
             ),
             make_event(
                 "agent2",
@@ -316,23 +312,82 @@ mod tests {
                 "provider2",
                 300,
                 Some(0.03),
-                0,
-                1,
+                Some(0),
+                Some(1),
                 Some(false),
-                1,
+                Some(1),
             ),
         ];
         let result = aggregate(&events);
         assert_eq!(result.len(), 2);
     }
 
+    fn event_with_retries(retries: Option<u32>) -> RoutingEvent {
+        make_event("a", "m", "p", 100, Some(0.01), retries, None, None, None)
+    }
+
     #[test]
-    fn retry_rate_handles_zero_tasks() {
-        let agg = RoutingAggregates {
-            retries: 5,
-            ..Default::default()
-        };
-        assert_eq!(retry_rate(&agg), 0.0);
+    fn an_unreported_counter_is_unknown_not_zero() {
+        // Restore the bug by making `retries` a bare sum over `tasks`: two tasks that said
+        // nothing read as a 0% retry rate, the same as two tasks that said "no retries".
+        let unreported = aggregate(&[event_with_retries(None), event_with_retries(None)]);
+        assert_eq!(retry_rate(&unreported[0]), None);
+        assert_eq!(unreported[0].retries.sum(), None);
+
+        let reported_zero = aggregate(&[event_with_retries(Some(0)), event_with_retries(Some(0))]);
+        assert_eq!(
+            retry_rate(&reported_zero[0]),
+            Some(0.0),
+            "a reported zero is a real zero"
+        );
+        assert_eq!(reported_zero[0].retries.sum(), Some(0));
+    }
+
+    #[test]
+    fn a_retry_rate_is_a_share_of_tasks_not_a_multiple() {
+        // `retries / tasks` rendered one task that retried three times as 300%.
+        let one_task = aggregate(&[event_with_retries(Some(3))]);
+        assert_eq!(retry_rate(&one_task[0]), Some(100.0));
+        assert_eq!(one_task[0].retries.total, 3, "the sum is still exported");
+
+        let half = aggregate(&[event_with_retries(Some(3)), event_with_retries(Some(0))]);
+        assert_eq!(retry_rate(&half[0]), Some(50.0));
+    }
+
+    #[test]
+    fn each_counter_is_observed_on_its_own() {
+        // Two events with a different value in every field, so an accumulator that fed one
+        // counter from another's event field would show it here.
+        let events = [
+            make_event("a", "m", "p", 1, None, Some(0), Some(1), None, None),
+            make_event("a", "m", "p", 1, None, Some(1), Some(0), None, Some(2)),
+        ];
+        let agg = &aggregate(&events)[0];
+        assert_eq!(retry_rate(agg), Some(50.0));
+        assert_eq!(escalation_rate(agg), Some(50.0));
+        assert_eq!(
+            defect_rate(agg),
+            Some(100.0),
+            "one of one reported, and it had defects"
+        );
+        assert_eq!(agg.retries.total, 1);
+        assert_eq!(agg.escalations.total, 1);
+        assert_eq!(agg.review_defects.total, 2);
+        assert_eq!(agg.review_defects.observed, 1);
+    }
+
+    #[test]
+    fn a_rate_is_taken_over_the_tasks_that_reported_it() {
+        // One task retried, one did not, one never said: 50% of the two that reported, not 33%
+        // of three, and the one that never said is not counted as a clean run.
+        let mixed = aggregate(&[
+            event_with_retries(Some(1)),
+            event_with_retries(Some(0)),
+            event_with_retries(None),
+        ]);
+        assert_eq!(mixed[0].tasks, 3);
+        assert_eq!(mixed[0].retries.observed, 2);
+        assert_eq!(retry_rate(&mixed[0]), Some(50.0));
     }
 
     #[test]
@@ -344,10 +399,10 @@ mod tests {
                 "provider1",
                 100,
                 Some(0.01),
-                0,
-                0,
                 None,
-                0,
+                None,
+                None,
+                None,
             ),
             make_event(
                 "agent1",
@@ -355,10 +410,10 @@ mod tests {
                 "provider1",
                 200,
                 Some(0.02),
-                0,
-                0,
                 None,
-                0,
+                None,
+                None,
+                None,
             ),
         ];
         let result = aggregate(&events);

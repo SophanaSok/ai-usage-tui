@@ -42,11 +42,12 @@ fn a_free_model_says_free_rather_than_implying_a_precise_comparison() {
 
 #[test]
 fn an_uninstrumented_agent_shows_a_dash_not_a_zero_pass_rate() {
-    // An agent that never reported a test result must not read as one that fails everything.
-    // Both its pass rate and its cost-per-success are unknown, so both render as a dash.
+    // An agent that never reported a test result must not read as one that fails everything —
+    // and one that never reported a retry, escalation or defect count must not read as one that
+    // never needed a second attempt. All five figures are unknown, so all five render as a dash.
+    // RETRY, ESC and DEFECT used to render `0%` here, indistinguishable from a clean run.
     //
-    // Scoped to the row rather than the whole buffer, for two reasons: a genuine zero retry
-    // rate is also "0%", and the panel title itself contains an em dash.
+    // Scoped to the row rather than the whole buffer: the panel title itself contains an em dash.
     let mut app = test_app(Vec::new());
     app.set_routing_for_test(vec![routing_agg(
         "explorer",
@@ -57,19 +58,127 @@ fn an_uninstrumented_agent_shows_a_dash_not_a_zero_pass_rate() {
         0,
     )]);
     let rendered = render_routing(&app, 84, 5);
-
-    let row_start = rendered.find("explorer").expect("the agent row");
-    let row_end = rendered[row_start..]
-        .find("100.0K")
-        .expect("the token column")
-        + row_start;
-    let row = &rendered[row_start..row_end];
+    let row = routing_row(&rendered, "explorer");
 
     assert_eq!(
         row.matches('\u{2014}').count(),
-        2,
-        "expected unknown pass rate and unknown cost-per-success in this row:\n{row}"
+        5,
+        "expected every unmeasured figure in this row to be a dash:\n{row}"
     );
+    assert!(
+        !row.contains("0%"),
+        "an unreported count rendered as 0%:\n{row}"
+    );
+}
+
+#[test]
+fn a_reported_zero_retry_rate_reads_as_zero_not_unknown() {
+    // The anti-test: an agent whose harness counted retries on every task and found none is a
+    // genuine 0%, and must not be hidden behind a dash along with the agents that never said.
+    //
+    // Three of four passed, so PASS reads `75%` and cannot satisfy the `0%` assertion for it.
+    let mut app = test_app(Vec::new());
+    let mut clean = routing_agg("careful", "anthropic/claude-opus-5", 4, 4.00, 3, 1);
+    clean.retries = crate::model::ObservedCount {
+        observed: 4,
+        ..Default::default()
+    };
+    app.set_routing_for_test(vec![clean]);
+    let rendered = render_routing(&app, 84, 5);
+    let row = routing_row(&rendered, "careful");
+    assert!(row.contains("0%"), "a measured zero was not shown:\n{row}");
+    assert_eq!(
+        row.matches('\u{2014}').count(),
+        2,
+        "only ESC and DEFECT are unmeasured here:\n{row}"
+    );
+}
+
+#[test]
+fn sorting_by_a_rate_column_holds_unmeasured_agents_at_the_end_both_ways() {
+    // RETRY sorted by the raw sum, so an agent that never reported retries sorted as the best on
+    // the machine ascending and the worst descending. Unmeasured is neither; `cost_order`
+    // already knew how to place it and the rate columns now use it.
+    //
+    // Once per rate column, each driven by its own field, so a column wired to the wrong
+    // counter fails here rather than passing on RETRY's behalf.
+    use crate::model::{ObservedCount, RoutingAggregates};
+    use crate::ui::app::{Panel, Sort};
+    let counted = |observed, affected| ObservedCount {
+        observed,
+        affected,
+        total: affected as u32,
+    };
+    type Field = fn(&mut RoutingAggregates) -> &mut ObservedCount;
+    let columns: [(usize, Field); 3] = [
+        (4, |a| &mut a.retries),
+        (5, |a| &mut a.escalations),
+        (6, |a| &mut a.review_defects),
+    ];
+    for (column, field) in columns {
+        let mut half = routing_agg("half", "m", 4, 4.0, 4, 0);
+        *field(&mut half) = counted(4, 2);
+        let mut clean = routing_agg("clean", "m", 4, 4.0, 4, 0);
+        *field(&mut clean) = counted(4, 0);
+        let silent = routing_agg("silent", "m", 4, 4.0, 4, 0);
+
+        for (descending, expected) in [
+            (false, ["clean", "half", "silent"]),
+            (true, ["half", "clean", "silent"]),
+        ] {
+            let mut app = test_app(Vec::new());
+            app.sorts
+                .insert(Panel::Routing, Sort { column, descending });
+            app.set_routing_for_test(vec![silent.clone(), half.clone(), clean.clone()]);
+            let rendered = render_routing(&app, 84, 7);
+            let positions: Vec<usize> = expected
+                .iter()
+                .map(|agent| rendered.find(agent).expect(agent))
+                .collect();
+            assert!(
+                positions.windows(2).all(|w| w[0] < w[1]),
+                "column {column} descending={descending}: expected {expected:?} in order:\n{rendered}"
+            );
+            // And a measured rate renders as its figure, not only as "not a dash".
+            assert!(
+                routing_row(&rendered, "half").contains("50%"),
+                "column {column}: the measured rate was not shown:\n{rendered}"
+            );
+        }
+    }
+}
+
+#[test]
+fn sorting_by_pass_orders_by_the_rate_the_column_shows() {
+    // PASS shows `success_rate` but sorted by the raw `test_passes` count, which ranked one-of-one
+    // at 100% below five-of-ten at 50%. Same shape as the sessions STARTED/`last_seen` bug.
+    use crate::ui::app::{Panel, Sort};
+    let mut app = test_app(Vec::new());
+    app.sorts.insert(
+        Panel::Routing,
+        Sort {
+            column: 3,
+            descending: true,
+        },
+    );
+    app.set_routing_for_test(vec![
+        routing_agg("mostly", "m", 10, 10.0, 5, 5),
+        routing_agg("always", "m", 1, 1.0, 1, 0),
+    ]);
+    let rendered = render_routing(&app, 84, 6);
+    let always = rendered.find("always").expect("always row");
+    let mostly = rendered.find("mostly").expect("mostly row");
+    assert!(
+        always < mostly,
+        "100% should rank above 50% when sorting PASS descending:\n{rendered}"
+    );
+}
+
+/// The text of one agent's row, from its name to its token count.
+fn routing_row<'a>(rendered: &'a str, agent: &str) -> &'a str {
+    let start = rendered.find(agent).expect("the agent row");
+    let end = rendered[start..].find("100.0K").expect("the token column") + start;
+    &rendered[start..end]
 }
 
 #[test]

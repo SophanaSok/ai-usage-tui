@@ -32,7 +32,8 @@ The two things worth defending, and the reason to prefer depth over breadth belo
 
 ## Outstanding findings
 
-Numbering follows the original audit. Everything not listed here has shipped.
+Numbering follows the original audit; findings since take the priority they would have had
+there. Everything not listed here has shipped.
 
 ### P0 — Resolved. Routing analytics reported a cost it could not defend
 
@@ -60,11 +61,26 @@ lie. Fix by copying `escalation::Transition`'s shape (`cost_after` + `unpriced_a
 `quota_after`) and classifying with `is_billable()` / `is_quota_billed()` / `needs_price()`, which
 `escalation::derive` already does.
 
-Two more of the same class in the same file: `retry_rate` and `defect_rate` return `0.0` both when
-a model never retried and when nothing reported a count, because `RoutingEvent.retries` is a bare
-`u32` — `success_rate` immediately above returns `Option` for exactly this reason. And `retry_rate`
-is `retries / tasks` rendered `{:.0}%`, so an emitter writing `retries: 3` on one task renders
-`300%`.
+### P1 — Resolved. Routing counters read "never measured" as "never needed"
+
+**Resolved** in the v0.10.0 arc, alongside the budget engine's copy of the same mistake. The
+paragraph that follows sat under the P0 heading above, after the words "what follows is kept
+because the shape of the bug is worth not reintroducing", and a cold reader took the whole section
+as done. That heading is how it survived a release; it has its own now.
+
+Two more of the same class in the same file: `retry_rate` and `defect_rate` returned `0.0` both
+when a model never retried and when nothing reported a count, because `RoutingEvent.retries` was a
+bare `u32` — `success_rate` immediately above returns `Option` for exactly this reason. And
+`retry_rate` was `retries / tasks` rendered `{:.0}%`, so an emitter writing `retries: 3` on one
+task rendered `300%`.
+
+The fix is one `ObservedCount` — sum, tasks that reported, tasks affected — with one `rate()`,
+rather than three more copies of the guard; `None` renders as `—` and sorts to the end both ways.
+The journal's columns were `NOT NULL` and are rebuilt nullable in place, keeping the zeros already
+recorded. Worth knowing before touching `--record-routing` again: it now **refuses** a counter or
+`test_result` it cannot read rather than storing `0` or `null` under a success message, because the
+round-trip test had been sending `"test_result":"pass"` since it was written and asserting the
+three counters beside it and not the result.
 
 ### P1 — Resolved. A pricing refresh never reached the running dashboard
 

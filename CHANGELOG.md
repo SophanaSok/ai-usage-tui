@@ -45,6 +45,58 @@
   partial budget would change what `alerts` means for every script that reads it; that is a
   contract decision, not a rider on a fix, and the panel is where the floor is visible.
 
+- **The routing panel's `RETRY`, `ESC` and `DEFECT` columns read `0%` for an agent nobody had
+  measured.** `RoutingEvent.retries`, `escalations` and `review_defects` were bare `u32`s, so an
+  emitter that omitted a field stored `0`, and `retry_rate` divided that by the task count: an
+  agent whose harness never counted retries and one that never needed any rendered the same
+  `0%`. `success_rate` beside them already returned `Option` for exactly this reason. And the
+  rate was `retries / tasks`, so an emitter writing `retries: 3` on one task rendered `300%`.
+
+  The first was latent only because no emitter exists yet — a human typing `--record-routing`
+  JSON types every field, and an automated one would not, which is why the roadmap's P0 gated
+  any harness on this class of bug. The second was live for any event with more than one retry;
+  the round-trip test carried one and asserted the sum, never the rate.
+
+  The three counters are `Option<u32>` on the event and one `ObservedCount` — sum, tasks that
+  reported, tasks affected — on the aggregate, with a single `rate()` rather than three more
+  copies of the guard `success_rate` carries. A rate is the share of *observed* tasks affected,
+  so it cannot exceed 100%, and `None` when nothing reported, which the panel renders as `—` and
+  sorts to the end in both directions the way it already held an unknown cost. Sorting by `PASS`
+  orders by the rate the column shows; it sorted by the raw pass count, which ranked one-of-one
+  at 100% below five-of-ten at 50%.
+
+  The journal's three columns were `INTEGER NOT NULL`, so they could not store "not reported".
+  `--record-routing` rebuilds an older journal's table in place, once, in one transaction. Rows
+  already there keep their zeros — that is what was recorded, and rewriting it as unknown would
+  be inventing in the other direction. Only rows written from here on can say nothing was
+  reported.
+
+  `--record-routing` refuses what it used to launder: a counter that is not a non-negative
+  integer, or a `test_result` that is not a boolean, `0`/`1`, `"pass"` or `"fail"`, is an error
+  rather than a `0` or a `null` stored under a success message. The round-trip test had been
+  sending `"test_result":"pass"` since it was written and asserting the three counters beside it
+  and not the result. A supplied `event_id` is honoured — an empty one is not an identity, as
+  `usage_key` already holds — so two events for one task in the same second no longer collapse
+  into one. A bad event is refused before the journal is opened, so it neither creates the file
+  nor rebuilds the table on its way to the error. And a `cost` sent without a `cost_status`
+  records as `reported`: the default was `unavailable` either way, and since v0.9.0's aggregator
+  classifies by status rather than trusting the number, the README's own example — `"cost":0.02`,
+  no status — recorded a task the panel then called `unpriced`.
+
+  `--routing-json` reports `retries`, `escalations`, `review_defects` and the three rates as
+  `null` rather than `0` when nothing was reported, and gains `retries_observed`,
+  `escalations_observed` and `review_defects_observed` so a script has the denominator.
+  `--routing-csv` leaves those three fields empty and **appends** the three denominators after
+  everything else, never between. The `escalation_rate` key carried opposite contracts in the
+  two exports — null when unobserved in `--json`, `0` in `--routing-json`; they agree now.
+
+- **The README images showed a retry rate the code no longer produces, and regenerating them
+  showed something worse.** The screenshot renderer pinned four of the five sources and not
+  Omarchy's records, so the header carried the author's real rate-limit window and the billing
+  decision read their plan tier: every Claude row in the demo went `quota`, in images whose
+  caption promises no real account appears. `--omarchy-dir` is required now, like the other four,
+  and the images are regenerated from the fixture alone.
+
 ## 0.9.0 - 2026-08-25
 
 ### Added

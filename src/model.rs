@@ -405,11 +405,64 @@ pub struct RoutingEvent {
     pub tokens: u64,
     pub cost: Option<f64>,
     pub cost_status: CostStatus,
-    pub retries: u32,
-    pub escalations: u32,
+    /// `None` when the emitter reported nothing, which is not `0`. These were bare `u32`s, so
+    /// an omitted field and a genuine zero were stored as the same value and read back as the
+    /// same rate — `test_result` was already `Option` for exactly this reason.
+    pub retries: Option<u32>,
+    pub escalations: Option<u32>,
     pub test_result: Option<bool>,
-    pub review_defects: u32,
+    pub review_defects: Option<u32>,
     pub created: i64,
+}
+
+/// A per-task count an emitter may or may not report, with its denominator kept beside it.
+///
+/// `retries`, `escalations` and `review_defects` were bare sums, so an emitter that never
+/// reported one was indistinguishable from an agent that never needed one: both read `0%`.
+/// `success_rate` was already `Option` for exactly this reason. This is that shape for the other
+/// three, once — three more copies of the same guard is how one of them ends up without it.
+///
+/// The rate is the share of *observed* tasks with a count above zero, so it cannot exceed 100%.
+/// `retries / tasks` could: an emitter writing `retries: 3` on one task rendered `300%`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ObservedCount {
+    /// Sum over the tasks that reported one.
+    pub total: u32,
+    /// Tasks that reported a count at all, zero included.
+    pub observed: u64,
+    /// Tasks that reported a count above zero.
+    pub affected: u64,
+}
+
+impl ObservedCount {
+    pub fn observe(&mut self, count: Option<u32>) {
+        let Some(count) = count else {
+            return;
+        };
+        self.observed += 1;
+        self.total = self.total.saturating_add(count);
+        if count > 0 {
+            self.affected += 1;
+        }
+    }
+
+    /// Share of observed tasks affected, in percent.
+    ///
+    /// `None` when no task reported a count. A rate over zero observations is not 0% — it is
+    /// unknown, and rendering it as 0% would make an uninstrumented agent look like one that
+    /// never needs a second attempt.
+    pub fn rate(&self) -> Option<f64> {
+        if self.observed == 0 {
+            return None;
+        }
+        Some(self.affected as f64 / self.observed as f64 * 100.0)
+    }
+
+    /// The sum, or `None` when nothing reported one — for an export, where `0` and "never
+    /// measured" must not share a value.
+    pub fn sum(&self) -> Option<u32> {
+        (self.observed > 0).then_some(self.total)
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -437,11 +490,11 @@ pub struct RoutingAggregates {
     pub quota_tasks: u64,
     /// Tasks that genuinely cost nothing — a local model, or one explicitly free.
     pub free_tasks: u64,
-    pub retries: u32,
-    pub escalations: u32,
+    pub retries: ObservedCount,
+    pub escalations: ObservedCount,
     pub test_passes: u32,
     pub test_failures: u32,
-    pub review_defects: u32,
+    pub review_defects: ObservedCount,
 }
 
 #[cfg(test)]
