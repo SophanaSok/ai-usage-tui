@@ -203,6 +203,55 @@ fn the_selected_routing_row_is_highlighted_scrolled_into_view_and_reachable() {
     );
 }
 
+/// The default sort survives a refresh.
+///
+/// `refresh` read the routing journal *after* `recompute`, which is where the panel is sorted,
+/// so every refresh left the table in `aggregate`'s token order until the next key press. The
+/// other routing tests inject aggregates through `set_routing_for_test`, which sorts, and so
+/// never saw it; this one goes through `refresh` with a real journal.
+#[test]
+fn a_refresh_leaves_the_routing_panel_in_its_default_order() {
+    use crate::collector::journal::record_routing_event;
+    use crate::collector::SourceRoots;
+    use serde_json::json;
+
+    let dir = std::env::temp_dir().join(format!(
+        "ai-usage-tui-routing-refresh-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let journal = dir.join("usage.db");
+    // The pricier-per-success agent has the most tokens, so token order and cost order differ.
+    for (agent, tokens, cost) in [("pricey", 500_000, 8.0), ("cheap", 1_000, 0.5)] {
+        record_routing_event(
+            &journal,
+            &json!({"agent": agent, "model": "m", "task": agent, "tokens": tokens, "cost": cost, "test_result": true}),
+        )
+        .expect("record");
+    }
+
+    let nowhere = |name: &str| Some(PathBuf::from(format!("/nonexistent/{name}")));
+    let mut app = test_app(Vec::new());
+    app.roots = SourceRoots {
+        db_path: nowhere("opencode.db"),
+        claude_dir: nowhere("claude"),
+        codex_dir: nowhere("codex"),
+        gemini_dir: nowhere("gemini"),
+        omarchy_dir: nowhere("omarchy"),
+        ..SourceRoots::new(journal)
+    };
+    app.refresh();
+
+    let order: Vec<&str> = app.routing().iter().map(|a| a.agent.as_str()).collect();
+    assert_eq!(
+        order,
+        ["cheap", "pricey"],
+        "cheapest per delivered result should lead after a refresh"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The text of one agent's row, from its name to its token count.
 fn routing_row<'a>(rendered: &'a str, agent: &str) -> &'a str {
     let start = rendered.find(agent).expect("the agent row");

@@ -139,6 +139,13 @@
   reports the key in a warning and the scraper skips the row, and the base row survives either
   way. A lowercase `k` in a scraped name is a number, not a typo.
 
+- **The routing panel's default order survives a refresh.** `refresh` read the routing journal
+  *after* `recompute`, which is where the panel is sorted and the cursor clamped, so every refresh
+  left the table in `aggregate`'s token order until the next key press — and the README's own
+  screenshot showed `$0.60` above `$0.07` in a panel titled "cost per delivered result". The
+  tests never saw it because they inject aggregates through a path that sorts. It is read before
+  `recompute` now, and one test goes through `refresh` with a real journal.
+
 ## 0.9.0 - 2026-08-25
 
 ### Added
