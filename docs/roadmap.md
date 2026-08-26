@@ -361,9 +361,13 @@ catalog, which nothing prices from, and told a user with `UNKNOWN COST` rows to 
 `PricingEngine::load` reads, and a `PRICING` section carries the engine's warnings, which had no
 production reader at all.
 
-- **The README's "Data sources" section is the longest one left**, at roughly 140 lines. The two
-  provider billing essays already moved to `docs/provider-support.md`; the per-provider parsing
-  detail is the obvious next candidate, leaving a table and the paths.
+- **Resolved.** The README's "Data sources" section was the longest one left, at roughly 175
+  lines with the per-provider parsing detail inside it. That detail — Codex's token arithmetic
+  and fork dedup, Gemini's bucket rules, Ollama's stream semantics, the provider-qualified
+  pricing keys — now lives in `docs/provider-support.md`, which gained a "Pricing tables"
+  section for the last of those. The README keeps one subsection per registered source (which
+  `tests/docs.rs` requires), each reduced to its default path, its override flags, one sentence
+  on what is not read, and the billing paragraph the previous move kept on purpose.
 - **`src/ui/theme.rs` has no tests** and probably wants none — it is colour constants. Noted so
   the next person does not re-derive that.
 - **Resolved in v0.8.0.** Derived escalations are exported: `--json` carries an `escalations`

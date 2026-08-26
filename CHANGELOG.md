@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- **The README's "Data sources" section is the paths and the switches, not the parsers.** It
+  was the longest section left, at about 175 lines, and most of them explained how each
+  collector keys an event or splits a token bucket — detail a reader on the way to a first run
+  does not need. Every registered source keeps its subsection (`tests/docs.rs` insists), reduced
+  to the default path, the override flags, and one sentence on what is not read; the parsing
+  detail lives in [`docs/provider-support.md`](docs/provider-support.md), which gained a
+  "Pricing tables" section for the provider-qualified-key rules and absorbed the Ollama journal
+  semantics and OpenCode path it had never stated. The README is 964 lines, down from 1,009.
+
 ## 0.11.0 - 2026-08-25
 
 ### Added
