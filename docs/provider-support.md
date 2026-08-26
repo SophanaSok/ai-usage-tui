@@ -2,7 +2,10 @@
 
 ## OpenCode
 
-Reads assistant usage metadata from the local OpenCode SQLite database.
+Reads assistant usage metadata from the local OpenCode SQLite database. The database is opened
+read-only and only assistant-message usage metadata is read. The default path follows
+`XDG_DATA_HOME` when set, otherwise `~/.local/share/opencode/opencode.db`; select another with
+`--db PATH`, the `db` config setting, or `OPENCODE_DB_PATH`.
 
 The OpenCode collector runs as a background task polling every 30 seconds (configurable via the `interval` key under `[collectors.opencode]`). It merges what it finds into the in-memory snapshot the dashboard reads; it never writes to the journal.
 
@@ -41,8 +44,9 @@ are dropped with the parsed document. `.credentials.json` and `settings.json` ar
 Reads OpenAI usage from Codex CLI's session logs ("rollouts") at
 `~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<thread-id>.jsonl` and under
 `~/.codex/archived_sessions/` (override the home with `--codex-dir`, the `codex_dir` config
-setting, or `CODEX_HOME`). Enabled by default; disable via `[collectors.codex] enabled = false`.
-Files the CLI has compressed to `.jsonl.zst` are not read.
+setting, or `CODEX_HOME`); `sessions/` and `archived_sessions/` are scanned recursively beneath
+it. Enabled by default; disable via `[collectors.codex] enabled = false`. Files the CLI has
+compressed to `.jsonl.zst` are not read.
 
 Each rollout is tailed by byte offset, with a partial trailing line left for the next poll. Only
 three line kinds are read: `session_meta` (thread id, `cwd`), `turn_context` (the model in force
@@ -62,8 +66,9 @@ environment means per-token; else per-token with a "billing unknown" hint on the
 Codex config document is read, so `config_json` is rejected under `[collectors.codex]`. The source
 line also appends `· N token events disagree with running totals` when the CLI's cumulative
 counter did not move by a call's own figure. Rows are `openai` / `PAID`, priced `estimated` from
-the bundled table — `gpt-5`, `gpt-5.1`, `gpt-5.2`, `gpt-5.3-codex`, `gpt-5.4`, `gpt-5.5`, and
-`gpt-5.6` families — and a model absent from it stays `unavailable`.
+the bundled table — the `gpt-5`, `gpt-5.1`, `gpt-5.2`, `gpt-5.3-codex`, `gpt-5.4`, `gpt-5.5`, and
+`gpt-5.6` families, including their `-codex`, `-mini`, `-nano`, and `-pro` variants where
+published — and a model absent from it stays `unavailable`; no rate is invented.
 
 **Privacy:** rollouts hold prompts, tool-call arguments and outputs, and reasoning summaries; none
 of it is parsed or retained. `~/.codex/auth.json` is a credential file and is never opened.
@@ -83,7 +88,8 @@ of it is parsed or retained. `~/.codex/auth.json` is a credential file and is ne
 
 Gemini CLI persists no usage without that setting: session totals live in UI state and are lost
 on exit, and saved chats under `<project temp>/chats` hold conversation history and an auth type
-with no token counts. `--doctor` reports the source as absent with the setting to add.
+with no token counts. `--doctor` reports the source as absent and prints the setting to add; this
+tool never edits Gemini's settings itself.
 
 **Token buckets.** Google reports `cachedContentTokenCount` as a *subset* of `promptTokenCount`,
 unlike Anthropic which reports cache reads alongside input. The collector subtracts it so the
@@ -118,7 +124,18 @@ advances its offset to the end of the last one.
 
 ## Ollama
 
-Ollama response metrics expose prompt and output token counts, but Ollama does not provide a complete historical usage database. `--record-ollama` provides an opt-in local journal for requests made after tracking is enabled.
+Ollama response metrics expose prompt and output token counts, but Ollama does not provide a complete historical usage database. `--record-ollama` provides an opt-in local journal for requests made after tracking is enabled: pipe a completed response into it and the token counts are stored.
+
+```sh
+curl -s http://localhost:11434/api/generate \
+  -d '{"model":"qwen3-coder:30b","prompt":"hello","stream":false}' \
+  | ai-usage-tui --record-ollama
+```
+
+Newline-delimited streaming responses (`"stream":true`) also work: only the final event with
+`done: true` is recorded, since that is the one carrying the counts. Replaying the same completed
+event does not duplicate it. The journal defaults to `~/.local/share/ai-usage-tui/usage.db`;
+override it with `--journal PATH`, the `journal` config setting, or `AI_USAGE_JOURNAL_PATH`.
 
 The journal collector polls every 60 seconds (configurable via the `interval` key under `[collectors.journal]`) and aggregates Ollama events into the same normalized shape.
 
@@ -127,6 +144,23 @@ The journal collector polls every 60 seconds (configurable via the `interval` ke
 Token counts can be observed when returned by the client response. Account quota and GPU-based Cloud billing are not currently exposed through the supported API, so the tool must not invent a dollar cost. Cloud-routed models are displayed as `CLOUD`, never as local usage.
 
 These rows carry `cost_status = quota`, not `unavailable`. The distinction matters: `unavailable` means "this should carry a price and does not", which is a gap worth reporting, while `quota` means "this is billed, but not per token at any rate we can know". They were the same value until 2026-08-19, and every panel reporting pricing coverage consequently read this deliberate refusal as a failure — the header showed 71% priced on a dataset where 100% of priceable work was priced.
+
+## Pricing tables
+
+When a provider reports no cost, it is estimated from two tables bundled in the binary, with no
+network needed: `pricing/litellm.tsv` (~3,450 keys across 88 providers, generated from
+[LiteLLM's community table](https://github.com/BerriAI/litellm) by
+`scripts/refresh-litellm-pricing.py`) and `pricing/zen.toml` (~60 curated models: OpenCode Zen
+ids, stealth models, and anything the community table gets wrong). Together they price 1,491
+distinct model names. The curated table is applied on top of the community one, and a refreshed
+cache (`--refresh-pricing`, below) on top of that, so a hand-checked rate always wins.
+
+Keys can be provider-qualified. Where providers genuinely charge differently for the same model
+name — Bedrock's variants, the aggregators — the rate follows the provider on the usage row. For
+the ~180 names where providers disagree, no bare key is published at all: a model whose provider
+is not recognised stays `UNKNOWN COST` rather than borrowing someone else's rate. Historical
+events are priced at the rates in effect when they happened; see
+[`data-model.md`](data-model.md) for the effective-dated periods that make that hold.
 
 ## OpenCode Zen
 

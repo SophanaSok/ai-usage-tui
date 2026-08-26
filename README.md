@@ -278,11 +278,15 @@ OpenCode DB / Claude Code logs / Codex logs / Gemini telemetry / Ollama journal
                                \-> one-shot read -> JSON / CSV / budgets
 ```
 
+Every source is a file on this machine, read in place. This section is the
+paths and the switches; what each collector parses, how it keys an event, and
+what it deliberately leaves unread are in
+[`docs/provider-support.md`](docs/provider-support.md).
+
 ### OpenCode
 
-OpenCode collection is automatic. The database is opened read-only and only
-assistant-message usage metadata is read. The default path follows
-`XDG_DATA_HOME` when set, otherwise it is:
+Automatic. The database is opened read-only and only assistant-message usage
+metadata is read. The default path follows `XDG_DATA_HOME` when set, otherwise:
 
 ```text
 ~/.local/share/opencode/opencode.db
@@ -293,21 +297,16 @@ Select another database with `--db PATH`, the `db` config setting, or
 
 ### Claude Code
 
-Claude Code collection is automatic. Session logs are read from:
+Automatic. Session logs are tailed from:
 
 ```text
 ~/.claude/projects/<project>/<session-id>.jsonl
 ```
 
 Select another directory with `--claude-dir PATH`, the `claude_dir` config
-setting, or `CLAUDE_PROJECTS_DIR`. Each log is tailed by byte offset, so a
-poll reads only what was appended since the last one.
-
-Only the `usage` block of each assistant message is parsed. Claude Code
-transcripts contain prompts, completions, file contents, and anything a tool
-printed — including secrets read from a `.env` — and none of that is read or
-retained. Usage is attributed to a session and a project (the working
-directory's last path segment).
+setting, or `CLAUDE_PROJECTS_DIR`. Only the `usage` block of each assistant
+message is parsed; the transcripts also hold prompts, completions, file
+contents and anything a tool printed, and none of that is read or retained.
 
 **Billing.** Claude Code and Codex write identical transcripts on an API key and on a
 subscription, and nothing on a usage line says which — so a plan's traffic priced at list
@@ -323,8 +322,8 @@ is visible rather than silent: `· subscription Max 20x`, `· api billing`, or
 
 ### Codex CLI
 
-Codex collection is automatic. Session logs ("rollouts", one JSONL file per
-thread) are read from both of:
+Automatic. Session logs ("rollouts", one JSONL file per thread) are tailed
+from both of:
 
 ```text
 ~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<thread-id>.jsonl
@@ -332,64 +331,33 @@ thread) are read from both of:
 ```
 
 Select another Codex home with `--codex-dir PATH`, the `codex_dir` config
-setting, or `CODEX_HOME`; `sessions/` and `archived_sessions/` are scanned
-recursively beneath it. Each rollout is tailed by byte offset, so a poll reads
-only what was appended since the last one. Files the CLI has compressed to
-`.jsonl.zst` are skipped.
-
-Only three line kinds are read: `session_meta` (thread id and working
-directory), `turn_context` (the model in force), and the `token_count` event's
-`last_token_usage` block. Rollouts also contain prompts, tool-call arguments
-and outputs, and reasoning summaries — none of that is read or retained.
-Usage is attributed to a session (the thread id) and a project (the working
-directory).
-
-Token conventions follow the CLI's own arithmetic. Codex reports
-`cached_input_tokens` inside `input_tokens`, so the cached part is split out as
-cache-read. It reports `reasoning_output_tokens` inside `output_tokens`, so
-that part is split out as reasoning. Prompt-cache writes stay inside input,
-because OpenAI bills them as ordinary input. Re-emitted events whose running
-total did not move (rate-limit refreshes, resumes) and post-compaction
-estimates are skipped. A forked thread copies its ancestor's history into the
-new file, timestamps and all, so event identity is content-based
-(`timestamp + call tokens + running total`) and the copy deduplicates against
-the original.
-
-Rows are `openai` / `PAID` and priced `estimated` from the bundled table, which
-covers the `gpt-5`, `gpt-5.1`, `gpt-5.2`, `gpt-5.3-codex`, `gpt-5.4`, `gpt-5.5`,
-and `gpt-5.6` families (including their `-codex`, `-mini`, `-nano`, and `-pro`
-variants where published). A model absent from the table stays `unavailable`;
-no rate is invented.
+setting, or `CODEX_HOME`. Only the session metadata, the model in force and
+each `token_count` event are read; prompts, tool output and reasoning
+summaries are not. Rows are `openai` / `PAID`, priced `estimated` from the
+bundled table, and a model absent from it stays `unavailable` — no rate is
+invented. Token conventions and event identity follow the CLI's own arithmetic:
+[Codex CLI](docs/provider-support.md#codex-cli).
 
 ### Gemini CLI
 
-**Opt-in, and it needs a setting in Gemini CLI itself.** Unlike Claude Code and
-Codex, Gemini CLI persists no usage anywhere by default — its session totals
-live in memory and its saved chats hold conversation history with no token
-counts. The only durable record is its OpenTelemetry log, which is off until you
-turn it on. Add to `~/.gemini/settings.json`:
+**Opt-in, and it needs a setting in Gemini CLI itself.** Gemini CLI persists
+no usage anywhere by default; its only durable record is its OpenTelemetry
+log, which is off until you add this to `~/.gemini/settings.json`:
 
 ```json
 { "telemetry": { "enabled": true, "target": "local", "outfile": "~/.gemini/telemetry.json" } }
 ```
 
 `ai-usage-tui --doctor` prints that line for you when the file is missing. This
-tool never edits Gemini's settings itself.
-
-Point elsewhere with `--gemini-dir PATH` or, if you set Gemini's own
-`GEMINI_TELEMETRY_OUTFILE`, it is read from there. Only the `api_response`
-records are parsed, and only their token counts, model, timestamps and
-identifiers — the same telemetry can carry `response_text` when
-`telemetry.logPrompts` is on, and none of it is read.
-
-Cached tokens are reported by Google *inside* the prompt count, unlike
-Anthropic's, so they are subtracted out to keep the buckets disjoint. Thinking
-tokens map to the reasoning bucket.
+tool never edits Gemini's settings itself. Point elsewhere with
+`--gemini-dir PATH`, or set Gemini's own `GEMINI_TELEMETRY_OUTFILE` and it is
+read from there. Only the `api_response` records are parsed, and only their
+token counts, model, timestamps and identifiers.
 
 ### Ollama
 
-Ollama usage is opt-in. Pipe a completed response into
-`--record-ollama`; the command stores token counts in the local journal.
+Opt-in. Pipe a completed response — single or streamed — into
+`--record-ollama`, which stores its token counts in the local journal:
 
 ```sh
 curl -s http://localhost:11434/api/generate \
@@ -397,16 +365,7 @@ curl -s http://localhost:11434/api/generate \
   | ai-usage-tui --record-ollama
 ```
 
-Newline-delimited streaming responses also work:
-
-```sh
-curl -s http://localhost:11434/api/generate \
-  -d '{"model":"qwen3-coder:30b","prompt":"hello","stream":true}' \
-  | ai-usage-tui --record-ollama
-```
-
-For a stream, only the final event with `done: true` is recorded. Replaying the
-same completed event does not duplicate it. The journal defaults to:
+The journal defaults to:
 
 ```text
 ~/.local/share/ai-usage-tui/usage.db
@@ -427,13 +386,9 @@ binary — no network needed:
 
 Together they price **1,491 distinct model names**. The curated table is applied
 on top of the community one, and a refreshed cache on top of that, so a
-hand-checked rate always wins.
-
-Keys can be provider-qualified. Where providers genuinely charge differently for
-the same model name — Bedrock's variants, the aggregators — the rate follows the
-provider on the usage row. For the ~180 names where providers disagree, no bare
-key is published at all: a model whose provider is not recognised stays
-`UNKNOWN COST` rather than borrowing someone else's rate.
+hand-checked rate always wins. Where providers charge differently for the same
+model name, the rate follows the provider on the usage row and no bare key is
+published: [Pricing tables](docs/provider-support.md#pricing-tables).
 
 These optional network commands update local caches and exit:
 
