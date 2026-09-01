@@ -408,6 +408,16 @@ fn load_legacy(root: &Path, cursor: &mut Cursor, decision: &Decision) -> Result<
                 if delta.tokens() == 0 {
                     continue;
                 }
+                // Shutdown metrics use the same inclusive convention as the request table:
+                // `inputTokens` contains the cache buckets and `outputTokens` contains
+                // reasoning. Subtract them back out so the five buckets stay disjoint, exactly
+                // as `usage_from_event_row` does -- a delta of inclusive totals is still
+                // inclusive.
+                let input = delta
+                    .input
+                    .saturating_sub(delta.cache_read)
+                    .saturating_sub(delta.cache_write);
+                let output = delta.output.saturating_sub(delta.reasoning);
                 usages.push(Usage {
                     // Content-derived, so a log re-read from the start dedups against what is
                     // already merged instead of doubling it.
@@ -419,8 +429,8 @@ fn load_legacy(root: &Path, cursor: &mut Cursor, decision: &Decision) -> Result<
                     provider: PROVIDER.to_string(),
                     model,
                     requests: delta.requests.max(1),
-                    input: delta.input,
-                    output: delta.output,
+                    input,
+                    output,
                     reasoning: delta.reasoning,
                     cache_read: delta.cache_read,
                     cache_write: delta.cache_write,
@@ -887,6 +897,31 @@ mod tests {
         assert_eq!(usages[0].requests, 4);
         assert_eq!(usages[0].session_id.as_deref(), Some("abc"));
         assert!(status.contains("legacy session log"), "{status}");
+    }
+
+    #[test]
+    fn legacy_aggregates_split_cache_out_of_input_too() {
+        // The request table's convention is the shutdown aggregate's convention. Both unit
+        // tests above used `cacheReadTokens: 0`, so the legacy path double-counted every
+        // cached token until an end-to-end run on a fixture with cache showed it.
+        let dir = tempfile::tempdir().unwrap();
+        let line = r#"{"type":"session.shutdown","timestamp":"2026-08-18T10:00:00Z","data":{"modelMetrics":{"claude-sonnet-5":{"requests":{"count":7},"usage":{"inputTokens":31000,"outputTokens":4200,"cacheReadTokens":12000,"cacheWriteTokens":1000,"reasoningTokens":200}}}}}"#
+            .to_string();
+        write_legacy(dir.path(), "abc", &[line]);
+        let mut cursor = Cursor::start();
+        let (usages, _) =
+            load_copilot_since(Some(dir.path()), &mut cursor, &decision()).expect("load");
+
+        let usage = &usages[0];
+        assert_eq!(usage.input, 18000, "cache buckets must leave input");
+        assert_eq!(usage.output, 4000, "reasoning must leave output");
+        assert_eq!(usage.cache_read, 12000);
+        assert_eq!(usage.cache_write, 1000);
+        assert_eq!(
+            usage.total_tokens(),
+            35200,
+            "the split must not change what Copilot reported in total"
+        );
     }
 
     #[test]

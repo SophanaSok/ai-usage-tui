@@ -47,6 +47,14 @@
 
 ### Fixed
 
+- **The Copilot legacy path double-counted cached tokens.** `session.shutdown` aggregates use the
+  same inclusive convention as the request table — `inputTokens` contains the cache buckets and
+  `outputTokens` contains reasoning — and the legacy reader was not subtracting them back out.
+  A session reporting 31,000 input including 12,000 cache reads came out as 31,000 input *and*
+  12,000 cache read, inflating its total by the cache. Both unit tests covering that path used
+  `cacheReadTokens: 0`, so neither saw it; an end-to-end run against a fixture with cache did.
+  There is now a test with non-zero cache asserting `total_tokens()` matches what Copilot
+  reported.
 - **Two hermeticity gaps in the test suite.** `tests/cli.rs`'s `hermetic_with` never pinned
   `--gemini-dir`, so a developer who had switched Gemini CLI's telemetry on saw their own rows
   in a run that is supposed to read fixtures only, and `--doctor`'s hardcoded source list had
