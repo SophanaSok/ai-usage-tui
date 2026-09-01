@@ -46,12 +46,16 @@ jobs:
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          # No `claude_args: --allowedTools ...` here. The generated workflow named the
-          # inline-comment tool alone, and every run then reported success with
-          # `permission_denials_count: 1` and "No buffered inline comments" -- including on a
-          # pull request carrying two deliberate, unmissable defects. The suspicion is that the
-          # flag restricts the tool set rather than extending it, leaving the reviewer no Read,
-          # Grep or Bash to review with. See docs/roadmap.md.
+          # `--allowedTools` REPLACES the default allowlist rather than extending it, so both
+          # halves have to be named here. Measured on PR #65, which carries two deliberate
+          # defects in a function no test covers:
+          #
+          #   generated (comment tool only)  6 turns, 1 denial,  nothing found, nothing posted
+          #   flag removed (defaults only)  21 turns, 7 denials, reviewed, then could not post
+          #
+          # The first could not read the code; the second could not speak. Naming the reading
+          # tools and the inline-comment tool together is the configuration that can do both.
+          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment,Read,Grep,Glob,Bash"'
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
 
