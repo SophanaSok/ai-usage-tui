@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Result;
+use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 
@@ -108,6 +109,7 @@ impl Totals {
 #[derive(Clone, Debug, Default)]
 pub struct Cursor {
     events: Option<i64>,
+    events_raw: Option<String>,
     legacy_offsets: HashMap<PathBuf, u64>,
     legacy_totals: HashMap<(String, String), Totals>,
 }
@@ -121,11 +123,32 @@ impl Cursor {
         self.events
     }
 
+    /// The high-water mark as the store itself spelled it.
+    ///
+    /// The shipping build declares `created_at TEXT` and writes RFC 3339, and SQLite orders
+    /// every integer before every string — so `WHERE created_at >= <integer>` is *always true*
+    /// against a text column and filters nothing. Comparing text to text restores the filter.
+    /// Fixed-width RFC 3339 sorts lexicographically in chronological order, and the comparison
+    /// is `>=`, so the worst a mismatched spelling can do is re-read rows that dedup then drops.
+    pub fn high_water_raw(&self) -> Option<&str> {
+        self.events_raw.as_deref()
+    }
+
     fn advance(&mut self, created_at: i64) {
         self.events = Some(match self.events {
             Some(current) => current.max(created_at),
             None => created_at,
         });
+    }
+
+    fn advance_raw(&mut self, created_at: &str) {
+        let further = match &self.events_raw {
+            Some(current) => created_at > current.as_str(),
+            None => true,
+        };
+        if further {
+            self.events_raw = Some(created_at.to_string());
+        }
     }
 }
 
@@ -150,6 +173,26 @@ fn has_table(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
 fn has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
     let sql = format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1)");
     conn.query_row(&sql, [column], |row| row.get(0))
+}
+
+/// The table the shipping build keeps a session's working directory and repository on.
+///
+/// They are *not* columns of `assistant_usage_events` on any build seen so far — the capture
+/// that validated this collector has them on `sessions` — but the column probe below still
+/// prefers the usage table, because a build that moves them onto it is then read without a
+/// join.
+const SESSION_TABLE: &str = "sessions";
+
+/// How one wanted column is spelled in the select list: qualified to whichever table has it,
+/// or `NULL` when neither does.
+fn locate(conn: &Connection, name: &str, allow_session: bool) -> rusqlite::Result<String> {
+    if has_column(conn, USAGE_TABLE, name)? {
+        return Ok(format!("e.{name}"));
+    }
+    if allow_session && has_table(conn, SESSION_TABLE)? && has_column(conn, SESSION_TABLE, name)? {
+        return Ok(format!("s.{name}"));
+    }
+    Ok(format!("NULL AS {name}"))
 }
 
 /// The store to read, chosen by schema rather than by name.
@@ -220,12 +263,21 @@ fn usage_from_event_row(row: &rusqlite::Row<'_>, decision: &Decision) -> Option<
     let cwd: Option<String> = row.get(8).ok().flatten();
     let repository: Option<String> = row.get(9).ok().flatten();
     let turn_index: Option<i64> = row.get(10).ok().flatten();
+    let row_id: Option<i64> = row.get(11).ok().flatten();
 
-    let event_id = session_id.as_ref().map(|session| match turn_index {
-        Some(turn) => format!("copilot:{session}:{turn}"),
-        // No turn index on this build: the timestamp plus the call's own totals is still a
-        // content-derived identity, which is what dedup needs.
-        None => format!("copilot:{session}:{created}:{input}:{output}"),
+    let event_id = session_id.as_ref().map(|session| match row_id {
+        // The row's own primary key. A turn is not one request -- the validating capture has a
+        // `user` row and an `agent` row sharing `turn_index` 0 within one session -- so keying
+        // on the turn reported one request where Copilot recorded two, and dropped the second
+        // row's tokens with it.
+        Some(id) => format!("copilot:{session}:{id}"),
+        // No `id` on this build: the timestamp plus the call's own totals is still a
+        // content-derived identity, which is what dedup needs. The turn is a prefix, not the
+        // identity, for the reason above.
+        None => match turn_index {
+            Some(turn) => format!("copilot:{session}:t{turn}:{created}:{input}:{output}"),
+            None => format!("copilot:{session}:{created}:{input}:{output}"),
+        },
     });
 
     Some(Usage {
@@ -260,39 +312,52 @@ fn load_events(
 ) -> Result<(Vec<Usage>, usize)> {
     let conn = open_read_only(path)?;
     // Every column the collector wants, with the ones a given build may not have selected as
-    // NULL so the positional indices above are stable whatever the store's age.
-    let optional = [
+    // NULL so the positional indices below are stable whatever the store's age. `cwd` and
+    // `repository` are looked for on `sessions` as well, which is where the shipping build
+    // actually keeps them.
+    let mut selected: Vec<String> = vec![
+        "e.session_id".into(),
+        "e.model".into(),
+        "e.input_tokens".into(),
+        "e.output_tokens".into(),
+    ];
+    for name in [
         "cache_read_tokens",
         "cache_write_tokens",
         "reasoning_tokens",
-        "cwd",
-        "repository",
-        "turn_index",
-    ];
-    let mut selected: Vec<String> = vec![
-        "session_id".into(),
-        "model".into(),
-        "input_tokens".into(),
-        "output_tokens".into(),
-    ];
-    for name in optional {
-        if has_column(&conn, USAGE_TABLE, name)? {
-            selected.push(name.to_string());
-        } else {
-            selected.push(format!("NULL AS {name}"));
-        }
+    ] {
+        selected.push(locate(&conn, name, false)?);
     }
-    // `created_at` is required, but it sits at index 7 — after the three optional token
-    // buckets — so it is spliced into place rather than appended.
-    selected.insert(7, "created_at".into());
+    // `created_at` is required and sits at index 7, after the three optional token buckets.
+    selected.push("e.created_at".into());
+    for name in ["cwd", "repository"] {
+        selected.push(locate(&conn, name, true)?);
+    }
+    selected.push(locate(&conn, "turn_index", false)?);
+    // The row's own key, and the only identity in this table that is one-per-request: a turn
+    // fans out into several requests (the capture has a `user` row and an `agent` row sharing
+    // `turn_index` 0), so a `turn_index` identity silently drops all but the first.
+    selected.push(locate(&conn, "id", false)?);
+
+    let joins_sessions = selected.iter().any(|column| column.starts_with("s."));
+    let from = if joins_sessions {
+        format!("{USAGE_TABLE} e LEFT JOIN {SESSION_TABLE} s ON s.id = e.session_id")
+    } else {
+        format!("{USAGE_TABLE} e")
+    };
 
     let columns = selected.join(", ");
-    let (sql, bind): (String, Vec<i64>) = match cursor.high_water() {
-        Some(since) => (
-            format!("SELECT {columns} FROM {USAGE_TABLE} WHERE created_at >= ?1"),
-            vec![since],
+    let (sql, bind): (String, Vec<SqlValue>) = match (cursor.high_water_raw(), cursor.high_water())
+    {
+        (Some(since), _) => (
+            format!("SELECT {columns} FROM {from} WHERE e.created_at >= ?1"),
+            vec![SqlValue::Text(since.to_string())],
         ),
-        None => (format!("SELECT {columns} FROM {USAGE_TABLE}"), Vec::new()),
+        (None, Some(since)) => (
+            format!("SELECT {columns} FROM {from} WHERE e.created_at >= ?1"),
+            vec![SqlValue::Integer(since)],
+        ),
+        (None, None) => (format!("SELECT {columns} FROM {from}"), Vec::new()),
     };
 
     let mut stmt = conn.prepare(&sql)?;
@@ -307,6 +372,9 @@ fn load_events(
         // history we have seen, and not advancing past it would re-read it forever.
         if let Some(created) = created_at_seconds(row, 7) {
             cursor.advance(created);
+        }
+        if let Ok(Some(raw)) = row.get::<_, Option<String>>(7) {
+            cursor.advance_raw(&raw);
         }
         match usage_from_event_row(row, decision) {
             Some(usage) => usages.push(usage),
@@ -681,10 +749,108 @@ mod tests {
         let mut cursor = Cursor::start();
         let (usages, _) =
             load_copilot_since(Some(dir.path()), &mut cursor, &decision()).expect("load");
-        assert_eq!(usages[0].event_id.as_deref(), Some("copilot:s1:3"));
+        // No `id` column on this older shape, so identity falls back to the turn *plus* the
+        // call's own totals. The turn alone is not an identity -- see
+        // `two_requests_in_one_turn_are_two_rows`.
+        assert_eq!(
+            usages[0].event_id.as_deref(),
+            Some("copilot:s1:t3:1700000000:100:20")
+        );
         assert_eq!(usages[0].session_id.as_deref(), Some("s1"));
         assert_eq!(usages[0].project.as_deref(), Some("/home/dev/app"));
         assert_eq!(usages[0].provider, PROVIDER);
+    }
+
+    /// The schema the shipping CLI actually writes, captured from a real account: an
+    /// autoincrement `id`, no `cwd`/`repository` on the usage table (they are on `sessions`),
+    /// and an RFC 3339 `created_at` declared TEXT.
+    fn seed_shipping_store(root: &Path) {
+        fs::create_dir_all(root).expect("create root");
+        let conn = Connection::open(root.join("session-store.db")).expect("create db");
+        conn.execute_batch(
+            "CREATE TABLE sessions (
+                 id TEXT PRIMARY KEY, cwd TEXT, repository TEXT, host_type TEXT,
+                 branch TEXT, summary TEXT,
+                 created_at TEXT DEFAULT (datetime('now')),
+                 updated_at TEXT DEFAULT (datetime('now')));
+             CREATE TABLE assistant_usage_events (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 session_id TEXT NOT NULL REFERENCES sessions(id),
+                 turn_index INTEGER, agent_id TEXT, parent_tool_call_id TEXT,
+                 model TEXT NOT NULL, input_tokens INTEGER, output_tokens INTEGER,
+                 cache_read_tokens INTEGER, cache_write_tokens INTEGER,
+                 reasoning_tokens INTEGER, total_nano_aiu INTEGER,
+                 request_multiplier REAL, initiator TEXT,
+                 created_at TEXT DEFAULT (datetime('now')));
+             INSERT INTO sessions (id, cwd, repository)
+                 VALUES ('s1', '/home/dev/app', 'dev/app');
+             INSERT INTO assistant_usage_events
+                 (session_id, turn_index, model, input_tokens, output_tokens,
+                  cache_read_tokens, cache_write_tokens, reasoning_tokens, initiator, created_at)
+             VALUES
+                 ('s1', 0, 'mai-code-1.1-flash', 13873, 148, 13440, 0, 0, 'user',
+                  '2026-08-18T10:00:15.656Z'),
+                 ('s1', 0, 'mai-code-1.1-flash', 14027, 6, 13824, 0, 0, 'agent',
+                  '2026-08-18T10:00:22.718Z');",
+        )
+        .expect("create schema");
+    }
+
+    #[test]
+    fn two_requests_in_one_turn_are_two_rows() {
+        // A turn is not a request. The capture that validated this collector has a `user` row
+        // and an `agent` row sharing `turn_index` 0 inside one session -- so identity keyed on
+        // the turn reported one request where Copilot recorded two, and threw the second row's
+        // tokens away with it. Identity is the row's own primary key.
+        let dir = tempfile::tempdir().unwrap();
+        seed_shipping_store(dir.path());
+        let mut cursor = Cursor::start();
+        let (usages, _) =
+            load_copilot_since(Some(dir.path()), &mut cursor, &decision()).expect("load");
+
+        assert_eq!(usages.len(), 2, "a turn's two requests are two rows");
+        let ids: Vec<_> = usages
+            .iter()
+            .filter_map(|u| u.event_id.as_deref())
+            .collect();
+        assert_eq!(ids, vec!["copilot:s1:1", "copilot:s1:2"]);
+        // Both rows keep their own de-nested tokens: 13873 - 13440 and 14027 - 13824.
+        assert_eq!(usages[0].input, 433);
+        assert_eq!(usages[1].input, 203);
+    }
+
+    #[test]
+    fn a_working_directory_on_the_sessions_table_still_names_the_project() {
+        // `cwd` and `repository` are not columns of `assistant_usage_events` on the shipping
+        // build; they are on `sessions`. Probing only the usage table left every Copilot row
+        // with no project at all.
+        let dir = tempfile::tempdir().unwrap();
+        seed_shipping_store(dir.path());
+        let mut cursor = Cursor::start();
+        let (usages, _) =
+            load_copilot_since(Some(dir.path()), &mut cursor, &decision()).expect("load");
+        assert_eq!(usages[0].project.as_deref(), Some("/home/dev/app"));
+    }
+
+    #[test]
+    fn a_text_timestamp_resumes_where_it_left_off() {
+        // SQLite orders every integer before every string, so `created_at >= <integer>` against
+        // a TEXT column is always true and filters nothing. The cursor keeps the store's own
+        // spelling so the second read compares text with text.
+        let dir = tempfile::tempdir().unwrap();
+        seed_shipping_store(dir.path());
+        let mut cursor = Cursor::start();
+        let (first, _) =
+            load_copilot_since(Some(dir.path()), &mut cursor, &decision()).expect("load");
+        assert_eq!(first.len(), 2);
+        assert_eq!(cursor.high_water_raw(), Some("2026-08-18T10:00:22.718Z"));
+
+        // The high-water row itself is re-read (the comparison is `>=`, so a row landing on the
+        // mark is never skipped); everything before it is filtered out in SQL.
+        let (second, _) =
+            load_copilot_since(Some(dir.path()), &mut cursor, &decision()).expect("load");
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].event_id.as_deref(), Some("copilot:s1:2"));
     }
 
     #[test]

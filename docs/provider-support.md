@@ -84,7 +84,7 @@ of it is parsed or retained. `~/.codex/auth.json` is a credential file and is ne
 | Fallback | `session-state/<session-id>/events.jsonl`, `session.shutdown` records only |
 | Identity | `copilot:<session_id>:<turn_index>`; legacy rows key on the cumulative total |
 | Billing signal | None available — a seat is the only way to use Copilot, so `auto` resolves to subscription |
-| Project attribution | `cwd`, falling back to `repository` |
+| Project attribution | `cwd`, falling back to `repository` — read from the `sessions` table, which is where the shipping build keeps them |
 
 Copilot has moved its usage between three shapes over its life, and the store's filename has
 moved with them. The collector tries each candidate and picks whichever one actually has an
@@ -97,17 +97,31 @@ buckets stay disjoint — this is the Codex convention, and a unit test asserts 
 unchanged by the split. Leaving them folded in would count every cached token twice, and price it
 twice.
 
-**Identity.** `session_id` plus `turn_index` is the source's own per-request identity. On a build
-with no turn index the key falls back to the session, the timestamp and the call's own counts,
-which is still content-derived — a store copied between machines dedups against the original
-rather than doubling it.
+**Identity is the row, not the turn.** `assistant_usage_events.id` is the only column that is
+one-per-request. A turn fans out: a tool-using prompt writes a `user` row and one `agent` row per
+follow-up call, all sharing a `turn_index` — which the shipping build writes as `0` on every row
+anyway. Keying on the turn reported one request per turn and threw the rest of the turn's tokens
+away. On a build with no `id` the key falls back to the session, the turn, the timestamp and the
+call's own counts, which is still content-derived — a store copied between machines dedups
+against the original rather than doubling it.
+
+**Resuming across a text timestamp.** `created_at` is declared `TEXT` and written as RFC 3339.
+SQLite orders every integer before every string, so a `created_at >= <integer>` bound is always
+true against that column and filters nothing. The cursor keeps the store's own spelling of its
+high-water mark and compares text with text; fixed-width RFC 3339 sorts lexicographically in
+chronological order, and the comparison is `>=`, so a mismatched spelling can only re-read rows
+that dedup then drops.
 
 **Legacy aggregates are cumulative.** A `session.shutdown` reports the session's running totals,
 not the turn's, and a resumed session writes several. The collector remembers the last snapshot
 per session and model and emits only the difference; emitting each snapshot whole would report
 every earlier turn again on each resume.
 
-**Billing.** A Copilot seat bills premium requests against a plan, not tokens. There is no
+**Billing.** A Copilot seat bills premium requests against a plan, not tokens — confirmed
+against a real account, where a `session.shutdown` reporting `"totalPremiumRequests": 1` carries
+`modelMetrics.<model>.requests = {"count": 1, "cost": 1}`, so that `cost` is a request count and
+not a dollar figure. The money-shaped column is `total_nano_aiu`, in nano AI Units, which is a
+Copilot billing unit rather than an amount charged. Neither is reported as `cost`. There is no
 API-key mode and therefore no environment variable whose presence would mean per-token billing,
 so `api_env_vars("copilot")` is deliberately an explicit empty list and an unevidenced decision
 resolves to `subscription` rather than falling through to per-token. Rows carry
@@ -132,10 +146,13 @@ is not a measurement, and once priced it is indistinguishable in a total from a 
 actually reported. Copilot usage this tool cannot measure is reported as absent. See also
 [Why there is no Cursor collector](../README.md#why-there-is-no-cursor-collector).
 
-**Not yet validated against a real account.** The schema here is derived from Copilot's published
-behaviour and from other readers of the same store, not from a live install. Every read is behind
-the schema probe, so an unexpected shape degrades to "absent" with a status line rather than to
-wrong numbers. A capture from a real Copilot user would firm this up.
+**Validated against a real account.** Copilot CLI 1.0.82, driven non-interactively, produced the
+store this collector is now pinned to: `tests/fixtures/copilot_home/session-store.db` is that
+capture with identifiers and paths redacted. The schema probe held — nothing produced a wrong
+number — but three assumptions did not, and the roadmap records them: the turn-keyed identity
+above, `cwd`/`repository` living on `sessions`, and the integer-bound cursor. Still unchecked, and
+wanting a different account rather than another run: a store carried through several CLI upgrades,
+and whether a paid plan ever writes a `request_multiplier` other than `1.0`.
 
 ## Gemini CLI
 
@@ -320,7 +337,8 @@ silent under-count.
 - Codex collector: polls rollouts every 30s (configurable), tailing by byte offset with a
   per-file cursor
 - Copilot collector: polls the CLI store every 30s (configurable), resuming from a `created_at`
-  high-water mark; the legacy fallback tails by byte offset with a per-session cumulative total
+  high-water mark kept in the store's own type; the legacy fallback tails by byte offset with a
+  per-session cumulative total
 - Journal collector: polls journal DB every 60s (configurable)
 - Zen Pricing collector: refreshes hourly when enabled (opt-in)
 

@@ -927,6 +927,83 @@ fn claude_billing_decides_whether_transcript_rows_carry_dollars() {
     let _ = std::fs::remove_dir_all(&temp);
 }
 
+/// The fixture is a redacted capture of a real Copilot store: the shipping schema, including
+/// the autoincrement `id`, the `sessions` table that actually carries `cwd`/`repository`, and
+/// `created_at` as RFC 3339 text. Two of its three usage rows share `turn_index` 0 in one
+/// session, which is the shape that made a turn-keyed identity lose a request.
+#[test]
+fn copilot_requests_are_exported_one_row_per_request_with_no_content() {
+    let copilot_home = format!("{}/tests/fixtures/copilot_home", env!("CARGO_MANIFEST_DIR"));
+    let mut command = bin();
+    command
+        .arg("--json")
+        .arg("--all")
+        .arg("--db")
+        .arg(fixture_db())
+        .arg("--journal")
+        .arg(std::env::temp_dir().join(format!("ai-usage-copilot-{}.db", std::process::id())))
+        .arg("--copilot-dir")
+        .arg(&copilot_home);
+    for name in ["claude", "codex", "gemini", "omarchy"] {
+        command.arg(format!("--{name}-dir")).arg(format!(
+            "{}/tests/fixtures/no-such-{name}-dir",
+            env!("CARGO_MANIFEST_DIR")
+        ));
+    }
+    command.env_remove("COPILOT_HOME");
+    let output = command.output().expect("run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("FIXTURE_SECRET"),
+        "prompt or summary content reached the export:\n{stdout}"
+    );
+
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let rows: Vec<_> = json["usage"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["provider"] == "github-copilot")
+        .collect();
+    assert_eq!(
+        rows.len(),
+        3,
+        "one row per request, not per turn: {rows:#?}"
+    );
+
+    let same_turn: Vec<_> = rows
+        .iter()
+        .filter(|row| row["session_id"] == "11111111-1111-4111-8111-111111111111")
+        .collect();
+    assert_eq!(
+        same_turn.len(),
+        2,
+        "both requests of one turn survive: {same_turn:#?}"
+    );
+    // 13873 - 13440 and 14027 - 13824: the cache buckets come back out of `input_tokens`.
+    let mut inputs: Vec<i64> = same_turn
+        .iter()
+        .map(|row| row["input_tokens"].as_i64().unwrap())
+        .collect();
+    inputs.sort_unstable();
+    assert_eq!(inputs, vec![203, 433]);
+    // `cwd` lives on `sessions`, not on the usage table.
+    assert_eq!(same_turn[0]["project"], "/home/dev/app");
+
+    for row in &rows {
+        assert!(
+            row["cost"].is_null(),
+            "a seat bills premium requests, not tokens: {row}"
+        );
+        assert_eq!(row["cost_status"], "quota", "{row}");
+    }
+}
+
 #[test]
 fn codex_rollouts_are_exported_with_split_buckets_and_no_content() {
     let codex_home = format!("{}/tests/fixtures/codex_home", env!("CARGO_MANIFEST_DIR"));
