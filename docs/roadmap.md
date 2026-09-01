@@ -48,39 +48,51 @@ until its unit can be checked against a known invoice; if it turns out to be dol
 could carry `reported` cost instead of `quota`, which would be a better answer than the list-rate
 counterfactual they carry now.
 
-### Open — `claude-review` starts its review but ends before the subagents finish
+### Open — `claude-review` reviewed nothing, twice over
 
-**The original cause is found and fixed.** The workflow denied its own review skill, so it had
-never reviewed anything. `--allowedTools` **replaces** the default allowlist rather than extending
-it, and the generated workflow named `mcp__github_inline_comment__create_inline_comment` and
-nothing else — while the `prompt:` is `/code-review:code-review`, a slash command the model
-invokes through the **`Skill`** tool. First move denied, then `"subtype": "success"` and silence.
-Fixed in PR #75 by putting `Skill` at the front of the allowlist.
+Two independent faults, both now understood, both fixed; what is left is to *verify* the fix
+against a pull request carrying real defects.
 
-Four runs against a pull request carrying two deliberate defects:
+**Fault 1: the workflow denied its own review skill.** `--allowedTools` **replaces** the default
+allowlist rather than extending it, and the generated workflow named
+`mcp__github_inline_comment__create_inline_comment` and nothing else — while the `prompt:` was
+`/code-review:code-review`, a slash command the model invokes through the **`Skill`** tool. First
+move denied, then `"subtype": "success"` and silence. Four runs against a pull request carrying
+two deliberate defects:
 
 | allowlist | turns | denials | outcome |
 | --- | --- | --- | --- |
 | comment tool only (generated) | 6 | 1 — `Skill` | never reviewed |
 | flag removed, defaults | 21 | 7 | reviewed, no way to post |
 | `+ Read,Grep,Glob,Bash` | 7 | 1 — `Skill` | never reviewed |
-| `+ Skill` (current) | 7 | **0** | skill ran, spawned 2 subagents |
+| `+ Skill` (PR #75) | 7 | **0** | skill ran, spawned 2 subagents |
 
-**What is still open.** With `Skill` allowed the review starts — `"permission_denials": []`,
-`"subagent_stats": {"spawned": 2}` — and then the session ends on:
+**Fault 2: the review fans out to background tasks, and the parent does not wait.** With `Skill`
+allowed the review starts and then ends having posted nothing. Run 33568706427 carries
+`"subtype": "background_tasks_changed"`, `"task_started"`, `"task_progress"` and finishes at
 
 ```
-"result": "I'll wait for the background agents to complete automatically rather than polling."
+"num_turns": 6, "permission_denials": [],
+"result": "I'll wait for the background agent's completion notification before continuing."
 ```
 
-The action's session terminates while the review's own subagents are still running, so nothing is
-ever buffered and `post-buffered-inline-comments` finds an empty queue. The plugin's review
-fans out to background agents; the single action invocation does not wait for them.
+Six turns is nowhere near a cap: **the parent stopped voluntarily**, waiting for a notification a
+`-p` invocation never delivers. Raising `--max-turns` — which an earlier version of this entry
+proposed as the cheapest fix — buys nothing, and that is worth not re-deriving.
 
-Worth trying next, in order of cheapness: raising `--max-turns` so the parent has budget to wait;
-looking for a plugin argument that keeps the review in-process instead of fanning out; and failing
-both, replacing `/code-review:code-review` with a direct prompt that reviews inline and calls
-`mcp__github_inline_comment__create_inline_comment` itself.
+The plugin's command fans out by design: a Haiku eligibility agent, five parallel Sonnet
+reviewers, a Haiku confidence scorer per issue. Reading it also showed **the posting path never
+matched either**: step 8 posts one summary comment with `gh pr comment` (its frontmatter allows
+`Bash(gh pr comment:*)`) and it never creates an inline comment, so
+`mcp__github_inline_comment__create_inline_comment` and the action's buffered-comment step were
+looking for something that was never going to be produced. Its command body has no `$ARGUMENTS`
+either, so the `--comment <repo>/pull/N` the workflow passed was noise.
+
+**The fix** replaces the slash command with a direct prompt that reviews in-process — no
+subagents, no background tasks — and posts with `gh pr comment`, with an allowlist naming exactly
+the tools that prompt uses. It also posts a "No issues found" comment rather than staying silent,
+because silence is indistinguishable from a review that never ran, which is what made the first
+eight runs so expensive to read.
 
 **How this was found, and the methodology error to avoid repeating.** The denial was invisible
 until `show_full_output: true` (#72) printed
@@ -95,8 +107,8 @@ review", and additionally flagged the body's instruction-shaped text as a prompt
 rather than its ability.
 
 **Reproduction.** Two defects in `cursor_is_installed()` in `src/main.rs`, chosen because no test
-covers that function — `cargo fmt --check`, `clippy -D warnings` and all 492 tests pass with both
-in place, so the reviewer is the only thing that can catch them. Present them as an ordinary
+covers that function — `cargo fmt --check`, `clippy -D warnings` and the whole suite pass with
+both in place, so the reviewer is the only thing that can catch them. Present them as an ordinary
 refactor, with no mention of testing or reviewers:
 
 ```diff
