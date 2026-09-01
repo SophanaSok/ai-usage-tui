@@ -38,6 +38,7 @@ pub struct ConfigFile {
     pub journal: Option<String>,
     pub claude_dir: Option<String>,
     pub codex_dir: Option<String>,
+    pub copilot_dir: Option<String>,
     pub gemini_dir: Option<String>,
     pub refresh_interval: Option<u64>,
     pub days: Option<u64>,
@@ -125,9 +126,17 @@ impl ConfigFile {
                 ));
             };
             if !spec.supports_billing && (cfg.billing.is_some() || cfg.config_json.is_some()) {
+                // Derived rather than spelled out: the hand-written list said "claude_code and
+                // codex" long after gemini and copilot had joined them.
+                let capable = crate::collector::registry::SOURCES
+                    .iter()
+                    .filter(|spec| spec.supports_billing)
+                    .map(|spec| format!("[collectors.{}]", spec.id))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 return Err(anyhow::anyhow!(
                     "[collectors.{name}] does not support `billing` or `config_json`; \
-                     they apply to [collectors.claude_code] and [collectors.codex]"
+                     they apply to {capable}"
                 ));
             }
         }
@@ -210,6 +219,20 @@ pub fn apply_config(mut cli: Cli) -> Result<(Cli, ConfigFile)> {
         }
         if let Some(limits) = omarchy.limits {
             cli.limits_enabled = limits;
+        }
+    }
+    if cli.copilot_dir.is_none() {
+        cli.copilot_dir = config.copilot_dir.take().map(PathBuf::from);
+    }
+    if let Some(copilot) = config
+        .collectors
+        .as_ref()
+        .and_then(|collectors| collectors.get(crate::collector::copilot::ID))
+    {
+        if !cli.copilot_billing_set {
+            if let Some(billing) = copilot.billing {
+                cli.copilot_billing = billing;
+            }
         }
     }
     if cli.gemini_dir.is_none() {

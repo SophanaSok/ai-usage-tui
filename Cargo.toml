@@ -3,7 +3,7 @@ name = "ai-usage-tui"
 version = "0.11.0"
 edition = "2021"
 rust-version = "1.88"
-description = "A btop-inspired terminal dashboard for AI coding-agent token usage, cost and budgets — reads Claude Code, Codex CLI, Gemini CLI, OpenCode and Ollama, live TUI or JSON/CSV."
+description = "A btop-inspired terminal dashboard for AI coding-agent token usage, cost and budgets — reads Claude Code, Codex CLI, GitHub Copilot, Gemini CLI, OpenCode and Ollama, live TUI or JSON/CSV."
 license = "MIT"
 authors = ["Sophana Sok <sokdevelopment@gmail.com>"]
 repository = "https://github.com/SophanaSok/ai-usage-tui"
@@ -32,7 +32,7 @@ exclude = ["docs/assets/*", ".github/*", "scripts/*", "dist/*"]
 # function: a collector cannot be added without its topic.
 topics = [
     "ai", "tui", "dashboard", "tokens", "cost",
-    "claude-code", "codex-cli", "gemini-cli", "opencode", "ollama",
+    "claude-code", "codex-cli", "github-copilot", "gemini-cli", "opencode", "ollama",
     "rust", "cli", "ratatui", "llm", "token-usage", "cost-tracking",
     "ai-agents", "terminal",
 ]

@@ -51,6 +51,12 @@ impl CostStatus {
         }
     }
 
+    /// Non-billable but genuinely priced at zero: the call happened and cost nothing.
+    /// Distinct from `quota` and `unavailable`, where no figure exists at all.
+    pub fn is_free_or_local(self) -> bool {
+        matches!(self, Self::Free | Self::Local)
+    }
+
     pub fn is_billable(self) -> bool {
         matches!(
             self,
@@ -102,6 +108,117 @@ pub fn accrue(usage: &Usage, cost: &mut f64, unpriced: &mut u64, quota: &mut u64
             Some(value) => *cost += value,
             None => *unpriced += usage.requests,
         }
+    }
+}
+
+/// Every cost status a row can carry, in the order they are reported.
+pub const COST_STATUSES: &[CostStatus] = &[
+    CostStatus::ProviderReported,
+    CostStatus::Calculated,
+    CostStatus::Estimated,
+    CostStatus::Free,
+    CostStatus::Local,
+    CostStatus::Quota,
+    CostStatus::Unavailable,
+];
+
+/// One cost status's share of a range: how much of it there is, and what it is worth.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ProvenanceBucket {
+    pub rows: usize,
+    pub requests: u64,
+    pub tokens: u64,
+    /// Dollars, where dollars are a fact. `None` for `quota` and `unavailable`, which is the
+    /// whole point: those rows have no per-token price, and reporting `0.0` for them would be
+    /// the same false statement this crate refuses to make anywhere else.
+    pub cost: Option<f64>,
+    /// What quota-billed rows would have cost at list rates. Never money that changed hands.
+    pub api_equivalent_cost: Option<f64>,
+}
+
+/// Where a range's numbers came from.
+///
+/// `cost_status` has always carried this per row, and the header has always reduced it to a
+/// single pricing-coverage percentage. This is the whole distribution, so a reader can answer
+/// "how much of this total did a provider actually report, and how much did we work out
+/// ourselves" — and so a script can assert on it.
+///
+/// Every status is present whether or not it has rows, so a consumer can key on the shape.
+#[derive(Clone, Debug, Default)]
+pub struct Provenance {
+    pub buckets: Vec<(CostStatus, ProvenanceBucket)>,
+}
+
+impl Provenance {
+    pub fn of(usages: &[Usage]) -> Self {
+        let mut buckets: Vec<(CostStatus, ProvenanceBucket)> = COST_STATUSES
+            .iter()
+            .map(|status| (*status, ProvenanceBucket::default()))
+            .collect();
+        for usage in usages {
+            let Some((_, bucket)) = buckets
+                .iter_mut()
+                .find(|(status, _)| *status == usage.cost_status)
+            else {
+                continue;
+            };
+            bucket.rows += 1;
+            bucket.requests += usage.requests;
+            bucket.tokens += usage.total_tokens();
+            if usage.cost_status.is_billable() || usage.cost_status.is_free_or_local() {
+                *bucket.cost.get_or_insert(0.0) += usage.cost.unwrap_or(0.0);
+            }
+            if let Some(equivalent) = usage.api_equivalent_cost {
+                *bucket.api_equivalent_cost.get_or_insert(0.0) += equivalent;
+            }
+        }
+        Self { buckets }
+    }
+
+    fn bucket(&self, status: CostStatus) -> ProvenanceBucket {
+        self.buckets
+            .iter()
+            .find(|(candidate, _)| *candidate == status)
+            .map(|(_, bucket)| *bucket)
+            .unwrap_or_default()
+    }
+
+    /// Dollars this range actually claims — the three billable statuses summed.
+    pub fn billable_cost(&self) -> f64 {
+        // `fold` rather than `sum`: std's `Sum for f64` uses `-0.0` as its additive identity,
+        // so an empty range serialised as `-0.0` in `--json`.
+        self.buckets
+            .iter()
+            .filter(|(status, _)| status.is_billable())
+            .filter_map(|(_, bucket)| bucket.cost)
+            .fold(0.0, |total, cost| total + cost)
+    }
+
+    /// Of those dollars, the share a provider reported rather than this tool working out.
+    ///
+    /// `None` rather than `0.0` when there are no billable dollars at all: a share of nothing
+    /// is not a fact about anything, the same reasoning `escalation_rate` already uses.
+    pub fn reported_share(&self) -> Option<f64> {
+        let total = self.billable_cost();
+        if total <= 0.0 {
+            return None;
+        }
+        Some(
+            self.bucket(CostStatus::ProviderReported)
+                .cost
+                .unwrap_or(0.0)
+                / total
+                * 100.0,
+        )
+    }
+
+    /// Requests carrying no per-token price: quota-billed plus genuinely unpriced.
+    pub fn unpriced_requests(&self) -> u64 {
+        self.bucket(CostStatus::Unavailable).requests
+    }
+
+    pub fn quota_requests(&self) -> u64 {
+        self.bucket(CostStatus::Quota).requests
     }
 }
 
@@ -553,5 +670,83 @@ mod tests {
         assert_eq!(totals.quota_requests, 2);
         assert_eq!(totals.unknown_requests, 0);
         assert!((totals.api_equivalent - 1.25).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::*;
+
+    fn row(cost_status: CostStatus, cost: Option<f64>, equivalent: Option<f64>) -> Usage {
+        Usage {
+            provider: "anthropic".into(),
+            model: "claude-sonnet-5".into(),
+            requests: 1,
+            input: 100,
+            output: 50,
+            cost,
+            cost_status,
+            api_equivalent_cost: equivalent,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn every_status_is_present_even_with_no_rows() {
+        // A consumer keys on the shape; a bucket that vanishes when empty is a bucket a script
+        // has to special-case.
+        let provenance = Provenance::of(&[]);
+        assert_eq!(provenance.buckets.len(), COST_STATUSES.len());
+        assert!(provenance.buckets.iter().all(|(_, b)| b.rows == 0));
+    }
+
+    #[test]
+    fn an_empty_range_reports_no_share_rather_than_zero_percent() {
+        let provenance = Provenance::of(&[]);
+        assert_eq!(provenance.reported_share(), None);
+        // std's `Sum for f64` identity is `-0.0`, which serialised as `-0.0` in JSON.
+        assert_eq!(provenance.billable_cost(), 0.0);
+        assert!(provenance.billable_cost().is_sign_positive());
+    }
+
+    #[test]
+    fn quota_and_unavailable_rows_carry_no_dollar_figure() {
+        // The whole point: reporting `0.0` for these would assert they were free.
+        let provenance = Provenance::of(&[
+            row(CostStatus::Quota, None, Some(9.0)),
+            row(CostStatus::Unavailable, None, None),
+        ]);
+        let quota = provenance.bucket(CostStatus::Quota);
+        assert_eq!(quota.cost, None);
+        assert_eq!(quota.api_equivalent_cost, Some(9.0));
+        assert_eq!(provenance.bucket(CostStatus::Unavailable).cost, None);
+        // And neither reaches the dollars the range claims.
+        assert_eq!(provenance.billable_cost(), 0.0);
+        assert_eq!(provenance.quota_requests(), 1);
+        assert_eq!(provenance.unpriced_requests(), 1);
+    }
+
+    #[test]
+    fn the_reported_share_is_of_billable_dollars_only() {
+        let provenance = Provenance::of(&[
+            row(CostStatus::ProviderReported, Some(3.0), None),
+            row(CostStatus::Estimated, Some(1.0), None),
+            // Neither of these may move the denominator.
+            row(CostStatus::Quota, None, Some(100.0)),
+            row(CostStatus::Free, Some(0.0), None),
+        ]);
+        assert_eq!(provenance.billable_cost(), 4.0);
+        assert_eq!(provenance.reported_share(), Some(75.0));
+    }
+
+    #[test]
+    fn free_and_local_rows_are_priced_at_zero_rather_than_unknown() {
+        // A free call happened and cost nothing; that is a figure, unlike `unavailable`.
+        let provenance = Provenance::of(&[
+            row(CostStatus::Free, Some(0.0), None),
+            row(CostStatus::Local, None, None),
+        ]);
+        assert_eq!(provenance.bucket(CostStatus::Free).cost, Some(0.0));
+        assert_eq!(provenance.bucket(CostStatus::Local).cost, Some(0.0));
     }
 }

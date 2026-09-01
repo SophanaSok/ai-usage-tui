@@ -14,7 +14,7 @@ used to be two hand-maintained wirings: `main::build_collectors` for the dashboa
 five-call `load_usage` for everything else. A provider added to one and not the other appeared
 in the dashboard and was silently missing from every export.
 
-Collectors read assistant message records from the OpenCode SQLite database, Claude Code session logs (`~/.claude/projects/**/*.jsonl`), Codex CLI rollouts (`~/.codex/{sessions,archived_sessions}/**/*.jsonl`), and the local Ollama/routing journal. Future collectors follow the same normalized shape.
+Collectors read assistant message records from the OpenCode SQLite database, Claude Code session logs (`~/.claude/projects/**/*.jsonl`), Codex CLI rollouts (`~/.codex/{sessions,archived_sessions}/**/*.jsonl`), GitHub Copilot's CLI store (`~/.copilot/`), and the local Ollama/routing journal. Future collectors follow the same normalized shape.
 
 ## Privacy Boundary
 
@@ -34,11 +34,11 @@ This extends to the pricing table: a rate that is absent is distinct from a rate
 
 ## Background Collectors
 
-Background collectors run in dedicated `std::thread`-based polling loops and merge normalized usage events into the shared in-memory `CollectorState`. They never write to the journal database — the journal is a source (written by `--record-ollama` / `--record-routing`, read by the journal collector), not a sink. The TUI calls `snapshot()` on its own refresh interval (default 30s), keeping the UI responsive regardless of collector latency. Configuration lives in the `[collectors.opencode]`, `[collectors.claude_code]`, `[collectors.codex]`, `[collectors.journal]`, and `[collectors.zen_pricing]` sections of the config file.
+Background collectors run in dedicated `std::thread`-based polling loops and merge normalized usage events into the shared in-memory `CollectorState`. They never write to the journal database — the journal is a source (written by `--record-ollama` / `--record-routing`, read by the journal collector), not a sink. The TUI calls `snapshot()` on its own refresh interval (default 30s), keeping the UI responsive regardless of collector latency. Configuration lives in the `[collectors.opencode]`, `[collectors.claude_code]`, `[collectors.codex]`, `[collectors.copilot]`, `[collectors.gemini]`, `[collectors.journal]`, and `[collectors.zen_pricing]` sections of the config file.
 
 Omarchy's subscription limits are not a collector: `App::refresh()` reads the records directly beside the routing table, and `--json` reads them once for its `limits` array. `[omarchy]` (`dir`, `limits`, `records`, `balance`, `balance_budget`) and `--omarchy-dir` configure it; the record's `tierLabel` is also the last signal in the billing decision.
 
-Ingestion is incremental: the OpenCode collector resumes from a `time_created` high-water mark and the Claude Code and Codex collectors tail each session log by byte offset, so none re-reads history on every poll.
+Ingestion is incremental: the OpenCode and Copilot collectors resume from a high-water mark (`time_created` and `created_at` respectively) and the Claude Code and Codex collectors tail each session log by byte offset, so none re-reads history on every poll.
 
 See [`background-collectors.md`](background-collectors.md) for the `Collector` trait, `CollectorHandle`, and thread model.
 

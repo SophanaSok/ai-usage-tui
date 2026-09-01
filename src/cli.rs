@@ -32,6 +32,10 @@ pub struct Cli {
     pub codex_dir: Option<PathBuf>,
     pub codex_billing: BillingSetting,
     pub codex_billing_set: bool,
+    /// Copilot's home; defaults to `$COPILOT_HOME` or `~/.copilot`.
+    pub copilot_dir: Option<PathBuf>,
+    pub copilot_billing: BillingSetting,
+    pub copilot_billing_set: bool,
     /// Gemini CLI's home; defaults to `~/.gemini`. Its telemetry log is read from beneath it.
     pub gemini_dir: Option<PathBuf>,
     pub gemini_billing: BillingSetting,
@@ -81,6 +85,9 @@ impl Default for Cli {
             codex_dir: None,
             codex_billing: BillingSetting::Auto,
             codex_billing_set: false,
+            copilot_dir: None,
+            copilot_billing: BillingSetting::Auto,
+            copilot_billing_set: false,
             gemini_dir: None,
             gemini_billing: BillingSetting::Auto,
             gemini_billing_set: false,
@@ -182,6 +189,14 @@ struct Args {
     /// How Codex usage is billed; overrides [collectors.codex]
     #[arg(long, value_name = "MODE")]
     codex_billing: Option<BillingSetting>,
+
+    /// Override the Copilot home ($COPILOT_HOME, else ~/.copilot)
+    #[arg(long, value_name = "PATH")]
+    copilot_dir: Option<PathBuf>,
+
+    /// How Copilot usage is billed; overrides [collectors.copilot]
+    #[arg(long, value_name = "MODE")]
+    copilot_billing: Option<BillingSetting>,
 
     /// Override the Gemini CLI home (default: ~/.gemini)
     #[arg(long, value_name = "PATH")]
@@ -375,6 +390,9 @@ impl Cli {
             codex_dir: args.codex_dir,
             codex_billing: args.codex_billing.unwrap_or(BillingSetting::Auto),
             codex_billing_set: args.codex_billing.is_some(),
+            copilot_dir: args.copilot_dir,
+            copilot_billing: args.copilot_billing.unwrap_or(BillingSetting::Auto),
+            copilot_billing_set: args.copilot_billing.is_some(),
             gemini_dir: args.gemini_dir,
             gemini_billing: args.gemini_billing.unwrap_or(BillingSetting::Auto),
             gemini_billing_set: args.gemini_billing.is_some(),
@@ -422,6 +440,8 @@ fn after_help() -> String {
                         wins when both are set.
     CODEX_HOME          Codex's home; session logs are read from sessions/ and
                         archived_sessions/ beneath it
+    COPILOT_HOME        Copilot's home; its CLI store and session-state/ logs
+                        are read from beneath it
     GEMINI_TELEMETRY_OUTFILE
                         Gemini CLI's own telemetry output path; read from there
                         when set

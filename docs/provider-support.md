@@ -73,6 +73,70 @@ published — and a model absent from it stays `unavailable`; no rate is invente
 **Privacy:** rollouts hold prompts, tool-call arguments and outputs, and reasoning summaries; none
 of it is parsed or retained. `~/.codex/auth.json` is a credential file and is never opened.
 
+## GitHub Copilot
+
+| | |
+| --- | --- |
+| Source | The CLI's SQLite store; the legacy session log as a fallback |
+| Default path | `~/.copilot/` (override: `--copilot-dir`, `copilot_dir`, or `COPILOT_HOME`) |
+| Store | `session-store.db`, else `session.db`, else `data.db` — **selected by schema, not name** |
+| Table | `assistant_usage_events`, one row per model request |
+| Fallback | `session-state/<session-id>/events.jsonl`, `session.shutdown` records only |
+| Identity | `copilot:<session_id>:<turn_index>`; legacy rows key on the cumulative total |
+| Billing signal | None available — a seat is the only way to use Copilot, so `auto` resolves to subscription |
+| Project attribution | `cwd`, falling back to `repository` |
+
+Copilot has moved its usage between three shapes over its life, and the store's filename has
+moved with them. The collector tries each candidate and picks whichever one actually has an
+`assistant_usage_events` table, so a build that renames the file again reads as absent rather
+than as zero. Where no such table exists, the legacy log's shutdown aggregates are read instead.
+
+**Token buckets.** `input_tokens` is inclusive of `cache_read_tokens` and `cache_write_tokens`,
+and `output_tokens` is inclusive of `reasoning_tokens`. Both are subtracted back out so the five
+buckets stay disjoint — this is the Codex convention, and a unit test asserts `total_tokens()` is
+unchanged by the split. Leaving them folded in would count every cached token twice, and price it
+twice.
+
+**Identity.** `session_id` plus `turn_index` is the source's own per-request identity. On a build
+with no turn index the key falls back to the session, the timestamp and the call's own counts,
+which is still content-derived — a store copied between machines dedups against the original
+rather than doubling it.
+
+**Legacy aggregates are cumulative.** A `session.shutdown` reports the session's running totals,
+not the turn's, and a resumed session writes several. The collector remembers the last snapshot
+per session and model and emits only the difference; emitting each snapshot whole would report
+every earlier turn again on each resume.
+
+**Billing.** A Copilot seat bills premium requests against a plan, not tokens. There is no
+API-key mode and therefore no environment variable whose presence would mean per-token billing,
+so `api_env_vars("copilot")` is deliberately an explicit empty list and an unevidenced decision
+resolves to `subscription` rather than falling through to per-token. Rows carry
+`cost_status = quota`, `cost = null`, and the list rate as `api_equivalent_cost`. An explicit
+`[collectors.copilot] billing = "api"` is still honoured.
+
+**What is deliberately not read.** The store's `turns` table holds `user_message` and
+`assistant_response`; the legacy log's `user.message` and `assistant.message` records hold the
+same plus tool-call arguments. None of it is parsed, under the same planted-credential test the
+Claude Code and Codex collectors carry.
+
+**What is deliberately not reconstructed.** Two Copilot shapes carry no usable measurement, and
+neither is estimated:
+
+- Per-`assistant.message` records in the legacy log expose an output count but record input as
+  `0`. A row asserting zero input tokens is the same false statement as one asserting zero cost.
+- VS Code's Copilot transcripts carry no token counts at all.
+
+The common fallback for both — in every other tool that reports Cursor or Copilot spend — is to
+divide a character count by four and price the result. A token count inferred from message length
+is not a measurement, and once priced it is indistinguishable in a total from a figure a provider
+actually reported. Copilot usage this tool cannot measure is reported as absent. See also
+[Why there is no Cursor collector](../README.md#why-there-is-no-cursor-collector).
+
+**Not yet validated against a real account.** The schema here is derived from Copilot's published
+behaviour and from other readers of the same store, not from a live install. Every read is behind
+the schema probe, so an unexpected shape degrades to "absent" with a status line rather than to
+wrong numbers. A capture from a real Copilot user would firm this up.
+
 ## Gemini CLI
 
 | | |
@@ -220,6 +284,16 @@ subscription; otherwise per-token, with a visible "billing unknown" hint. Per-to
 priced `estimated` as before. Subscription rows carry `cost_status = quota`,
 `cost = null`, and the list-rate figure as `api_equivalent_cost`.
 
+### GitHub Copilot
+
+There is nothing to detect. Copilot is sold as a seat — Pro, Business or Enterprise — and bills
+premium requests against it; there is no API-key mode and so no environment signal. `detect`'s
+unevidenced fallthrough is per-token, which here would let pricing put list-rate dollars into
+budgets for money that was never charged, so `SourceRoots::copilot_decision` resolves the
+unevidenced case to subscription instead. In order: an explicit `billing` setting; then the plan
+label in Omarchy's record for the agent, if present; otherwise subscription. Force per-token with
+`[collectors.copilot] billing = "api"` or `--copilot-billing api`.
+
 ### Codex CLI
 
 As with Claude Code, a rollout looks the same on an API key and on
@@ -245,6 +319,8 @@ silent under-count.
 - Claude Code collector: polls session logs every 30s (configurable), tailing by byte offset
 - Codex collector: polls rollouts every 30s (configurable), tailing by byte offset with a
   per-file cursor
+- Copilot collector: polls the CLI store every 30s (configurable), resuming from a `created_at`
+  high-water mark; the legacy fallback tails by byte offset with a per-session cumulative total
 - Journal collector: polls journal DB every 60s (configurable)
 - Zen Pricing collector: refreshes hourly when enabled (opt-in)
 

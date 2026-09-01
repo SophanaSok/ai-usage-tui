@@ -2,6 +2,7 @@ pub mod background;
 pub mod billing;
 pub mod claude_code;
 pub mod codex;
+pub mod copilot;
 pub mod gemini;
 pub mod journal;
 pub mod opencode;
@@ -36,6 +37,9 @@ pub struct SourceRoots {
     /// Codex's home; `None` means `$CODEX_HOME` or `~/.codex` (see `codex`).
     pub codex_dir: Option<PathBuf>,
     pub codex_billing: BillingSetting,
+    /// Copilot's home; `None` means `$COPILOT_HOME` or `~/.copilot` (see `copilot`).
+    pub copilot_dir: Option<PathBuf>,
+    pub copilot_billing: BillingSetting,
     /// Gemini CLI's home; `None` means `~/.gemini` (see `gemini`).
     pub gemini_dir: Option<PathBuf>,
     pub gemini_billing: BillingSetting,
@@ -57,6 +61,8 @@ impl Default for SourceRoots {
             claude_json: None,
             codex_dir: None,
             codex_billing: BillingSetting::Auto,
+            copilot_dir: None,
+            copilot_billing: BillingSetting::Auto,
             gemini_dir: None,
             gemini_billing: BillingSetting::Auto,
             omarchy_dir: None,
@@ -114,6 +120,8 @@ impl SourceRoots {
             claude_json: cli.claude_json.clone(),
             codex_dir: cli.codex_dir.clone(),
             codex_billing: cli.codex_billing,
+            copilot_dir: cli.copilot_dir.clone(),
+            copilot_billing: cli.copilot_billing,
             gemini_dir: cli.gemini_dir.clone(),
             gemini_billing: cli.gemini_billing,
             omarchy_dir: cli.omarchy_dir.clone(),
@@ -141,6 +149,35 @@ impl SourceRoots {
                 omarchy_tier: tier.as_deref(),
             },
         )
+    }
+
+    /// Decide Copilot's billing.
+    ///
+    /// Copilot has no API-key mode: a Pro, Business or Enterprise seat is the only way to use
+    /// it, and it bills premium requests against that seat rather than tokens. `detect`'s
+    /// unevidenced fallthrough is `PerToken`, which here would let `apply_estimated_pricing`
+    /// put list-rate dollars into budgets for money that was never charged — so an unevidenced
+    /// decision resolves to `Subscription` instead. An explicit `billing = "api"` is still
+    /// honoured, for whoever is on an arrangement this does not know about.
+    pub fn copilot_decision(&self) -> Decision {
+        let tier = self.omarchy_tier(crate::collector::copilot::ID);
+        let decided = detect(
+            crate::collector::copilot::ID,
+            self.copilot_billing,
+            &Signals {
+                claude_json: None,
+                env_has: &crate::collector::billing::env_has,
+                omarchy_tier: tier.as_deref(),
+            },
+        );
+        if decided.is_evidenced() {
+            return decided;
+        }
+        Decision {
+            billing: crate::model::Billing::Subscription,
+            tier: None,
+            reason: "copilot seat",
+        }
     }
 
     /// Decide Gemini CLI's billing.
@@ -234,10 +271,22 @@ fn collect_sources(roots: &SourceRoots) -> Result<Vec<(SourceReport, Vec<Usage>)
 
 /// Per-source report without merging, for `--doctor`.
 pub fn diagnose(roots: &SourceRoots) -> Result<Vec<SourceReport>> {
-    Ok(collect_sources(roots)?
-        .into_iter()
-        .map(|(report, _)| report)
-        .collect())
+    Ok(diagnose_with_usage(roots)?.0)
+}
+
+/// `diagnose`, keeping the merged rows as well.
+///
+/// `--doctor` reports where each number came from, which needs the deduplicated and priced rows
+/// and not just the per-source counts. Going through one traversal rather than calling
+/// `load_usage` beside `diagnose` matters on a machine with a hundred megabytes of transcripts:
+/// the second read cost as much as the first and could disagree with it.
+pub fn diagnose_with_usage(roots: &SourceRoots) -> Result<(Vec<SourceReport>, Vec<Usage>)> {
+    let sources = collect_sources(roots)?;
+    let reports = sources
+        .iter()
+        .map(|(report, _)| report.clone())
+        .collect::<Vec<_>>();
+    Ok((reports, merge(sources)))
 }
 
 /// One-shot read of every source.
@@ -251,7 +300,11 @@ pub fn load_usage(roots: &SourceRoots) -> Result<(Vec<Usage>, String)> {
         .map(|(report, _)| report.status.as_str())
         .collect::<Vec<_>>()
         .join(" | ");
+    Ok((merge(sources), status))
+}
 
+/// Deduplicate across sources in registry order, then price what is still unpriced.
+fn merge(sources: Vec<(SourceReport, Vec<Usage>)>) -> Vec<Usage> {
     // Deduplication is *cross-source* only. OpenCode is the base list and every one of its rows
     // is kept: an OpenCode message without an `id` falls back to the shape key, and an agent
     // loop routinely emits distinct requests with byte-identical counts in the same second --
@@ -271,7 +324,7 @@ pub fn load_usage(roots: &SourceRoots) -> Result<(Vec<Usage>, String)> {
     let engine = PricingEngine::load();
     apply_estimated_pricing(&mut usages, &engine);
 
-    Ok((usages, status))
+    usages
 }
 
 /// Identity of a usage event for deduplication.

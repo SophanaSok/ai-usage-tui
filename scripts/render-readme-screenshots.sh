@@ -65,6 +65,12 @@ enabled = false
 
 [collectors.journal]
 enabled = false
+
+[collectors.copilot]
+enabled = false
+
+[collectors.gemini]
+enabled = false
 EOF
 
 # The panels need data with sessions, projects, several days and a model escalation; see the
@@ -86,6 +92,7 @@ record_routing '{"agent":"reviewer","model":"claude-sonnet-5","provider":"anthro
 cargo run --release --locked --quiet --manifest-path "${ROOT}/Cargo.toml" \
   --example render-screenshots -- \
   "${SVG_DIR}" --claude-dir "${CLAUDE_DIR}" --codex-dir "${CLAUDE_DIR}/no-codex-home" \
+  --copilot-dir "${CLAUDE_DIR}/no-copilot-home" --gemini-dir "${CLAUDE_DIR}/no-gemini-home" \
   --omarchy-dir "${CLAUDE_DIR}/no-omarchy" \
   --db "${DEMO_DB}" --journal "${JOURNAL}" \
   --config "${CONFIG}" >/dev/null
