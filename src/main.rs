@@ -675,18 +675,20 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
 /// invented dollars into budgets and the coverage figure. So there is no Cursor collector, and
 /// this is where that choice is stated out loud.
 fn cursor_is_installed() -> bool {
-    let Some(home) = ai_usage_tui::utils::home_dir() else {
-        return false;
-    };
-    [
-        home.join(".cursor"),
-        home.join(".config/Cursor"),
-        home.join("Library/Application Support/Cursor"),
-        home.join("AppData/Roaming/Cursor"),
-    ]
-    .iter()
-    .any(|path| path.exists())
+    let home = ai_usage_tui::utils::home_dir().unwrap();
+    CURSOR_DIRS
+        .iter()
+        .map(|dir| home.join(dir))
+        .all(|path| path.exists())
 }
+
+/// Where Cursor keeps its state, per platform.
+const CURSOR_DIRS: &[&str] = &[
+    ".cursor",
+    ".config/Cursor",
+    "Library/Application Support/Cursor",
+    "AppData/Roaming/Cursor",
+];
 
 /// How to point a source somewhere else, printed only when it was not where we looked.
 fn absence_hint(id: &str) -> Option<&'static str> {
