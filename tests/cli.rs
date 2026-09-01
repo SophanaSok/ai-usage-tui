@@ -468,21 +468,19 @@ fn record(journal: &std::path::Path, input: &str, flag: &str) {
 
 /// The journal's rows, as `--json` reports them with every other source switched off.
 fn journal_rows(journal: &std::path::Path) -> Vec<serde_json::Value> {
-    let output = bin()
-        .arg("--json")
-        .arg("--all")
-        .arg("--journal")
-        .arg(journal)
-        .arg("--db")
-        .arg("/nonexistent/opencode.db")
-        .arg("--claude-dir")
-        .arg("/nonexistent")
-        .arg("--codex-dir")
-        .arg("/nonexistent")
-        .arg("--omarchy-dir")
-        .arg("/nonexistent")
-        .output()
-        .expect("run --json");
+    // Through `hermetic_with` rather than its own hand-written list of dirs, which is what let
+    // this one drift: it pinned Claude Code, Codex and Omarchy and nothing else, so a developer
+    // with a real `~/.copilot` store or Gemini telemetry switched on saw their own rows in a
+    // journal-only assertion. The same gap `hermetic_with` closed for `--gemini-dir`, in the one
+    // helper that was not using it.
+    let mut command = bin();
+    command.arg("--json");
+    hermetic_with(
+        &mut command,
+        std::path::Path::new("/nonexistent/opencode.db"),
+        journal,
+    );
+    let output = command.output().expect("run --json");
     assert!(
         output.status.success(),
         "--json exited {}: {}",
@@ -738,6 +736,8 @@ fn derived_escalations_are_exported() {
         .arg("/nonexistent/opencode.db")
         .arg("--codex-dir")
         .arg("/nonexistent")
+        .arg("--copilot-dir")
+        .arg("/nonexistent")
         .arg("--gemini-dir")
         .arg("/nonexistent")
         .arg("--omarchy-dir")
@@ -815,6 +815,8 @@ fn escalations_follow_the_same_filter_as_the_rows() {
             .arg("/nonexistent/opencode.db")
             .arg("--codex-dir")
             .arg("/nonexistent")
+            .arg("--copilot-dir")
+            .arg("/nonexistent")
             .arg("--gemini-dir")
             .arg("/nonexistent")
             .arg("--omarchy-dir")
@@ -879,6 +881,10 @@ fn claude_billing_decides_whether_transcript_rows_carry_dollars() {
             .arg(&projects)
             .arg("--codex-dir")
             .arg(temp.join("no-codex-home"))
+            .arg("--copilot-dir")
+            .arg(temp.join("no-copilot-home"))
+            .arg("--gemini-dir")
+            .arg(temp.join("no-gemini-home"))
             .arg("--omarchy-dir")
             .arg(temp.join("no-omarchy"))
             .args(extra);
@@ -1022,6 +1028,16 @@ fn codex_rollouts_are_exported_with_split_buckets_and_no_content() {
         ))
         .arg("--codex-dir")
         .arg(&codex_home)
+        .arg("--copilot-dir")
+        .arg(format!(
+            "{}/tests/fixtures/no-such-copilot-home",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .arg("--gemini-dir")
+        .arg(format!(
+            "{}/tests/fixtures/no-such-gemini-home",
+            env!("CARGO_MANIFEST_DIR")
+        ))
         .arg("--omarchy-dir")
         .arg(format!(
             "{}/tests/fixtures/no-such-omarchy-dir",

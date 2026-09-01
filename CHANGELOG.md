@@ -27,6 +27,17 @@
   true and the cursor filtered nothing — every poll re-read the whole table. The cursor now also
   keeps the store's own spelling and compares text with text.
 
+- **Four more hermeticity gaps, found by having real Copilot data for the first time.** The
+  capture is the first `~/.copilot` store this repository has ever seen, and it immediately turned
+  three tests red and put real session data through a fourth. `journal_rows` had its own
+  hand-written list of collector dirs — Claude Code, Codex and Omarchy, and nothing else — so a
+  developer with a Copilot store or Gemini telemetry switched on saw their own rows in a
+  journal-only assertion; it now goes through `hermetic_with` like everything else.
+  `derived_escalations_are_exported`, `escalations_follow_the_same_filter_as_the_rows`,
+  `claude_billing_decides_whether_transcript_rows_carry_dollars` and the Codex export test pin
+  the missing dirs directly. This is the same drift v0.12.0 fixed for `--gemini-dir`: a source
+  joins the registry and the hand-written lists do not hear about it.
+
   `tests/fixtures/copilot_home/session-store.db` is the redacted capture, and an integration test
   reads it end to end. What the capture *confirmed* is in `docs/roadmap.md`: `session-store.db` is
   the real filename, the inclusive-token convention holds in the bytes (so the v0.12.0 cache
