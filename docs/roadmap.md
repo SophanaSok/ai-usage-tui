@@ -94,6 +94,23 @@ the tools that prompt uses. It also posts a "No issues found" comment rather tha
 because silence is indistinguishable from a review that never ran, which is what made the first
 eight runs so expensive to read.
 
+**Why none of this can be tested on the pull request that changes it.** `claude-code-action`
+validates the workflow file before it runs anything:
+
+```
+##[warning]Skipping action due to workflow validation: Workflow validation failed. The workflow
+file must exist and have identical content to the version on the repository's default branch.
+```
+
+It then exits `Exiting due to workflow validation skip` — and **the job still reports success**.
+Run 33571283816 did exactly this in 14 seconds. So every pull request that edited this workflow
+(#67, #68, #69, #71, #72, #75 and the one carrying this note) had its review silently skipped,
+which is a second, entirely separate way to get a green check and no review. It also means the
+measurement loop is: merge the workflow change to `main` first, *then* open a separate pull
+request that does not touch `.github/` and read the run on that. `show_full_output` has to be on
+in `main` for the measuring run and taken back off afterwards, which is what #72 followed by #76
+was doing.
+
 **How this was found, and the methodology error to avoid repeating.** The denial was invisible
 until `show_full_output: true` (#72) printed
 `{"tool_name":"Skill","tool_input":{"skill":"code-review:code-review"}}`. Three prior guesses at
