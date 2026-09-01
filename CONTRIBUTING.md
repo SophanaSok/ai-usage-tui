@@ -109,9 +109,26 @@ registry, so registering once wires both, and `every_source_is_reachable_from_bo
 the build if a source is only half wired. `[collectors.yours]` needs no code: the config table is
 keyed off the registry, and an id that is not a source is rejected with the real ones named.
 
-If your source needs a path override, add the field to `SourceRoots` (`src/collector/mod.rs`) and
-a field to `Args` in `src/cli.rs` (plus the line that copies it into `Cli`); `tests/docs.rs` will then require a row in the README's CLI reference
-table and, if you read an environment variable, a row in its environment table.
+If your source needs a path override, it is more than two files. The full list, in the order it
+is easiest to work through — adding GitHub Copilot in v0.12.0 touched every one of them:
+
+| Where | What |
+| --- | --- |
+| `src/collector/mod.rs` | the field on `SourceRoots`, plus its `Default` and `from_cli` arms |
+| `src/cli.rs` | the field on `Cli`, its `Default` arm, the `Args` field clap derives the flag from, the line in `from_parts` (including the `*_set` boolean, which `apply_config` reads to decide whether config may fill it), and the hand-written `ENVIRONMENT:` block in `after_help` |
+| `src/config.rs` | the key on `ConfigFile`, and the `apply_config` block that copies it into `Cli` |
+| `src/main.rs` | an arm in `absence_hint`, or `--doctor` says "absent" with no way to act on it |
+
+Only some of that is enforced. `tests/docs.rs` requires a row in the README's CLI reference table
+for every flag clap parses, and — because it scans all of `src/` for `var`/`var_os` calls — a row
+in the environment table for every variable you read. The `after_help` block and `absence_hint`
+are checked by nothing; a missing arm there is silent.
+
+Two more that are easy to forget and have both gone wrong before. `hermetic_with` in
+`tests/cli.rs` must pin your source at a `no-such-…` fixture path, or the suite reads the
+developer's real data and CI never notices, because a fresh runner has nothing to read.
+`examples/render-screenshots.rs` must require your root for the same reason — twice now, an
+unpinned source put real spend into a README image.
 
 Read `src/collector/claude_code.rs` first — it is the fullest example, including incremental
 tailing and how to parse a file that contains things you must not read.
