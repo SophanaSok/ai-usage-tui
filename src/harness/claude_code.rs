@@ -74,6 +74,7 @@ pub struct Observation {
     pub tool_use_id: String,
     pub cwd: Option<String>,
     pub agent_type: Option<String>,
+    pub agent_id: Option<String>,
     pub transcript_path: Option<PathBuf>,
     pub passed: bool,
 }
@@ -147,6 +148,7 @@ pub fn observe(payload: &Value) -> Result<Outcome> {
         tool_use_id,
         cwd: string(payload, &["cwd"]),
         agent_type: string(payload, &["agent_type"]).filter(|t| !t.is_empty()),
+        agent_id: string(payload, &["agent_id"]).filter(|id| !id.is_empty()),
         transcript_path: string(payload, &["transcript_path"]).map(PathBuf::from),
         passed,
     }))
@@ -299,6 +301,29 @@ pub fn record_from_stdin(roots: &SourceRoots) -> Result<()> {
     Ok(())
 }
 
+/// The transcript a subagent's own turns are written to, when the payload came from one.
+///
+/// Claude Code hands a subagent's hook the **parent's** `transcript_path` and the parent's
+/// `session_id`; the subagent's own turns go to
+/// `<project>/<session_id>/subagents/agent-<agent_id>.jsonl`, every line marked
+/// `isSidechain: true`. Attributing through the payload's path therefore charged a subagent's
+/// test run to the parent's requests and the parent's model: one measured run put 3 requests and
+/// 65,598 tokens against a `make test` whose agent had spent 2 requests and about 318 tokens,
+/// and would have priced it at the parent's model rather than the subagent's.
+///
+/// Falls back to the payload's path when the file is not there, which is every non-subagent call
+/// and any build that lays this out differently.
+fn subagent_transcript(observation: &Observation) -> Option<PathBuf> {
+    let agent_id = observation.agent_id.as_ref()?;
+    let parent = observation.transcript_path.as_ref()?;
+    let path = parent
+        .parent()?
+        .join(&observation.session_id)
+        .join("subagents")
+        .join(format!("agent-{agent_id}.jsonl"));
+    path.is_file().then_some(path)
+}
+
 /// The whole of the hook, on one payload. The fast path — every Bash call that is not a test
 /// run — decides from the payload alone: no journal, no transcript, no rate table.
 pub fn record(input: &str, roots: &SourceRoots) -> Result<Recorded> {
@@ -309,11 +334,18 @@ pub fn record(input: &str, roots: &SourceRoots) -> Result<Recorded> {
         Outcome::Skipped(why) => return Ok(Recorded::Skipped(why)),
     };
 
-    let prefix = format!("{AGENT}:{}:", observation.session_id);
+    // A subagent's attempt is its own, and so is its cursor: keying both on the session alone
+    // made one counter serve the parent and every subagent under it.
+    let prefix = match &observation.agent_id {
+        Some(agent_id) => format!("{AGENT}:{}:{agent_id}:", observation.session_id),
+        None => format!("{AGENT}:{}:", observation.session_id),
+    };
     let skip = attributed_requests(&roots.journal, &prefix)?;
     let decision = roots.claude_decision();
     let engine = PricingEngine::load();
-    let attribution = match &observation.transcript_path {
+    let transcript =
+        subagent_transcript(&observation).or_else(|| observation.transcript_path.clone());
+    let attribution = match &transcript {
         Some(path) => match attribute(path, skip, &decision, &engine) {
             Ok(attribution) => attribution,
             // The run was observed whether or not the attempt can be attributed; recording it
@@ -534,6 +566,79 @@ mod tests {
         assert_eq!(event["model"], "unknown");
         assert_eq!(event["requests"], 1);
         assert_eq!(event["cost_status"], "unavailable");
+    }
+
+    /// The layout Claude Code actually writes, captured from a real subagent session: the
+    /// payload names the **parent's** transcript and the parent's `session_id`, while the
+    /// subagent's own turns are at `<dir>/<session_id>/subagents/agent-<agent_id>.jsonl`.
+    fn subagent_layout() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let parent = dir.path().join("t.jsonl");
+        std::fs::write(&parent, TRANSCRIPT).unwrap();
+        let nested = dir.path().join("s").join("subagents");
+        std::fs::create_dir_all(&nested).unwrap();
+        // One request, an order of magnitude smaller than the parent's: a subagent charged the
+        // parent's transcript is charged the parent's context.
+        std::fs::write(
+            nested.join("agent-a-1.jsonl"),
+            concat!(
+                r#"{"type":"assistant","timestamp":"2026-08-25T21:30:43.693Z","requestId":"sub_1","isSidechain":true,"sessionId":"s","cwd":"/p","message":{"id":"m1","role":"assistant","model":"claude-haiku-4-5-20251001","content":[{"type":"thinking","thinking":"x"}],"usage":{"input_tokens":10,"output_tokens":3}}}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        (dir, parent)
+    }
+
+    #[test]
+    fn a_subagents_attempt_is_read_from_the_subagents_own_transcript() {
+        // Measured against a real session before this was fixed: a subagent's `make test` was
+        // recorded as 3 requests and 65,598 tokens -- the parent's -- when the agent that ran it
+        // had spent 2 requests and about 318. The model was the parent's last model too, so an
+        // Opus parent would have priced a Haiku subagent's attempt at Opus.
+        let (_dir, parent) = subagent_layout();
+        let mut payload = success("cargo test");
+        payload["agent_id"] = json!("a-1");
+        payload["agent_type"] = json!("general-purpose");
+        payload["session_id"] = json!("s");
+        payload["transcript_path"] = json!(parent.to_str().unwrap());
+        let observation = observed(observe(&payload).unwrap());
+
+        let resolved = subagent_transcript(&observation).expect("the subagent's own transcript");
+        let attribution =
+            attribute(&resolved, 0, &subscription(), &PricingEngine::bundled()).unwrap();
+        assert_eq!(
+            attribution.model.as_deref(),
+            Some("claude-haiku-4-5-20251001"),
+            "the subagent's model, not the parent's"
+        );
+        assert_eq!(attribution.requests, 1);
+        assert_eq!(attribution.tokens, 13, "10 + 3, not the parent's 1430");
+    }
+
+    #[test]
+    fn a_call_that_is_not_a_subagents_keeps_the_payloads_transcript() {
+        // No `agent_id`, so nothing to look beside: the parent's own runs are unaffected.
+        let (_dir, parent) = subagent_layout();
+        let mut payload = success("cargo test");
+        payload["session_id"] = json!("s");
+        payload["transcript_path"] = json!(parent.to_str().unwrap());
+        let observation = observed(observe(&payload).unwrap());
+        assert_eq!(observation.agent_id, None);
+        assert_eq!(subagent_transcript(&observation), None);
+    }
+
+    #[test]
+    fn a_subagent_with_no_transcript_of_its_own_falls_back() {
+        // A build that lays subagents out differently degrades to the payload's path rather
+        // than to no attribution at all.
+        let (_dir, parent) = transcript();
+        let mut payload = success("cargo test");
+        payload["agent_id"] = json!("nobody");
+        payload["session_id"] = json!("s");
+        payload["transcript_path"] = json!(parent.to_str().unwrap());
+        let observation = observed(observe(&payload).unwrap());
+        assert_eq!(subagent_transcript(&observation), None);
     }
 
     fn subscription() -> Decision {

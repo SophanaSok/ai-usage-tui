@@ -44,6 +44,26 @@
   double-count fix was right), and `requests.cost` is a premium-request count rather than dollars
   — so `cost: null` with `cost_status: quota` stays, and nothing here reaches a budget.
 
+- **A subagent's test run was charged to its parent.** The roadmap recorded this as unverified;
+  driving a real Claude Code session that delegates `make test` to a `general-purpose` subagent
+  settled it. Claude Code hands a subagent's hook the **parent's** `transcript_path` and the
+  parent's `session_id`, while the subagent's own turns go to
+  `<project>/<session_id>/subagents/agent-<agent_id>.jsonl`, every line marked
+  `isSidechain: true`. The attempt was therefore read from the parent's transcript: one measured
+  run recorded **3 requests and 65,598 tokens** for a `make test` whose agent had spent 2 requests
+  and about 318, and the model recorded was the parent's — so an Opus parent would have priced a
+  Haiku subagent's attempt at Opus.
+
+  `--claude-code-hook` now prefers the nested transcript when the payload carries an `agent_id`
+  (which had been parsed by a test and read by nothing), and keys the journal cursor on the agent
+  as well as the session, so a subagent's attempts and its parent's stop sharing one counter. A
+  payload without an `agent_id`, or a build that lays subagents out differently, falls back to the
+  path the payload names.
+
+  The usage collector was never affected: its walk is recursive, so it already read
+  `subagents/*.jsonl`, and those requests carry their own `requestId`s — subagent tokens were
+  counted exactly once in the dashboard throughout.
+
 ### Changed
 
 - **The pull-request review workflow reviews in-process.** It had never posted a review, for three

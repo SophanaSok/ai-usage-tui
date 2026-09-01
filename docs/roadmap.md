@@ -366,9 +366,22 @@ Remaining:
   and one test table on purpose. And **counters are never sent**, so RETRY, ESC and DEFECT read
   `—` for this agent; a harness that can count them is a different harness.
 
-  Still open: Codex and Gemini have no equivalent hook surface today, and a subagent's run is
-  attributed to whatever transcript its payload names, which has not been verified against a
-  real subagent session.
+  **Subagent attribution is now verified, and it was wrong.** Driving a real Claude Code session
+  that delegates `make test` to a `general-purpose` subagent showed that the payload names the
+  *parent's* `transcript_path` and the parent's `session_id`, while the subagent's own turns go
+  to `<project>/<session_id>/subagents/agent-<agent_id>.jsonl` with every line marked
+  `isSidechain: true`. So the attempt was read from the parent's transcript: the run came out as
+  **3 requests and 65,598 tokens** when the agent that ran it had spent 2 requests and about 318,
+  and the model recorded was the parent's — an Opus parent would have priced a Haiku subagent's
+  attempt at Opus. The harness now prefers the nested transcript when the payload carries an
+  `agent_id`, and keys the journal cursor on the agent as well as the session so a subagent and
+  its parent stop sharing one counter. `agent_id` had been parsed by a test and read by nothing.
+
+  Worth knowing: the *usage* collector was never affected. Its walk is recursive, so it already
+  reads `subagents/*.jsonl`, and those requests carry their own `requestId`s — so subagent tokens
+  were counted exactly once in the dashboard all along. Only the harness's attribution was wrong.
+
+  Still open: Codex and Gemini have no equivalent hook surface today.
 - **Resolved.** Derived escalations are exported. `--json` carries an `escalations` object —
   sessions examined and escalated, the rate, unclassified changes, and the transitions with their
   spend after the move — derived from the same filtered rows the export reports, so a

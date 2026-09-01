@@ -149,11 +149,20 @@ run. Over a session the sums are the same; the first run's attempt is everything
 the last run's issuing request is attributed to no run. For the same reason `model` is the model
 in use when the hook ran, which right after a model switch is the model before it.
 
+**Subagents.** Claude Code hands a subagent's hook the **parent's** `transcript_path` and the
+parent's `session_id`; the subagent's own turns are written to
+`<project>/<session_id>/subagents/agent-<agent_id>.jsonl`, every line marked `isSidechain: true`.
+Reading the payload's path therefore charged a subagent's run to the parent's requests and the
+parent's model — measured against a real session, a `make test` came out as 3 requests and 65,598
+tokens when the agent that ran it had spent 2 and about 318. The harness now prefers that nested
+transcript when the payload carries an `agent_id`, and the journal cursor is keyed on the agent as
+well as the session, so a subagent's attempts and its parent's no longer share one counter. A
+payload with no `agent_id`, or a build that lays subagents out differently, falls back to the
+path the payload names.
+
 **What it does not do.** It does not run on Codex or Gemini, which have no equivalent hook
-surface today. It attributes a subagent's run to whatever transcript its payload names, which
-has not been verified against a real subagent session. An attempt with no request in it — a
-session whose first Bash call is a test run — records `tokens: 0` and `unavailable`, and does
-not advance the cursor.
+surface today. An attempt with no request in it — a session whose first Bash call is a test run —
+records `tokens: 0` and `unavailable`, and does not advance the cursor.
 
 ## Exporting Analytics
 
