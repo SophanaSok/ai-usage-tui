@@ -48,6 +48,72 @@ until its unit can be checked against a known invoice; if it turns out to be dol
 could carry `reported` cost instead of `quota`, which would be a better answer than the list-rate
 counterfactual they carry now.
 
+### Open — `claude-review` runs but has never posted a finding
+
+The `claude-code-review.yml` workflow authenticates, installs its plugin and executes a review,
+and has never produced a comment — including on a pull request built specifically to give it two
+unmissable ones. It reports success either way, so a silent review is indistinguishable from a
+clean one. **Do not trust a green `claude-review` as evidence that the diff was reviewed** until
+this is closed.
+
+**Reproduction.** PR #65 (`test/review-smoke-do-not-merge`, kept open as the test bed) plants two
+defects in `cursor_is_installed()` in `src/main.rs`, chosen because no test covers that function:
+
+1. `home_dir().unwrap()` in place of `let Some(home) = ... else { return false }`, so `--doctor`
+   panics rather than degrading when `HOME` is unset.
+2. `.any()` changed to `.all()`, so the Cursor notice requires Cursor to be installed at
+   `.cursor`, `.config/Cursor`, `Library/Application Support/Cursor` *and* `AppData/Roaming/Cursor`
+   at once — impossible on any one platform, so the feature can never fire.
+
+`cargo fmt --check`, `cargo clippy -D warnings` and all 492 tests pass with both in place. The
+reviewer is the only thing that can catch them, which is the point.
+
+**What the runs report.** Both attempts (run `33565494970`, then `33566219420` after the
+permission change below):
+
+```
+"subtype": "success"
+"is_error": false
+"num_turns": 6            (7 on the first run)
+"total_cost_usd": ~0.15
+"permission_denials_count": 1
+...
+No buffered inline comments
+```
+
+**Ruled out — the token was read-only, and fixing it changed nothing.** The first run's job token
+was `PullRequests: read`, which cannot post a review comment; the action's documentation confirms
+write is required for inline comments. That was a real defect and is fixed on `main` (PR #66): the
+re-run shows `PullRequests: write` and produces byte-identical symptoms — same denial count, same
+silence. Keep the write permission regardless, since posting will need it, but it is not the
+cause. It is safe on a public repository: GitHub downgrades `pull_request` runs from forks to a
+read-only token whatever the workflow asks for.
+
+**Also ruled out.** Not the workflow-validation guard — that skip fires in 11s with an explicit
+message, and these runs take ~50s and log `Trigger result: true`. Not authentication — the
+GitHub App 401 was fixed before any of this. Not the actor check — `Permission level retrieved:
+admin`.
+
+**Leading hypothesis, unproven.** The generated workflow passes:
+
+```yaml
+claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
+```
+
+If that *restricts* the tool set rather than adding to it, the reviewer has no `Read`, `Grep` or
+`Bash` with which to examine anything, and the single `permission_denials_count` is it reaching
+for a tool outside the allowlist. That would explain silence on two glaring defects. The job log
+does not name the denied tool, so this is inference, not evidence.
+
+**Next experiment, one line.** Delete the `claude_args:` line from
+`.github/workflows/claude-code-review.yml`, merge, then push an empty commit to PR #65 to
+retrigger. If a comment appears, that was it. Each attempt costs a CI run and about $0.15.
+If it does not, raise the action's log verbosity to get the denied tool named, since everything
+after this point is guesswork without it.
+
+**Do not delete the `test/review-smoke-do-not-merge` branch** until this is closed; rebuilding an
+equivalent test bed is the expensive part. Close PR #65 unmerged when done.
+
 ## Outstanding findings
 
 Numbering follows the original audit; findings since take the priority they would have had
