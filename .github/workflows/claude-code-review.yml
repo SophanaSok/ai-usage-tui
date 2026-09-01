@@ -56,6 +56,15 @@ jobs:
           # The first could not read the code; the second could not speak. Naming the reading
           # tools and the inline-comment tool together is the configuration that can do both.
           claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment,Read,Grep,Glob,Bash"'
+          # TEMPORARY — remove once the denied tool is named. Three configurations have now
+          # ended "No buffered inline comments" with a nonzero `permission_denials_count`, and
+          # the job log never says which tool was refused, so every further change is a guess.
+          # This prints every Claude message, tool call and tool result.
+          #
+          # This repository is public and these logs are public with it. Nothing here reads a
+          # credential — the checkout has no user data, and the collectors' inputs do not exist
+          # on the runner — but it stays on only as long as the one diagnostic run needs it.
+          show_full_output: true
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
 
