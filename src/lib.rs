@@ -19,6 +19,8 @@ pub mod utils;
 pub use collector::background::{Collector, CollectorHandle};
 pub use collector::claude_code::ClaudeCodeCollector;
 pub use collector::codex::CodexCollector;
+pub use collector::copilot::CopilotCollector;
+pub use collector::gemini::GeminiCollector;
 pub use collector::journal::JournalCollector;
 pub use collector::opencode::OpenCodeCollector;
 pub use collector::pricing_refresh::ZenPricingCollector;
@@ -47,6 +49,8 @@ mod integration_tests {
             journal: journal_path,
             claude_dir: Some(temp_dir.path().join("no-claude-logs")),
             codex_dir: Some(temp_dir.path().join("no-codex-home")),
+            copilot_dir: Some(temp_dir.path().join("no-copilot-home")),
+            gemini_dir: Some(temp_dir.path().join("no-gemini-home")),
             omarchy_dir: Some(temp_dir.path().join("no-omarchy")),
             ..Default::default()
         };

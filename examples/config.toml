@@ -5,6 +5,7 @@
 # journal = "/home/user/.local/share/ai-usage-tui/usage.db"
 # claude_dir = "/home/user/.claude/projects"
 # codex_dir = "/home/user/.codex"   # $CODEX_HOME, else ~/.codex; sessions/ and archived_sessions/ beneath it
+# copilot_dir = "/home/user/.copilot"   # $COPILOT_HOME, else ~/.copilot; the CLI store and session-state/ beneath it
 refresh_interval = 30
 # days = 7
 # provider = "opencode"
@@ -46,6 +47,15 @@ interval = 30
 enabled = true
 interval = 30
 # billing = "auto"   # auto | subscription | api; auto reads OPENAI_API_KEY / CODEX_API_KEY only
+
+# GitHub Copilot. Reads the `assistant_usage_events` table from whichever store under the home
+# has one, falling back to `session-state/*/events.jsonl` shutdown aggregates. A seat bills
+# premium requests rather than tokens, so rows are `quota` and carry no dollar cost -- which is
+# what `billing = "auto"` resolves to here.
+[collectors.copilot]
+enabled = true
+interval = 30
+# billing = "auto"   # auto | subscription | api; auto resolves to subscription -- Copilot has no API key
 
 # Gemini CLI. Reads its OpenTelemetry log, which Gemini only writes when you enable it:
 #   ~/.gemini/settings.json -> {"telemetry":{"enabled":true,"target":"local","outfile":"..."}}

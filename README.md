@@ -1,6 +1,6 @@
 # ai-usage-tui
 
-> A btop-inspired terminal dashboard for AI coding-agent token usage, cost and budgets — reads Claude Code, Codex CLI, Gemini CLI, OpenCode and Ollama, live TUI or JSON/CSV.
+> A btop-inspired terminal dashboard for AI coding-agent token usage, cost and budgets — reads Claude Code, Codex CLI, GitHub Copilot, Gemini CLI, OpenCode and Ollama, live TUI or JSON/CSV.
 
 [![CI](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/ci.yml)
 [![Release](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/release.yml/badge.svg)](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/release.yml)
@@ -10,8 +10,8 @@
 [Quick start](#quick-start) · [Install](#installation) · [Configuration](#configuration) · [Docs](#more-documentation) · [Contributing](CONTRIBUTING.md)
 
 `ai-usage-tui` reads OpenCode's local usage database, Claude Code's session
-logs, Codex CLI's session logs and Gemini CLI's telemetry log, can journal
-completed Ollama responses, and presents the combined data in an interactive TUI
+logs, Codex CLI's session logs, GitHub Copilot's CLI store and Gemini CLI's
+telemetry log, can journal completed Ollama responses, and presents the combined data in an interactive TUI
 or as JSON, CSV, or plain text. It tracks requests, input/output/reasoning/cache
 tokens, cost provenance, budgets, and opt-in model-routing events.
 
@@ -27,6 +27,7 @@ real account, project, or spend appears in any image here.*
 - [Quick start](#quick-start)
 - [Installation](#installation)
 - [Data sources](#data-sources)
+- [Why there is no Cursor collector](#why-there-is-no-cursor-collector)
 - [Interactive dashboard](#interactive-dashboard)
 - [Non-interactive output](#non-interactive-output)
 - [Configuration](#configuration)
@@ -41,7 +42,7 @@ real account, project, or spend appears in any image here.*
 
 ## What it shows
 
-- Usage grouped by provider and model, across OpenCode, Claude Code, Codex CLI, Gemini CLI, and Ollama
+- Usage grouped by provider and model, across OpenCode, Claude Code, Codex CLI, GitHub Copilot, Gemini CLI, and Ollama
 - Input, output, reasoning, cache-read, and cache-write tokens
 - Today (local calendar day), trailing 7-day, trailing 30-day, all-time, or custom-day ranges
 - `LOCAL`, `CLOUD`, `FREE`, `PAID`, and `UNKNOWN` classifications
@@ -82,8 +83,8 @@ alongside the coverage figure so it cannot silently disappear.
 
 - **Data:** An OpenCode SQLite database (default:
   `~/.local/share/opencode/opencode.db`), Claude Code session logs under
-  `~/.claude/projects`, Codex CLI session logs under `~/.codex`, and/or
-  journaled Ollama usage
+  `~/.claude/projects`, Codex CLI session logs under `~/.codex`, GitHub
+  Copilot's store under `~/.copilot`, and/or journaled Ollama usage
 - **Build (optional):** Stable Rust via [rustup](https://rustup.rs/)
 - **Platforms:** Linux and macOS (x86_64 and aarch64) and Windows x86_64 prebuilts from
   [GitHub Releases](https://github.com/SophanaSok/ai-usage-tui/releases)
@@ -273,7 +274,7 @@ cargo build --release --locked
 ## Data sources
 
 ```text
-OpenCode DB / Claude Code logs / Codex logs / Gemini telemetry / Ollama journal
+OpenCode DB / Claude Code logs / Codex logs / Copilot store / Gemini telemetry / Ollama journal
         -> one source registry -> background collectors -> TUI
                                \-> one-shot read -> JSON / CSV / budgets
 ```
@@ -337,6 +338,38 @@ summaries are not. Rows are `openai` / `PAID`, priced `estimated` from the
 bundled table, and a model absent from it stays `unavailable` — no rate is
 invented. Token conventions and event identity follow the CLI's own arithmetic:
 [Codex CLI](docs/provider-support.md#codex-cli).
+
+### GitHub Copilot
+
+Automatic. Copilot's CLI keeps a SQLite store under its home, and the collector
+reads the per-request table in it:
+
+```text
+~/.copilot/session-store.db     (also tried: session.db, data.db)
+~/.copilot/session-state/<session-id>/events.jsonl
+```
+
+The store is chosen by **schema, not filename** — whichever candidate actually
+has an `assistant_usage_events` table wins — because the name has moved between
+Copilot releases. Where no such table exists, the legacy session log is read
+instead, and only its `session.shutdown` aggregates. Select another home with
+`--copilot-dir PATH`, the `copilot_dir` config setting, or `COPILOT_HOME`.
+
+Only the usage columns are read. The `turns` table and the log's
+`user.message` / `assistant.message` records hold prompts, completions and tool
+arguments, and none of it is parsed or retained.
+
+**Billing.** A Copilot seat bills premium requests against a plan, not tokens,
+so rows are `quota`: no `cost`, and the list-rate figure carried as
+`API-RATE EQUIV.` instead. Override with `--copilot-billing` or
+`[collectors.copilot] billing` if you are billed some other way.
+
+**What it will not do.** Copilot records nothing durable for a session that has
+not shut down, and the per-message records carry no usable input count. Those
+sessions are reported as unmeasured rather than reconstructed — see
+[Why there is no Cursor collector](#why-there-is-no-cursor-collector). Event
+identity and token conventions:
+[GitHub Copilot](docs/provider-support.md#github-copilot).
 
 ### Gemini CLI
 
@@ -402,6 +435,32 @@ ai-usage-tui --refresh-zen
 
 The model catalog is informational. Refreshing it does not create usage data.
 Automatic pricing refresh is disabled unless enabled in the collector config.
+
+## Why there is no Cursor collector
+
+Cursor is the agent most often asked about here, and it is deliberately absent.
+
+Cursor keeps its sessions in `state.vscdb`, where each turn carries
+`tokenCount.inputTokens` and `tokenCount.outputTokens`. On current builds both
+are written as zero. Cursor's own team [confirmed this in March
+2026](https://forum.cursor.com/t/cursordiskkv-table-records-always-show-0-for-tokencount/155984)
+— the field is "best-effort" and "aren't reliable right now" — and directs
+users to the web dashboard for real figures.
+
+So there is no local measurement to read. Every tool that shows Cursor spend
+reconstructs it, and the bottom of every one of those fallback chains is the
+same step: divide a character count by four and price the result. That produces
+a dollar figure indistinguishable, in a total, from one a provider actually
+reported.
+
+This tool would have to put that number into budgets, into the pricing-coverage
+figure, and into `--json` — the places whose whole purpose is to say which
+figures are real. A missing row is recoverable; a fabricated one is not. So
+`--doctor` reports Cursor as installed-and-unread, with the reason, and no
+Cursor row is ever produced.
+
+If Cursor ships reliable local counts — there is an open request for token
+usage in its hooks API — this becomes a collector like any other.
 
 ## Interactive dashboard
 
@@ -519,7 +578,7 @@ ai-usage-tui --json --all --provider opencode --model gpt-5.6-sol
 `--json` and `--csv` imply `--once`. JSON includes the source description,
 selected range, usage rows, a `limits` array of Omarchy subscription
 windows (see [Subscription limits](docs/omarchy.md#subscription-limits); empty when
-there are none), and an `escalations` object; each usage row also carries
+there are none), an `escalations` object, and a `provenance` object; each usage row also carries
 `project` and `session_id` (`null` when unknown).
 
 `escalations` is the routing panel's derived block — which sessions moved to a
@@ -538,8 +597,36 @@ pricier model, and what that cost — for scripts:
 }
 ```
 
-It is derived from the same rows the export reports, so a `--provider` filter
-narrows both. `escalation_rate` is `null` rather than `0` when no session had
+`provenance` answers the question the header's coverage percentage only gestures
+at — not how much of this is priced, but how much of it a provider actually
+reported:
+
+```json
+"provenance": {
+  "reported_share": 62.4,
+  "billable_cost": 41.83,
+  "quota_requests": 3128,
+  "unpriced_requests": 0,
+  "by_cost_status": [
+    { "cost_status": "reported", "rows": 812, "requests": 812,
+      "tokens": 41203991, "cost": 26.10, "api_equivalent_cost": null },
+    { "cost_status": "quota", "rows": 3128, "requests": 3128,
+      "tokens": 669003161, "cost": null, "api_equivalent_cost": 571.93 }
+  ]
+}
+```
+
+Every one of the seven cost statuses is present whether or not it has rows, so a
+consumer can key on the shape. `cost` is `null` — never `0.00` — for `quota` and
+`unavailable`, because those rows have no per-token price and a zero would
+assert they were free. `reported_share` is a percentage of `billable_cost`
+only: quota-billed work has no dollars to be a share of, and the field is `null`
+rather than `0` when there is no billable spend at all.
+
+`ai-usage-tui --doctor` prints the same split as a `PROVENANCE` block.
+
+Both blocks are derived from the same rows the export reports, so a `--provider`
+filter narrows them with it. `escalation_rate` is `null` rather than `0` when no session had
 enough information to examine, and `cost_after` is a floor rather than a total
 whenever `unpriced_after` or `quota_after` is non-zero. These are *inferred*
 from usage and are deliberately kept apart from the recorded routing events
@@ -570,6 +657,7 @@ refresh_interval = 30
 days = 7
 # claude_dir = "/home/user/.claude/projects"
 # codex_dir = "/home/user/.codex"
+# copilot_dir = "/home/user/.copilot"
 
 # Off by default: this is the only setting that would let the tool reach the network
 # outside an explicit --refresh-* command. See "Privacy and network behavior".
@@ -590,6 +678,11 @@ billing = "auto"                        # auto | subscription | api
 enabled = true
 interval = 30
 billing = "auto"                        # auto | subscription | api
+
+[collectors.copilot]
+enabled = true
+interval = 30
+billing = "auto"                        # auto resolves to subscription: a seat, not a rate
 
 [collectors.journal]
 enabled = true
@@ -763,6 +856,8 @@ does not load it automatically.
 | `--claude-billing MODE` | How Claude Code usage is billed: `auto` (default), `subscription`, or `api`; overrides `[collectors.claude_code] billing` |
 | `--codex-dir PATH` | Override the Codex home (`$CODEX_HOME`, else `~/.codex`); `sessions/` and `archived_sessions/` are read beneath it |
 | `--codex-billing MODE` | How Codex usage is billed: `auto` (default), `subscription`, or `api`; overrides `[collectors.codex] billing` |
+| `--copilot-dir PATH` | Override the Copilot home (`$COPILOT_HOME`, else `~/.copilot`); its CLI store and `session-state/` logs are read beneath it |
+| `--copilot-billing MODE` | How Copilot usage is billed: `auto` (default, resolves to `subscription`), `subscription`, or `api`; overrides `[collectors.copilot] billing` |
 | `--gemini-dir PATH` | Override the Gemini CLI home (default `~/.gemini`); its telemetry log is read from beneath it |
 | `--gemini-billing MODE` | How Gemini CLI usage is billed: `auto` (default), `subscription`, or `api`; overrides `[collectors.gemini] billing` |
 | `--omarchy-dir PATH` | Override where Omarchy's agents panel keeps its usage records (default `$XDG_STATE_HOME/omarchy/agents/usage`) |
@@ -797,6 +892,7 @@ Environment variables:
 | `CLAUDE_PROJECTS_DIR` | Claude Code session-log directory |
 | `CLAUDE_CONFIG_DIR` | Claude Code config directory; logs are read from `$CLAUDE_CONFIG_DIR/projects` (`CLAUDE_PROJECTS_DIR` wins when both are set) |
 | `CODEX_HOME` | Codex home; session logs are read from `sessions/` and `archived_sessions/` beneath it |
+| `COPILOT_HOME` | Copilot home; its CLI store and `session-state/` logs are read beneath it |
 | `GEMINI_TELEMETRY_OUTFILE` | Gemini CLI's own telemetry output path; when set, it is read from there rather than `~/.gemini/telemetry.json` |
 | `AI_USAGE_LOG` | Write diagnostics to a file — `1` for the default location, or a path. Off when unset. |
 | `XDG_CONFIG_HOME` | Base directory for the default config path |
@@ -824,6 +920,12 @@ On Windows, `USERPROFILE` (or `HOMEDRIVE` + `HOMEPATH`) stands in for `HOME`,
   The environment is checked only for the presence of `ANTHROPIC_API_KEY`,
   `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, and
   `CLAUDE_CODE_USE_VERTEX`; their values are not read.
+- Copilot's CLI store and session logs contain prompts, completions and tool
+  arguments in their `turns` table and `user.message` / `assistant.message`
+  records; only the `assistant_usage_events` columns and `session.shutdown`
+  aggregates are parsed, under the same planted-credential test as Claude Code.
+- Cursor's `state.vscdb` is never opened. See
+  [Why there is no Cursor collector](#why-there-is-no-cursor-collector).
 - Codex rollouts contain prompts, tool-call arguments and outputs, and
   reasoning summaries; only `session_meta`, `turn_context`, and the
   `token_count` block are parsed, under the same planted-credential test as
@@ -920,6 +1022,13 @@ SOURCES
 - **No Codex rows:** confirm `codex` has written `~/.codex/sessions` (or
   `$CODEX_HOME/sessions`), or point at the right home with `--codex-dir PATH`.
   Compressed `.jsonl.zst` rollouts are not read.
+- **No GitHub Copilot rows:** `--doctor` names the store it looked for. A
+  session only becomes durable usage once the CLI has written it: on older
+  builds that means the session must have shut down, and a session still
+  running contributes nothing until it does. If your build keeps its store
+  somewhere else, point at it with `--copilot-dir PATH`.
+- **No Cursor rows, ever:** by design. See
+  [Why there is no Cursor collector](#why-there-is-no-cursor-collector).
 
 ## Development
 

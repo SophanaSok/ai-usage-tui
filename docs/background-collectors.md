@@ -24,8 +24,8 @@ in-memory state is shared between collectors and the UI.
 ### Deduplication
 
 Merges key on `UsageKey`, which prefers a stable `event_id` (OpenCode's message id, Claude Code's
-`requestId`, Codex's content-based `codex:<timestamp>:<call tokens>:<running total>`, the journal's
-`event_id` column) and falls back to the usage shape *plus* its
+`requestId`, Codex's content-based `codex:<timestamp>:<call tokens>:<running total>`, Copilot's
+`copilot:<session>:<turn>`, the journal's `event_id` column) and falls back to the usage shape *plus* its
 timestamp. Token counts alone are not an identity: agent loops routinely produce distinct requests
 with byte-identical counts, and keying on shape alone silently collapsed them.
 
@@ -158,6 +158,31 @@ billing = "auto"                        # auto | subscription | api
 ```
 
 Override the root with `--codex-dir PATH`, the `codex_dir` config key, or `CODEX_HOME`.
+
+## Copilot collector
+
+Reads `assistant_usage_events` from whichever store under Copilot's home has that table —
+`session-store.db`, `session.db` or `data.db`, chosen by schema rather than name, because the
+filename has moved between releases. Resumes from a `created_at` high-water mark, inclusively;
+the boundary row is re-read on purpose and dropped by `event_id` deduplication. Columns a given
+build lacks are selected as `NULL` after a `pragma_table_info` probe, so an older store reads
+rather than failing.
+
+Where no such table exists, the legacy `session-state/<id>/events.jsonl` logs are tailed by byte
+offset and only their `session.shutdown` records are read. Those aggregates are cumulative per
+session and model, so the collector keeps the last snapshot it saw for each pair and emits the
+difference — a resumed session writes several shutdowns, and emitting each whole would report
+every earlier turn again.
+
+Rows are subscription-billed: a Copilot seat pays for premium requests rather than tokens, so
+they carry `cost = null` and reach `quota` with the list rate in `api_equivalent_cost`.
+
+```toml
+[collectors.copilot]
+enabled = true
+interval = 30
+# billing = "auto"   # auto resolves to subscription; Copilot has no API-key mode
+```
 
 ## Journal collector
 

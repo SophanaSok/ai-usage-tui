@@ -30,6 +30,24 @@ The two things worth defending, and the reason to prefer depth over breadth belo
 - **Routing analytics.** Retries / escalations / test pass-fail / review defects per model —
   "is Opus actually worth 5× Sonnet on my codebase?" Nobody else answers that.
 
+### Open — the Copilot schema is not validated against a real account
+
+The Copilot collector shipped without a Copilot install to test against. The store's filename,
+the `assistant_usage_events` column set, and the unit of `modelMetrics.<model>.requests.cost` are
+all derived from Copilot's published behaviour and from other readers of the same files, not from
+a live account.
+
+Every read is behind a schema probe — the store is chosen by whether it *has* the table, optional
+columns are selected as `NULL` after a `pragma_table_info` check — so an unexpected shape degrades
+to "absent" with a status line rather than to wrong numbers. That is the mitigation, not a
+substitute for a capture.
+
+What would close it: a `--doctor` run and a redacted `assistant_usage_events` sample from a
+Copilot user, checked into `tests/fixtures/copilot_home/`. `requests.cost` is deliberately unread
+until its unit can be checked against a known invoice; if it turns out to be dollars, Copilot rows
+could carry `reported` cost instead of `quota`, which would be a better answer than the list-rate
+counterfactual they carry now.
+
 ## Outstanding findings
 
 Numbering follows the original audit; findings since take the priority they would have had

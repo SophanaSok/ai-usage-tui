@@ -20,8 +20,8 @@ billing: per_token | subscription (set by the collector; subscription rows becom
 api_equivalent_cost: float | null (list-rate figure for subscription rows only; never summed into cost; the last, 15th, CSV column)
 latency (planned)
 error_status (planned)
-project (populated by the Claude Code and Codex collectors from `cwd`)
-session (populated by the Claude Code, Codex — the thread id — and OpenCode collectors)
+project (populated by the Claude Code, Codex and Copilot collectors from `cwd`; Copilot falls back to `repository`)
+session (populated by the Claude Code, Codex — the thread id — OpenCode and Copilot collectors)
 source (planned)
 ```
 

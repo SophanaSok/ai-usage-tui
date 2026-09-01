@@ -389,7 +389,7 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
             )
         })?;
     let roots = SourceRoots::from_cli(cli, journal);
-    let reports = ai_usage_tui::collector::diagnose(&roots)?;
+    let (reports, usages) = ai_usage_tui::collector::diagnose_with_usage(&roots)?;
 
     let _ = writeln!(out, "\nSOURCES");
     let mut found_any = false;
@@ -418,6 +418,22 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
             if let Some(hint) = absence_hint(report.id) {
                 let _ = writeln!(out, "  {:<12} {:<19}  {}", "", "", hint);
             }
+        }
+    }
+
+    // Cursor is the one agent people ask about that is deliberately absent from SOURCES.
+    // Saying nothing reads as an oversight; saying this reads as the decision it is.
+    if cursor_is_installed() {
+        let _ = writeln!(
+            out,
+            "  {:<12} installed, not read -- Cursor keeps no reliable local token counts",
+            "cursor"
+        );
+        for line in [
+            "its own team calls the stored counts best-effort and points at the web",
+            "dashboard; the only way to make a row is to guess one from message length",
+        ] {
+            let _ = writeln!(out, "  {:<12} {:<19}  {}", "", "", line);
         }
     }
 
@@ -503,6 +519,48 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
     } else {
         for warning in engine.warnings() {
             let _ = writeln!(out, "  warning      {warning}");
+        }
+    }
+
+    // Where the numbers came from. A total is only as good as its worst-provenance row, and
+    // until this existed the only way to see that split was the header's single coverage
+    // percentage -- which says how much is priced, not how much was actually reported.
+    let provenance = ai_usage_tui::model::Provenance::of(&usages);
+    let _ = writeln!(out, "\nPROVENANCE");
+    for (status, bucket) in &provenance.buckets {
+        if bucket.rows == 0 {
+            continue;
+        }
+        let money = match (bucket.cost, bucket.api_equivalent_cost) {
+            (Some(cost), _) => format!("${cost:.2}"),
+            // Never rendered as a dollar total: this is what the work would have cost on an
+            // API key, not what anyone was charged.
+            (None, Some(equivalent)) => format!("${equivalent:.2} at list rates"),
+            (None, None) => "no price exists".to_string(),
+        };
+        let _ = writeln!(
+            out,
+            "  {:<12} {:>7} requests  {money}",
+            status.label(),
+            bucket.requests
+        );
+    }
+    match provenance.reported_share() {
+        Some(share) => {
+            let _ = writeln!(
+                out,
+                "  {:<12} {share:.0}% of ${:.2} was reported by the provider; the rest is worked \
+                 out from rate tables",
+                "share",
+                provenance.billable_cost()
+            );
+        }
+        None => {
+            let _ = writeln!(
+                out,
+                "  {:<12} no billable spend in range, so no share to report",
+                "share"
+            );
         }
     }
 
@@ -607,12 +665,36 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
     Ok(())
 }
 
+/// Whether Cursor is on this machine, for the `--doctor` note explaining why it is not a source.
+///
+/// Cursor stores its sessions in `state.vscdb`, where `tokenCount.inputTokens` and
+/// `.outputTokens` are written as `{0,0}` on current builds -- Cursor's own staff describe the
+/// field as best-effort and unreliable, and direct users to the web dashboard for real figures.
+/// Every tool that shows Cursor spend therefore reconstructs it, ultimately by dividing a
+/// character count by four. That is a guess wearing a number's clothes, and pricing it would put
+/// invented dollars into budgets and the coverage figure. So there is no Cursor collector, and
+/// this is where that choice is stated out loud.
+fn cursor_is_installed() -> bool {
+    let Some(home) = ai_usage_tui::utils::home_dir() else {
+        return false;
+    };
+    [
+        home.join(".cursor"),
+        home.join(".config/Cursor"),
+        home.join("Library/Application Support/Cursor"),
+        home.join("AppData/Roaming/Cursor"),
+    ]
+    .iter()
+    .any(|path| path.exists())
+}
+
 /// How to point a source somewhere else, printed only when it was not where we looked.
 fn absence_hint(id: &str) -> Option<&'static str> {
     match id {
         "opencode" => Some("point elsewhere with --db PATH or OPENCODE_DB_PATH"),
         "claude_code" => Some("point elsewhere with --claude-dir PATH or CLAUDE_PROJECTS_DIR"),
         "codex" => Some("point elsewhere with --codex-dir PATH or CODEX_HOME"),
+        "copilot" => Some("point elsewhere with --copilot-dir PATH or COPILOT_HOME"),
         // The only source that records nothing until the user turns it on, so this hint is the
         // difference between "empty" and "unusable".
         "gemini" => Some(concat!(

@@ -71,6 +71,7 @@ pub fn print_once(cli: &Cli) -> Result<()> {
             .cloned()
             .collect();
         let escalations = escalations_json(&filtered);
+        let provenance = provenance_json(&filtered);
         let rows: Vec<_> = filtered
             .iter()
             .map(|usage| {
@@ -104,6 +105,8 @@ pub fn print_once(cli: &Cli) -> Result<()> {
             // Derived from the usage above, never from recorded routing events. Always present,
             // for the same reason as `limits`.
             "escalations": escalations,
+            // Where the numbers above came from. Always present, every status always keyed.
+            "provenance": provenance,
         }))?)?;
     } else {
         print_line(&format!("{} ({})", source, cli.range.label()))?;
@@ -118,6 +121,35 @@ pub fn print_once(cli: &Cli) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Where the exported figures came from, by cost status.
+///
+/// The header has always reduced this to one pricing-coverage percentage; a script had no way to
+/// ask the harder question, which is how much of a total a provider actually reported versus how
+/// much this tool worked out from a rate table. Derived from the same filtered rows the export
+/// reports, so a `--provider` filter narrows both.
+///
+/// `cost` is null for `quota` and `unavailable` rather than `0.0`. Those rows have no per-token
+/// price, and a zero would assert they were free.
+fn provenance_json(filtered: &[Usage]) -> serde_json::Value {
+    let provenance = crate::model::Provenance::of(filtered);
+    serde_json::json!({
+        "reported_share": provenance.reported_share(),
+        "billable_cost": provenance.billable_cost(),
+        "quota_requests": provenance.quota_requests(),
+        "unpriced_requests": provenance.unpriced_requests(),
+        "by_cost_status": provenance.buckets.iter().map(|(status, bucket)| {
+            serde_json::json!({
+                "cost_status": status.label(),
+                "rows": bucket.rows,
+                "requests": bucket.requests,
+                "tokens": bucket.tokens,
+                "cost": bucket.cost,
+                "api_equivalent_cost": bucket.api_equivalent_cost,
+            })
+        }).collect::<Vec<_>>(),
+    })
 }
 
 /// Escalations derived from the usage in range — the routing panel's derived block, for scripts.

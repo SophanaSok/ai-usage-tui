@@ -2,6 +2,61 @@
 
 ## Unreleased
 
+### Added
+
+- **GitHub Copilot is a data source.** The collector reads `assistant_usage_events` from
+  whichever store under `~/.copilot` has that table — `session-store.db`, `session.db` or
+  `data.db`, chosen by schema rather than name, because Copilot has moved the filename between
+  releases. One row per model request, with real input/output/cache/reasoning counts and its own
+  timestamp, so daily attribution needs no inference. Where no such table exists the legacy
+  `session-state/<id>/events.jsonl` logs are read instead, and only their `session.shutdown`
+  aggregates; those are cumulative, so the collector emits the difference from the last snapshot
+  rather than repeating a resumed session's earlier turns. `--copilot-dir`, `copilot_dir`,
+  `COPILOT_HOME`, and `[collectors.copilot]`.
+
+  Rows are subscription-billed. A Copilot seat pays for premium requests rather than tokens, so
+  there is no per-token rate to report: `cost` stays `null`, the row reaches `quota`, and the
+  list-rate figure travels as `api_equivalent_cost` where it cannot reach a budget. Copilot has
+  no API-key mode and therefore no environment signal, so `api_env_vars("copilot")` is an
+  explicit empty list and an unevidenced decision resolves to subscription rather than falling
+  through to per-token — which would have put invented dollars into budgets.
+
+  Two Copilot shapes are deliberately left unread: the legacy per-message records, which expose
+  an output count but record input as `0`, and VS Code's transcripts, which carry no counts at
+  all. The usual fallback for both is to divide a character count by four and price the result.
+  A token count inferred from message length is not a measurement, and priced it is
+  indistinguishable in a total from a figure a provider reported.
+
+- **`provenance` in `--json`, and a `PROVENANCE` block in `--doctor`.** `cost_status` has always
+  carried this per row, and the header has always reduced it to one pricing-coverage percentage —
+  which says how much of a range is priced, not how much of it a provider actually reported. The
+  new block is the whole distribution: rows, requests, tokens and dollars for each of the seven
+  statuses, plus `reported_share`, `billable_cost`, `quota_requests` and `unpriced_requests`.
+  Every status is present whether or not it has rows, so a consumer can key on the shape, and
+  `cost` is `null` rather than `0.00` for `quota` and `unavailable` — a zero would assert those
+  rows were free. `reported_share` is `null` rather than `0` when there is no billable spend, on
+  the same reasoning as `escalation_rate`. Derived from the same filtered rows the export already
+  reports, so a `--provider` filter narrows both.
+
+- **`--doctor` says why there is no Cursor collector.** Cursor writes
+  `tokenCount.inputTokens`/`.outputTokens` as zero on current builds; its own team calls the
+  field best-effort and unreliable and points at the web dashboard. There is no local
+  measurement to read, so the only way to produce a Cursor row is to guess one from message
+  length. `--doctor` now reports Cursor as installed-and-unread with that reason, and the README
+  has a section stating it. A missing row is recoverable; a fabricated one is not.
+
+### Fixed
+
+- **Two hermeticity gaps in the test suite.** `tests/cli.rs`'s `hermetic_with` never pinned
+  `--gemini-dir`, so a developer who had switched Gemini CLI's telemetry on saw their own rows
+  in a run that is supposed to read fixtures only, and `--doctor`'s hardcoded source list had
+  never gained `gemini` — the drift the list exists to catch. Both fixed, and the
+  screenshot renderer now requires the same two roots it requires for every other source, after
+  twice rendering the author's real spend into README images.
+- **`[collectors.<id>]` billing rejection named the wrong tables.** The error said `billing` and
+  `config_json` "apply to `[collectors.claude_code]` and `[collectors.codex]`" long after Gemini
+  had joined them. It is derived from the registry now, so it cannot drift again.
+
 ### Documentation
 
 - **The README's "Data sources" section is the paths and the switches, not the parsers.** It

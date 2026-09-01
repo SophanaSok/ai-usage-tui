@@ -128,6 +128,11 @@ pub fn api_env_vars(agent: &str) -> &'static [&'static str] {
             "GOOGLE_API_KEY",
             "GOOGLE_GENAI_USE_VERTEXAI",
         ],
+        // Deliberately empty, and deliberately explicit. Copilot has no API-key mode -- a seat
+        // is the only way to use it -- so there is no variable whose presence would mean
+        // per-token billing. `SourceRoots::copilot_decision` resolves the unevidenced case to
+        // `Subscription` rather than letting `detect` fall through to `PerToken`.
+        "copilot" => &[],
         _ => &[],
     }
 }

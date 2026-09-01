@@ -57,6 +57,8 @@ fn main() -> ExitCode {
         match flag.as_str() {
             "--claude-dir" => cli.claude_dir = Some(value),
             "--codex-dir" => cli.codex_dir = Some(value),
+            "--copilot-dir" => cli.copilot_dir = Some(value),
+            "--gemini-dir" => cli.gemini_dir = Some(value),
             "--omarchy-dir" => cli.omarchy_dir = Some(value),
             "--journal" => cli.journal_path = Some(value),
             "--config" => cli.config_path = Some(value),
@@ -76,15 +78,18 @@ fn main() -> ExitCode {
     // the author's real rate-limit window and the billing decision read their plan tier, so every
     // Claude row in the demo went `quota` and the images said so. The update cache was the third,
     // and it has no flag because there is nothing to point elsewhere: see `update_notice` below.
-    let (Some(journal), Some(_), Some(_), Some(_), Some(_)) = (
+    let (Some(journal), Some(_), Some(_), Some(_), Some(_), Some(_), Some(_)) = (
         cli.journal_path.clone(),
         cli.claude_dir.as_ref(),
         cli.codex_dir.as_ref(),
+        cli.copilot_dir.as_ref(),
+        cli.gemini_dir.as_ref(),
         cli.omarchy_dir.as_ref(),
         cli.db_path.as_ref(),
     ) else {
         eprintln!(
-            "--journal, --claude-dir, --codex-dir, --omarchy-dir and --db are all required: unset,"
+            "--journal, --claude-dir, --codex-dir, --copilot-dir, --gemini-dir, --omarchy-dir and \
+             --db are all required: unset,"
         );
         eprintln!(
             "they fall back to this machine's real usage data, which must never reach a README image"

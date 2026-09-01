@@ -51,6 +51,19 @@ fn hermetic_with<'a>(command: &'a mut Command, db: &Path, journal: &Path) -> &'a
             "{}/tests/fixtures/no-such-codex-home",
             env!("CARGO_MANIFEST_DIR")
         ))
+        .arg("--copilot-dir")
+        .arg(format!(
+            "{}/tests/fixtures/no-such-copilot-home",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        // Gemini reads `~/.gemini/telemetry.json` when left unpinned, so a developer who has
+        // switched Gemini's telemetry on saw their own rows in a fixture-only run. Every source
+        // in the registry belongs in this list; this one was missed when it shipped.
+        .arg("--gemini-dir")
+        .arg(format!(
+            "{}/tests/fixtures/no-such-gemini-home",
+            env!("CARGO_MANIFEST_DIR")
+        ))
         .arg("--omarchy-dir")
         .arg(format!(
             "{}/tests/fixtures/no-such-omarchy-dir",
@@ -89,7 +102,15 @@ fn doctor_reports_every_source_and_where_it_looked() {
 
     // Every source the collector actually reads, so a source added to the registry and left out
     // of the diagnosis shows up here.
-    for id in ["opencode", "claude_code", "codex", "journal", "zen_pricing"] {
+    for id in [
+        "opencode",
+        "claude_code",
+        "codex",
+        "copilot",
+        "gemini",
+        "journal",
+        "zen_pricing",
+    ] {
         assert!(text.contains(id), "--doctor never mentions {id}:\n{text}");
     }
 

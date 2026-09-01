@@ -101,6 +101,19 @@ pub const SOURCES: &[SourceSpec] = &[
         load: crate::collector::codex::read,
         collector: crate::collector::codex::collector,
     },
+    // GitHub Copilot CLI. Reads the request table its CLI store keeps, falling back to the
+    // legacy session log's shutdown aggregates. Placed after Codex so that a machine running
+    // both keeps the agents' own records as the base list.
+    SourceSpec {
+        id: crate::collector::copilot::ID,
+        label: "GitHub Copilot",
+        contributes_rows: true,
+        supports_billing: true,
+        default_enabled: true,
+        default_interval: 30,
+        load: crate::collector::copilot::read,
+        collector: crate::collector::copilot::collector,
+    },
     // Gemini CLI. Idle unless the user has switched its local telemetry on -- it persists no
     // usage otherwise -- which `--doctor` reports rather than showing an empty source.
     SourceSpec {

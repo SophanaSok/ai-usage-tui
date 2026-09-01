@@ -43,6 +43,11 @@ const PAID_PROVIDERS: &[&str] = &[
     "together",
     "togetherai",
     "perplexity",
+    // GitHub bills Copilot by seat and premium request rather than per token, but it is still a
+    // vendor that charges for the work. Category says who bills; `cost_status` says whether a
+    // per-token rate exists, and for Copilot it is `Quota` -- the same pairing Claude Code on a
+    // plan already gets.
+    "copilot",
 ];
 
 const LOCAL_HOSTS: &[&str] = &[
