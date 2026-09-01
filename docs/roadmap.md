@@ -56,15 +56,34 @@ unmissable ones. It reports success either way, so a silent review is indistingu
 clean one. **Do not trust a green `claude-review` as evidence that the diff was reviewed** until
 this is closed.
 
-**Reproduction.** PR #65 (`test/review-smoke-do-not-merge`, kept open as the test bed) plants two
-defects in `cursor_is_installed()` in `src/main.rs`, chosen because no test covers that function:
+**Reproduction.** PR #65 and its branch were closed and deleted once the measurements below were
+taken, so the test bed is this patch rather than a branch. Apply it to a branch, open a pull
+request, and the reviewer has two unmissable defects to find. Both sit in `cursor_is_installed()`
+in `src/main.rs`, chosen because **no test covers that function** — `cargo fmt --check`,
+`cargo clippy -D warnings` and all 492 tests pass with both in place, so the reviewer is the only
+thing that can catch them.
 
-1. `home_dir().unwrap()` in place of `let Some(home) = ... else { return false }`, so `--doctor`
-   panics rather than degrading when `HOME` is unset.
-2. `.any()` changed to `.all()`, so the Cursor notice requires Cursor at four platform paths at
-   once — impossible, so the feature can never fire.
+```diff
+ fn cursor_is_installed() -> bool {
+-    let Some(home) = ai_usage_tui::utils::home_dir() else {
+-        return false;
+-    };
++    let home = ai_usage_tui::utils::home_dir().unwrap();
+     [
+         home.join(".cursor"),
+         home.join(".config/Cursor"),
+         home.join("Library/Application Support/Cursor"),
+         home.join("AppData/Roaming/Cursor"),
+     ]
+     .iter()
+-    .any(|path| path.exists())
++    .all(|path| path.exists())
+ }
+```
 
-`cargo fmt --check`, `cargo clippy -D warnings` and all 492 tests pass with both in place.
+The first makes `--doctor` panic rather than degrade when `HOME` is unset. The second requires
+Cursor to be installed at all four platform paths simultaneously, so the notice can never fire.
+Revert both before merging anything.
 
 **Three configurations measured.** Every one ends `No buffered inline comments`:
 
@@ -103,8 +122,9 @@ nothing.
 behaviour, but strictly more capable, and it is the shape most likely to be correct once the
 missing tool is known.
 
-**Do not delete the `test/review-smoke-do-not-merge` branch** until this is closed; rebuilding an
-equivalent test bed is the expensive part. Close PR #65 unmerged when done.
+The test bed costs one branch and one pull request to rebuild from the patch above; the
+expensive part was finding two defects that survive the whole test suite, and that is now
+written down.
 
 ## Outstanding findings
 
