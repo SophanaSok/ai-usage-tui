@@ -25,10 +25,11 @@ Everything is read locally, in place. No account, no telemetry, and no invented
 numbers: a cost the tool cannot establish stays unknown rather than rendering as
 `$0.00`.
 
-![Dashboard showing token totals, model activity, and cost provenance](docs/assets/dashboard.png)
+![The dashboard walked panel by panel: model totals, routing analytics, a sort, a project drill-down, subscription limits, and the key reference](docs/assets/demo.gif)
 
-*Invented demo data, rendered off-screen by `scripts/render-readme-screenshots.sh`. No
-real account, project, or spend appears in any image here.*
+*Invented demo data, rendered off-screen by `scripts/render-readme-screenshots.sh` — the GIF
+replays a key script through the dashboard's own dispatch, one frame per key. No real account,
+project, or spend appears in any image here.*
 
 ## Contents
 
@@ -546,6 +547,10 @@ regardless. Use `--provider` / `--model` to narrow the data itself.
 <details>
 <summary>Screenshots of each panel</summary>
 
+**Dashboard** — token totals, model activity and cost provenance; the view every panel sits beside.
+
+![Dashboard showing token totals, model activity, and cost provenance](docs/assets/dashboard.png)
+
 **Budgets** (`b`) — spend against every configured limit, and which one has gone over.
 
 ![The budgets panel](docs/assets/budgets.png)
@@ -571,6 +576,10 @@ project, and no per-token price, is shown as `quota` rather than as `$0.00`.
 **Sessions** (`s`) — individual runs, ranked by cost, with the models each one used.
 
 ![The sessions panel](docs/assets/sessions.png)
+
+**Limits** (`l`) — each subscription's rate-limit windows, how much is used, and when they reset.
+
+![The limits panel](docs/assets/limits.png)
 
 </details>
 
@@ -1116,10 +1125,11 @@ cargo build --release --locked
 
 Regenerate the README images. They are rendered off-screen from invented demo data — no
 terminal is opened and no screen is captured — so this works headlessly and gives the same
-result on every machine:
+result on every machine. The demo GIF is the same renderer replaying a key script, assembled by
+ImageMagick; without it the stills are still produced and the GIF is skipped with a warning:
 
 ```sh
-./scripts/render-readme-screenshots.sh   # needs librsvg for rsvg-convert
+./scripts/render-readme-screenshots.sh   # needs librsvg for rsvg-convert; ImageMagick for the GIF
 ```
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution guidelines.

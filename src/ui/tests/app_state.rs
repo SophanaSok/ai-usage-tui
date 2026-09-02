@@ -2,6 +2,7 @@
 //! selection is allowed to go.
 
 use super::*;
+use crate::ui::keys::Action;
 
 #[test]
 fn only_one_panel_can_be_active() {
@@ -132,6 +133,55 @@ fn a_search_narrows_the_visible_rows() {
         .search_status()
         .expect("the footer must say it is filtering");
     assert_eq!((query, shown, total), ("api", 2, 3));
+}
+
+/// `Esc` backs out of the innermost thing: a filter first, then a drilldown, and only quits
+/// when there is nothing left to leave. The order is the whole point -- the loop used to carry
+/// it inline, and the README demo replays keys through the same dispatch.
+#[test]
+fn back_clears_a_filter_then_leaves_a_drilldown_and_only_then_quits() {
+    let mut app = test_app(vec![
+        usage(Some("/w/api"), Some("s1"), Some(1.0), 100),
+        usage(Some("/w/docs"), Some("s2"), Some(2.0), 100),
+    ]);
+    app.recompute();
+    assert_eq!(app.apply(Action::Panel(Panel::Projects)), Flow::Continue);
+    assert_eq!(app.apply(Action::DrillIn), Flow::Continue);
+    assert_eq!(
+        app.drilldown_project(),
+        Some("/w/docs"),
+        "the costlier project sorts first"
+    );
+    assert_eq!(app.apply(Action::Search), Flow::Continue);
+    app.search_key('s');
+    app.accept_search();
+    assert!(app.search_status().is_some());
+
+    assert_eq!(app.apply(Action::Back), Flow::Continue);
+    assert!(
+        app.search_status().is_none(),
+        "the first Esc clears the filter"
+    );
+    assert_eq!(
+        app.drilldown_project(),
+        Some("/w/docs"),
+        "and leaves the drilldown alone"
+    );
+
+    assert_eq!(app.apply(Action::Back), Flow::Continue);
+    assert_eq!(
+        app.drilldown_project(),
+        None,
+        "the second leaves the drilldown"
+    );
+    assert_eq!(app.panel, Panel::Projects);
+
+    assert_eq!(
+        app.apply(Action::Back),
+        Flow::Quit,
+        "the third has nothing left to back out of"
+    );
+    assert_eq!(app.apply(Action::Quit), Flow::Quit);
 }
 
 /// The filter changes what is listed, never what was spent.

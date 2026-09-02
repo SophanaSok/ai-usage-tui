@@ -130,7 +130,7 @@ its payload and is never recorded.
 | `requests`, `tokens` | The attempt: every request in the transcript that no earlier event of this session has attributed. One API request is written as several assistant lines sharing a `requestId`; they count once |
 | `cost`, `cost_status` | The attempt priced as the dashboard prices its rows: the same billing decision (`--claude-billing`, `~/.claude.json`, Omarchy's record) and the same rate table. A Max or Pro account's attempt is `quota` — real work, no per-request figure — and the panel renders it `on quota`. Any request that should carry a price and does not makes the whole attempt `unavailable` |
 | `task`, `phase` | The working directory, as the Projects panel names it, and `test` |
-| `event_id` | `claude-code:<session_id>:<tool_use_id>`, so a re-delivered hook cannot record a run twice |
+| `event_id` | `claude-code:<session_id>:<scope>:<tool_use_id>` — `scope` is `main` or `agent-<agent_id>` — so a re-delivered hook cannot record a run twice |
 | `retries`, `escalations`, `review_defects` | **Never sent.** A hook cannot count them, so they stay not reported and the panel reads `—`, not `0%` |
 
 The transcript is read with the Claude Code collector's own `parse_line`, which takes the usage

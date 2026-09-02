@@ -16,10 +16,12 @@ that matter rather than to look impressive:
   * a cheaper-to-pricier model change inside one session, so the escalations block renders
   * a run of local, free and cloud usage, so every category tile and the quota status appear
 
-Two files come out of this: `projects/` holds Claude Code transcripts, and `opencode.db` is a
-minimal stand-in for OpenCode's message store. The renderer must be pointed at both. It has no
-business discovering the real ones — a screenshot of the author's own spend is precisely what
-this fixture exists to prevent.
+Three files come out of this: `projects/` holds Claude Code transcripts, `opencode.db` is a
+minimal stand-in for OpenCode's message store, and `statusline.json` is what Claude Code would
+hand `--statusline` -- piped through the binary into a scratch data directory, it is what the
+limits panel shows. The renderer must be pointed at all of them. It has no business discovering
+the real ones — a screenshot of the author's own spend is precisely what this fixture exists to
+prevent.
 """
 
 import argparse
@@ -114,6 +116,30 @@ def write_opencode_db(path, rng, now, days):
     return len(rows)
 
 
+def write_statusline_payload(path, now):
+    """The `rate_limits` block Claude Code pushes to a statusline command, and nothing else.
+
+    Only the keys `--statusline` reads. The percentages are the README's worked example (42% of
+    the session window, 63% of the week) rather than anything a real account reported, and the
+    resets sit a couple of hours and a few days out so the panel renders live windows with a
+    countdown instead of dropping them as already rolled over.
+    """
+    payload = {
+        "_comment": "Invented for the README demo; see scripts/make-demo-fixture.py.",
+        "rate_limits": {
+            "five_hour": {
+                "used_percentage": 42,
+                "resets_at": int((now + timedelta(hours=2, minutes=10)).timestamp()),
+            },
+            "seven_day": {
+                "used_percentage": 63,
+                "resets_at": int((now + timedelta(days=3, hours=4)).timestamp()),
+            },
+        },
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("out", type=pathlib.Path, help="directory to write projects/ into")
@@ -192,6 +218,9 @@ def main():
 
     print(f"wrote {sum(1 for _ in root.rglob('*.jsonl'))} sessions to {root}")
     print(f"wrote {messages} OpenCode messages to {db_path}")
+    statusline_path = args.out / "statusline.json"
+    write_statusline_payload(statusline_path, now)
+    print(f"wrote a statusline payload to {statusline_path}")
 
 
 if __name__ == "__main__":

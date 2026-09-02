@@ -20,10 +20,18 @@ use crate::utils::format_clock;
 use super::aggregate::{
     burn_rate, coverage, daily_totals, project_totals, session_totals, UNATTRIBUTED,
 };
+use super::keys::Action;
 
 /// Trailing window for the burn-rate panel. One hour is long enough to smooth out a single
 /// large request and short enough to reflect what you are doing now.
 const BURN_WINDOW_SECS: i64 = 3600;
+
+/// What the event loop does after an action: keep drawing, or leave the dashboard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Flow {
+    Continue,
+    Quit,
+}
 
 pub struct App {
     pub range: Range,
@@ -553,6 +561,39 @@ impl App {
         // length. Left where it was, a cursor from the model table could sit past the end of
         // the routing table: nothing highlighted, `k` unable to bring it back, `Enter` a no-op.
         self.selected = self.selected.min(self.visible_rows().saturating_sub(1));
+    }
+
+    /// Carry out one key's action. The event loop and the README demo both go through here, so
+    /// the frames the demo renders are what the keys do rather than a second copy of it.
+    pub fn apply(&mut self, action: Action) -> Flow {
+        match action {
+            Action::Quit => return Flow::Quit,
+            Action::Search => self.begin_search(),
+            Action::SortNext => self.cycle_sort_column(true),
+            Action::SortPrev => self.cycle_sort_column(false),
+            Action::SortReverse => self.reverse_sort(),
+            Action::DrillIn => {
+                self.drill_into_selected_project();
+            }
+            // Innermost thing first: clear a filter, then leave a drilldown, and only quit when
+            // there is nothing left to back out of.
+            Action::Back => {
+                if self.search_status().is_some() {
+                    self.cancel_search();
+                } else if !self.leave_drilldown() {
+                    return Flow::Quit;
+                }
+            }
+            Action::ToggleHelp => self.show_help = !self.show_help,
+            Action::Refresh => self.refresh(),
+            Action::Panel(panel) => self.toggle_panel(panel),
+            Action::Range(range) => self.set_range(range),
+            Action::SelectNext => {
+                self.selected = (self.selected + 1).min(self.visible_rows().saturating_sub(1));
+            }
+            Action::SelectPrev => self.selected = self.selected.saturating_sub(1),
+        }
+        Flow::Continue
     }
 
     /// Order each panel's list by its current sort.

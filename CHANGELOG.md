@@ -4,6 +4,20 @@
 
 ### Added
 
+- **A demo you can watch, rendered from data that was never real.** The README opens on
+  `docs/assets/demo.gif`: the dashboard walked key by key — the routing panel, a sort and its
+  reverse, a project drill-down and back, the limits panel, the key reference. It is not a
+  recording. `examples/render-screenshots.rs` takes a `--script` of key tokens and replays them
+  through `App::apply`, the dispatch the event loop itself now calls (it was an inline `match`
+  in the loop, so the demo would otherwise have carried a second copy of what each key does),
+  writing one SVG per key; `scripts/render-readme-screenshots.sh` rasterises the frames and
+  assembles the GIF with ImageMagick, skipping it with a warning where that is missing. Every
+  frame comes from the invented fixture through the same off-screen path as the stills, so the
+  disclaimer under the image stays true of the moving one. The limits panel is the eighth
+  still: the fixture generator now writes the `rate_limits` payload Claude Code would push, and
+  the script feeds it through the real `--statusline` into the scratch data root, so the panel
+  and the header's limits line show windows that were made up for the purpose.
+
 - **`--statusline`: Claude Code's rate limits, pushed.** Claude Code hands a statusline command
   its official `rate_limits` block on every redraw and again when a window reaches its reset, and
   nothing else in this tool is *pushed* at it — `~/.claude.json` and Omarchy's records are polled
@@ -54,6 +68,12 @@
 
 ### Changed
 
+- **The pricing snapshot is current again.** `pricing/litellm.tsv` was nine days old and did not
+  know `claude-fable-5-1`, so every request to it was `quota` with no API-equivalent figure
+  beside it — a gap that showed up as a hole in the first day's numbers the launch write-up is
+  built from. Regenerated from upstream with `just pricing`: 3,757 keys, of which 347 are new, 219
+  re-priced and 42 retired upstream.
+
 - **Two green checks that meant nothing now mean something.** Neither is in the binary; both are
   in the release path a user's install depends on.
 
@@ -82,6 +102,15 @@
   because the rows collected *before* it are exactly the ones whose price was missing, and that
   pass is the one that reaches them. A test holds the two halves together, and the roadmap entry
   that recorded the constraint is closed under it.
+
+### Fixed
+
+- **Two documents that described work as open after it had landed.** `docs/routing-analytics.md`
+  spelled the hook's `event_id` without the scope segment the code writes
+  (`claude-code:<session_id>:<scope>:<tool_use_id>`); `docs/roadmap.md` still filed the quota P1
+  as open, wrote the statusline route in the future tense, said a push to a pull request would
+  not be re-reviewed, and recorded the expired-`TAP_TOKEN` hazard #88 removed. Reconciled against
+  the tree.
 
 ## [0.13.0] - 2026-09-02
 
