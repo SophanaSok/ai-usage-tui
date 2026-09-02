@@ -172,6 +172,31 @@ re-attributed from the start of its transcript. Real, ours, and not caught by `f
 suite or the author. Fixed in the same pull request, with the reply posted back on the thread.
 `show_full_output` is off again.
 
+**It caught a second one on PR #83, and that run exposed a third way to get a green check with
+no review.** The finding was good — a `## Positioning` section filed a new *open* P1 while the
+untouched summary line two sections up still said every P1 had shipped, which is the drifted
+claim that pull request existed to retire, reintroduced by the same commit. It was fixed and
+answered on the thread. But **the re-run after the fix reviewed nothing and still reported
+success**: run 33583870670 finished `"num_turns": 2`, `"is_error": false`, no permission
+denials, $0.07, and posted no comment at all.
+
+That is step 1 of the prompt doing what it says — *"Skip the review entirely — post nothing and
+stop — if the pull request ... already carries a code review comment from you"* — an
+anti-duplicate guard. The consequence is the part worth knowing: **the review runs once per pull
+request, ever.** Every push after the first is a green `claude-review` check over an unreviewed
+diff, and a fix made *in response to a finding* is the one change guaranteed never to be looked
+at. The "no issues found" comment was added because silence reads like a review that never ran;
+this path restores exactly that ambiguity, one layer up, and the check colour actively argues
+against noticing.
+
+Not fixed here, because the alternatives all cost something and the choice wants making
+deliberately: keying the skip on the head sha rather than on the comment's existence (re-reviews
+every push, and pays for it), replying in a thread instead of a new top-level comment, or leaving
+it and treating a second green check as meaningless — which is fine only while someone knows it
+is. Whoever picks this up should read the run above first; it is the cheapest example in the
+repository of the failure mode, and it cost seven cents rather than the eight runs the first one
+did.
+
 **How this was found, and the methodology error to avoid repeating.** The denial was invisible
 until `show_full_output: true` (#72) printed
 `{"tool_name":"Skill","tool_input":{"skill":"code-review:code-review"}}`. Three prior guesses at
