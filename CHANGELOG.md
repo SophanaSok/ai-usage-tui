@@ -1,5 +1,35 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **The pitch leads with the thing no competitor has.** The crate description, the README
+  tagline and the README opening described "a btop-inspired terminal dashboard for token usage,
+  cost and budgets" — which is precisely what ccusage (13.2k stars), claude-monitor (8.7k),
+  CodexBar (20.8k) and Claude Code's own `/usage` already do, and it buried the routing
+  analytics, which nothing below a gateway does at all. All three now lead with cost per
+  delivered result, and the six sources are supporting detail rather than the headline. The
+  provenance line moved up with it, because "no invented numbers" is a claim about this tool and
+  not about its inputs. `tests/docs.rs` keeps the four copies from drifting apart.
+
+### Documentation
+
+- **The cost-provenance claim is restated at its true width, and dated.** `docs/roadmap.md` said
+  "no competitor refuses to invent a number"; `claude-monitor` 4.0.0 now ships provenance labels
+  (`official` / `local_estimate` / `experimental` / `unknown`), so that sentence had expired.
+  What survives is narrower and still true: theirs label a *rate-limit* reading, this labels a
+  *per-request cost*, and nothing in the field distinguishes "billed against a subscription
+  quota" from "we could not price it" — while `ccusage --mode display` still prints `$0.00` for a
+  row it cannot price, which is the behaviour the convention exists to refuse.
+
+- **`docs/roadmap.md` gained a `Positioning` section** recording the field as surveyed
+  2026-09-01, with the adoption numbers stated plainly, and two findings filed against it: **P1**,
+  that quota and reset windows exist only on Omarchy while Claude Code hands official
+  `rate_limits` to any statusline script on stdin — table stakes, missing everywhere except this
+  developer's desktop; and **P2**, that there is no AUR package, no moving demo, and a name
+  collision with an existing PyPI `aiusage`.
+
 ## 0.12.1 - 2026-09-02
 
 ### Fixed

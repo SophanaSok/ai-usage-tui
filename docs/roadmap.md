@@ -16,19 +16,38 @@ push-only trigger never noticed it.
 
 `just check` runs exactly what CI runs, in CI's order. Use it before pushing.
 
-**Every P0 and P1 finding from the original audit has shipped.** What remains is P2 and P3 — depth
-and breadth, not correctness.
+**Every P0 and P1 finding from the original audit has shipped**, and what remains *of that audit*
+is P2 and P3 — depth and breadth, not correctness. That sentence is about the 2026-08-18 audit
+only, and it is no longer the whole picture: the 2026-09-01 market survey under `## Positioning`
+filed a **new, open P1** (quota and reset windows exist only on Omarchy). Findings numbered since
+the audit take the priority they would have had there, so a P1 can be open again — read
+`## Positioning` alongside `## Outstanding findings`, not instead of it.
 
 Sources read today: OpenCode SQLite, Claude Code JSONL, Codex CLI rollouts, the local Ollama/routing journal, and the
 Zen pricing table. Verified end to end against ~103MB of real Claude Code logs — 5,879 requests
 parsed in 0.27s with **zero unpriced rows**. On a subscription account those rows are `quota`
 rather than priced, and carry the list-rate figure as `api_equivalent_cost` instead of `cost`.
 
-The two things worth defending, and the reason to prefer depth over breadth below:
+The two things worth defending, and the reason to prefer depth over breadth below.
+Both claims are stated at the narrowest width that survives contact with the field as
+surveyed 2026-09-01; the wider versions they replace were true when written and are not now.
 
-- **Cost provenance.** Unknown cost stays unknown; no competitor refuses to invent a number.
+- **Cost provenance, scoped to per-request cost.** A rate we do not have yields
+  `CostStatus::Unavailable`, and `quota` is its own state with `api_equivalent_cost` kept
+  beside it and never summed into a budget. The earlier phrasing — "no competitor refuses to
+  invent a number" — **has expired**: `claude-monitor` 4.0.0 ships provenance labels
+  (`official` / `local_estimate` / `experimental` / `unknown`). Theirs label a *rate-limit*
+  reading as official-or-estimated; this labels a *per-request cost*, and nothing in the field
+  distinguishes "billed against a subscription quota" from "we could not price it".
+  `ccusage --mode display` still prints `$0.00` for a row it cannot price, which is the
+  concrete behaviour this convention exists to refuse. Do not restate the claim more broadly
+  than this paragraph without re-checking the field.
 - **Routing analytics.** Retries / escalations / test pass-fail / review defects per model —
-  "is Opus actually worth 5× Sonnet on my codebase?" Nobody else answers that.
+  "is Opus actually worth 5× Sonnet on my codebase?" This one still holds unqualified: no other
+  local terminal tool computes cost per delivered result. The tools that do are gateways
+  (LiteLLM, Helicone, Langfuse) and org-level SaaS, which need a proxy hop or an admin account.
+  It is also the weaker half of the pitch by placement, not by substance — see the note under
+  *Positioning* below.
 
 ### Resolved — the Copilot schema is validated against a real account
 
@@ -153,6 +172,31 @@ re-attributed from the start of its transcript. Real, ours, and not caught by `f
 suite or the author. Fixed in the same pull request, with the reply posted back on the thread.
 `show_full_output` is off again.
 
+**It caught a second one on PR #83, and that run exposed a third way to get a green check with
+no review.** The finding was good — a `## Positioning` section filed a new *open* P1 while the
+untouched summary line two sections up still said every P1 had shipped, which is the drifted
+claim that pull request existed to retire, reintroduced by the same commit. It was fixed and
+answered on the thread. But **the re-run after the fix reviewed nothing and still reported
+success**: run 33583870670 finished `"num_turns": 2`, `"is_error": false`, no permission
+denials, $0.07, and posted no comment at all.
+
+That is step 1 of the prompt doing what it says — *"Skip the review entirely — post nothing and
+stop — if the pull request ... already carries a code review comment from you"* — an
+anti-duplicate guard. The consequence is the part worth knowing: **the review runs once per pull
+request, ever.** Every push after the first is a green `claude-review` check over an unreviewed
+diff, and a fix made *in response to a finding* is the one change guaranteed never to be looked
+at. The "no issues found" comment was added because silence reads like a review that never ran;
+this path restores exactly that ambiguity, one layer up, and the check colour actively argues
+against noticing.
+
+Not fixed here, because the alternatives all cost something and the choice wants making
+deliberately: keying the skip on the head sha rather than on the comment's existence (re-reviews
+every push, and pays for it), replying in a thread instead of a new top-level comment, or leaving
+it and treating a second green check as meaningless — which is fine only while someone knows it
+is. Whoever picks this up should read the run above first; it is the cheapest example in the
+repository of the failure mode, and it cost seven cents rather than the eight runs the first one
+did.
+
 **How this was found, and the methodology error to avoid repeating.** The denial was invisible
 until `show_full_output: true` (#72) printed
 `{"tool_name":"Skill","tool_input":{"skill":"code-review:code-review"}}`. Three prior guesses at
@@ -191,6 +235,109 @@ refactor, with no mention of testing or reviewers:
 The first makes `--doctor` panic rather than degrade when `HOME` is unset; the second requires
 Cursor at all four platform paths at once, so the notice can never fire. Revert both before
 merging anything.
+
+## Positioning
+
+Market surveyed 2026-09-01, at v0.12.1. Recorded here because the conclusions decay and the
+next person needs to know both what was true and when it was checked.
+
+**Where the tool sits.** Six sources against a field that ranks itself by integration count:
+CodexBar (Swift, macOS, 69+ providers, 20.8k stars, ships a Linux/macOS CLI companion),
+ccusage (npx, 16 agent CLIs, 13.2k), claude-monitor (Python, uv/pip, 8.7k) and, in the same
+weight class as this, tokscale, codeburn (31 tools) and `caut` — a Rust CLI covering 16+
+providers with quota polling, which is the closest structural match to this project.
+Below all of them sits the first party: Claude Code's `/usage`, and official `rate_limits`
+handed to any statusline script on stdin, for free, with nothing installed.
+
+**Adoption, honestly.** 0 stars, 0 forks, no issue ever filed, ~111 crates.io downloads and
+~127 release-asset downloads at 40 days old, one human contributor. The tool is *unlaunched*,
+not rejected — there is no evidence anyone has been told it exists.
+
+**Breadth is not the axis to compete on.** `caut` is the same language and shape with three
+times the coverage, and the npx-installable tools ask for nothing at all. Adding collectors is
+a treadmill the field runs faster on. The defensible position is the routing tool that happens
+to have a usage dashboard, not the reverse: the dashboard half is commoditized, the routing
+half has no competitor below a gateway.
+
+**Done as part of this survey:** the crate description, the README tagline and the README
+opening now lead with cost-per-delivered-result; the provenance claim above is restated at its
+true width.
+
+### P1 — Quota and reset windows exist only on Omarchy
+
+The `l` panel, the header's fullest-fresh-window line and `--json`'s `limits[]` all come from
+Omarchy's agents-panel records (`src/omarchy/mod.rs`). On any machine without Omarchy there is
+no limits view at all — and "am I about to hit my weekly cap" is the single most-searched
+question in this category. Claude Code hands the official `rate_limits` block to a statusline
+command on stdin; claude-monitor, `caut` and CodexBar all consume it. This is table stakes and
+it is missing everywhere except this developer's desktop.
+
+The fix is a statusline mode that reads that block from stdin and feeds the same `limits[]`
+structure the panel already renders, making Omarchy one source of that data rather than the
+only one. Codex's collector already parses a `rate_limits` payload
+(`src/collector/codex.rs`, the `COUNT_1` / `LIMITS_ONLY` fixtures), so the shape is understood
+and the panel needs no new rendering. It also delivers the ambient always-visible surface every
+roundup names as what users want most, in the same change.
+
+**The schema, read from the reference on 2026-09-01** (`code.claude.com/docs/en/statusline`,
+"Rate limit usage"). Recorded so the next person starts from field names rather than a search,
+*not* as a licence to skip the capture:
+
+```
+rate_limits.five_hour.used_percentage     0..100
+rate_limits.five_hour.resets_at           Unix epoch seconds
+rate_limits.seven_day.used_percentage     0..100
+rate_limits.seven_day.resets_at           Unix epoch seconds
+rate_limits.spend_limit.used_percentage   0..100, may exceed 100; gateway only, v2.1.251+
+rate_limits.spend_limit.resets_at         Unix epoch seconds
+```
+
+Four documented absence rules, and every one of them is this project's kind of bug:
+
+- `rate_limits` **appears only for Pro and Max subscribers**, and only **after the first API
+  response in the session**. On an API-billed account it is absent entirely — which is correct,
+  and must read as "no such thing here", not as 0%.
+- **Each window may be independently absent.** `five_hour` present and `seven_day` missing is a
+  normal payload, not a truncated one.
+- **Claude Code drops a window once its `resets_at` has passed.** So a window vanishing is the
+  *reset*, and rendering the last-known percentage after that would show a full bar on an empty
+  window. Absence has to clear the row, not freeze it.
+- The status line is re-run when a window in the last-received data reaches its `resets_at`, so
+  the refresh is pushed rather than polled.
+
+Three things to hold to when it is written. **A stale or absent block degrades to unknown, never
+to a fabricated percentage** — the `l` panel already dims rows older than 45 minutes and refuses
+to alarm on them, and that rule extends here; convention 1 is the same rule for cost. **The
+payload must still be captured and redacted into `tests/fixtures/`** like
+`gemini_telemetry.json` and `copilot_home/session-store.db` were, not transcribed from the block
+above: the docs have now been wrong about a payload twice (the `PostToolUseFailure` exit code,
+and Copilot's `cwd`/`repository` columns), and both times the wrong assumption cost data rather
+than failing loudly. **And the capture needs no settings file.** `claude --settings` takes inline
+JSON or a path, applies for one session only and *writes to no file* — so the capture never goes
+near `~/.claude/settings.json`:
+
+```sh
+printf '#!/usr/bin/env bash\ncat > /tmp/statusline-payload.json\necho captured\n' > /tmp/sl.sh
+chmod +x /tmp/sl.sh
+claude --settings '{"statusLine":{"type":"command","command":"/tmp/sl.sh"}}'
+# send one message so an API response exists, then quit; redact and move the JSON into
+# tests/fixtures/. It must be an interactive session -- print mode renders no status line.
+```
+
+### P2 — Nothing to look at, and nowhere to arrive from
+
+- **No AUR package**, on the platform the tool is designed around. `docs/release-process.md`
+  puts it at about twenty lines. Highest reach per hour on this list.
+- **No GIF, no asciinema, no site** — seven static PNGs against a README that reads as a design
+  document. The routing panel is the thing worth showing and the only thing no competitor can
+  screenshot.
+- **The launch is a measurement, not a comparison table.** A write-up answering "was Opus worth
+  5x Sonnet on this codebase" with this machine's own numbers is the story; a feature matrix
+  against ccusage is a fight on their axis, and loses.
+- **Name collision:** `aiusage` on PyPI is already "AI Usage TUI" (Michael Kennedy, 2025-10-24,
+  Cursor/Copilot credits) and outranks this repository on that exact phrase.
+- macOS binaries are unsigned, so a first run needs `xattr -d com.apple.quarantine`. Chocolatey
+  is rendered but never pushed to the gallery.
 
 ## Outstanding findings
 
