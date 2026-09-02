@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`--statusline`: Claude Code's rate limits, pushed.** Claude Code hands a statusline command
+  its official `rate_limits` block on every redraw and again when a window reaches its reset, and
+  nothing else in this tool is *pushed* at it — `~/.claude.json` and Omarchy's records are polled
+  on the dashboard's interval. `ai-usage-tui --statusline` reads that payload from stdin, prints
+  a one-line readout for the status bar (`5h 42% (resets 2h 10m) · 7d 63% (resets 3d 4h)`, in
+  red past 90%), and caches the windows under the data directory, where `limits::load` reads them
+  as a third producer beside the config cache and Omarchy. So the `l` panel and `--json` carry
+  them on any platform, and Claude Code gets an always-visible readout in the same change.
+  `contrib/claude-code/statusline-settings.json` is the one-line settings entry; it is a separate
+  file from the hooks entry so installing one does not install the other.
+
+  **Absence is meaning, four times over.** The block is absent on an API-billed account and in
+  every session before its first response: that is "no such thing here", not 0%, so the line is
+  empty, the exit is 0 and the cache is left as it was. Each window may be independently absent,
+  and the cache is rewritten with exactly what is present, so a window that has gone is cleared
+  from the panel rather than frozen at its last figure. Claude Code drops a window once its
+  `resets_at` has passed, so a window behind the clock is dropped at *read* time, whichever side
+  of the cache it is on — rendering the last-known percentage after the reset would show a full
+  bar on an empty window. And a percentage that is not a finite, non-negative number drops its
+  window rather than becoming one.
+
+  **What is read, and the guarantee around it.** From the payload only
+  `rate_limits.{five_hour,seven_day,spend_limit}.{used_percentage,resets_at}`; the session id,
+  transcript path, working directory, model and session cost beside them are never deserialised,
+  the three windows are struct fields rather than an iterated map, and a test plants a marker in
+  every one of those places and fails if it reaches the cache, the line or a `Debug` rendering.
+  `resets_at` here is epoch seconds as a number while `~/.claude.json` spells the same instant as
+  RFC 3339 text, and the two readers are kept separate so neither format is accepted where the
+  other is meant. The freshness rule is the two-sided one from v0.13.0. One subscription stays one
+  row: the statusline files under the same agent as the config cache and the fresher reading
+  wins, at the recorded cost that the statusline carries no per-model weekly window.
+
+  `--doctor` gains a `LIMITS` section naming where each of the three sources was looked for and,
+  for the statusline cache, how many windows are live and when the payload arrived.
+
 ## [0.13.0] - 2026-09-02
 
 ### Added

@@ -124,6 +124,11 @@ fn dispatch() -> Result<()> {
             &cli, path,
         ));
     }
+    if cli.statusline {
+        // Runs on every redraw of Claude Code's status line, so it reads stdin and the clock and
+        // touches nothing else: no sources, no journal, no config document.
+        return ai_usage_tui::statusline::run_from_stdin(ai_usage_tui::utils::now());
+    }
     if cli.check_budgets {
         return check_budgets(&cli, &config);
     }
@@ -562,6 +567,82 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
                 "share"
             );
         }
+    }
+
+    // Where the `l` panel's rows come from. None of the three is a usage collector, so none is
+    // in SOURCES, and an empty panel was a question with no answer here.
+    let _ = writeln!(out, "\nLIMITS");
+    if roots.limits_enabled {
+        let mark = |present: bool| if present { "found " } else { "absent" };
+        let named = |path: &Option<std::path::PathBuf>| {
+            path.as_deref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "<no home directory>".to_string())
+        };
+        let omarchy = roots.omarchy_usage_dir();
+        let _ = writeln!(
+            out,
+            "  {:<12} {} {:<12} {}",
+            "omarchy",
+            mark(omarchy.as_deref().is_some_and(|d| d.is_dir())),
+            "",
+            named(&omarchy)
+        );
+        let claude = ai_usage_tui::limits::claude_cache_path(&roots);
+        let _ = writeln!(
+            out,
+            "  {:<12} {} {:<12} {}",
+            "claude_code",
+            mark(claude.as_deref().is_some_and(|p| p.is_file())),
+            "",
+            named(&claude)
+        );
+        let cache = ai_usage_tui::statusline::cache_path();
+        match cache
+            .as_deref()
+            .map(ai_usage_tui::statusline::read_cache_at)
+        {
+            Some(Ok(Some(cached))) => {
+                let now = ai_usage_tui::utils::now();
+                let live = ai_usage_tui::statusline::live(&cached.windows, now).len();
+                let _ = writeln!(
+                    out,
+                    "  {:<12} {} {:>4} windows {}",
+                    "statusline",
+                    mark(true),
+                    live,
+                    named(&cache)
+                );
+                let _ = writeln!(
+                    out,
+                    "  {:<12} {:<19}  received {} ago",
+                    "",
+                    "",
+                    ai_usage_tui::ui::aggregate::format_duration(now - cached.received)
+                );
+            }
+            Some(Err(problem)) => {
+                let _ = writeln!(out, "  {:<12} unreadable  {problem}", "statusline");
+            }
+            _ => {
+                let _ = writeln!(
+                    out,
+                    "  {:<12} {} {:<12} {}",
+                    "statusline",
+                    mark(false),
+                    "",
+                    named(&cache)
+                );
+                let _ = writeln!(
+                    out,
+                    "  {:<12} {:<19}  fed by Claude Code's status line; see \
+                     contrib/claude-code/statusline-settings.json",
+                    "", ""
+                );
+            }
+        }
+    } else {
+        let _ = writeln!(out, "  {:<12} disabled ([omarchy] limits = false)", "panel");
     }
 
     // How this copy was installed, and how to upgrade it. Always shown and always offline: it is

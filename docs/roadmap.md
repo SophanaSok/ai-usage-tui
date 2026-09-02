@@ -289,11 +289,18 @@ are already known to differ. And **`hermetic()` did not pin the config document*
 `CLAUDE_CONFIG_DIR` outranks `--claude-dir` in `config_json_path`, so a developer with it exported
 would have had their real subscription percentages in a fixture-only `--json` run.
 
-Still open: the statusline surface itself. It remains the only *push* signal — Claude Code re-runs
-the command when a window reaches its `resets_at` — and it is the ambient always-visible surface
-every roundup names as what users want most. The schema below is still accurate and still needs a
-captured payload, which needs an interactive session. It is a smaller, additive change now that
-the `limits` vocabulary and the merge exist.
+**Closed after v0.13.0: the statusline surface itself**, as `--statusline` (`src/statusline.rs`,
+`contrib/claude-code/statusline-settings.json`). It reads the block from stdin, prints the
+one-line readout Claude Code shows, and caches the windows under the data directory, where
+`limits::load` reads them as the third producer — the smaller, additive change this paragraph
+once predicted, exactly because the vocabulary and the merge already existed. It is the only
+*push* signal this tool has: Claude Code re-runs the command when a window reaches its
+`resets_at`, where everything else here is polled. The schema below held. Its fixture,
+`tests/fixtures/claude_statusline.json`, must be a redacted interactive capture made with the
+recipe below (provisional and hand-authored until that capture lands — its `_comment` says so),
+and the capture was the one step of the change an agent could not make: the classifier refuses to
+drive an interactive Claude Code session from a tool call, as it refused the settings-file write
+before it.
 
 ### P1 (superseded) — the statusline route, kept for its schema
 

@@ -285,11 +285,21 @@ pub fn load(roots: &SourceRoots, now: i64) -> LimitsReport {
         .is_none_or(|spec| roots.is_enabled(spec));
 
     if claude_enabled {
+        let tier = roots.omarchy_tier(crate::collector::claude_code::ID);
         if let Some(path) = roots.claude_json_path() {
-            let tier = roots.omarchy_tier(crate::collector::claude_code::ID);
-            let readout = read_claude_cache(&path, now, CACHE_STALE_AFTER_SECS, tier);
+            let readout = read_claude_cache(&path, now, CACHE_STALE_AFTER_SECS, tier.clone());
             report.problems.extend(readout.problems);
             if let Some(snapshot) = readout.snapshot {
+                merge(&mut report, snapshot);
+            }
+        }
+        // The third producer: what Claude Code last pushed to `--statusline`. It is this tool's
+        // own file, but it holds Claude Code's figures, so the same switch covers it -- a user
+        // who turned Claude Code off does not expect its subscription to keep appearing.
+        if let Some(path) = crate::statusline::cache_path() {
+            let (snapshot, problem) = crate::statusline::readout_at(&path, now, tier);
+            report.problems.extend(problem);
+            if let Some(snapshot) = snapshot {
                 merge(&mut report, snapshot);
             }
         }

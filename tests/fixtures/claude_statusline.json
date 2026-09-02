@@ -1,0 +1,36 @@
+{
+  "_comment": "PROVISIONAL, hand-authored from the documented schema so the tests have something to read while the real payload is captured. It must be replaced by a redacted interactive capture (docs/roadmap.md, the statusline recipe) before this ships: the docs have been wrong about a payload twice. The redaction keeps every sibling key and plants FIXTURE_SECRET in the places the payload names the machine.",
+  "hook_event_name": "Status",
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "transcript_path": "/home/fixture/FIXTURE_SECRET/.claude/projects/-home-fixture-work/00000000-0000-0000-0000-000000000000.jsonl",
+  "cwd": "/home/fixture/FIXTURE_SECRET/work",
+  "model": {
+    "id": "claude-fixture-model",
+    "display_name": "Fixture Model FIXTURE_SECRET"
+  },
+  "workspace": {
+    "current_dir": "/home/fixture/FIXTURE_SECRET/work",
+    "project_dir": "/home/fixture/FIXTURE_SECRET/work"
+  },
+  "version": "0.0.0",
+  "output_style": {
+    "name": "default"
+  },
+  "cost": {
+    "total_cost_usd": 0.0123,
+    "total_duration_ms": 45000,
+    "total_api_duration_ms": 2300,
+    "total_lines_added": 3,
+    "total_lines_removed": 1
+  },
+  "rate_limits": {
+    "five_hour": {
+      "used_percentage": 11,
+      "resets_at": 1787490000
+    },
+    "seven_day": {
+      "used_percentage": 22,
+      "resets_at": 1787830800
+    }
+  }
+}
