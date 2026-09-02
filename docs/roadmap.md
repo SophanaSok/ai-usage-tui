@@ -1,6 +1,7 @@
 # Roadmap and Outstanding Findings
 
-Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.13.0.
+Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.13.0 and the
+three pull requests merged after it (#87 `--statusline`, #88 `ci/trust`, #89 incremental pricing).
 Shipped items are in the versioned sections of `CHANGELOG.md` (new work goes under
 `[Unreleased]`); this file is the *remaining* work, with enough evidence attached that each item
 can be picked up cold.
@@ -18,10 +19,11 @@ push-only trigger never noticed it.
 
 **Every P0 and P1 finding from the original audit has shipped**, and what remains *of that audit*
 is P2 and P3 — depth and breadth, not correctness. That sentence is about the 2026-08-18 audit
-only, and it is no longer the whole picture: the 2026-09-01 market survey under `## Positioning`
-filed a **new, open P1** (quota and reset windows exist only on Omarchy). Findings numbered since
-the audit take the priority they would have had there, so a P1 can be open again — read
-`## Positioning` alongside `## Outstanding findings`, not instead of it.
+only, and it is not the whole picture: the 2026-09-01 market survey under `## Positioning` filed
+a new P1 (quota and reset windows existed only on Omarchy), which v0.13.0 and `--statusline`
+closed the next day. Findings numbered since the audit take the priority they would have had
+there, so a P1 can be open again — read `## Positioning` alongside `## Outstanding findings`,
+not instead of it. Nothing above P2 is open as of 2026-09-02.
 
 Sources read today: OpenCode SQLite, Claude Code JSONL, Codex CLI rollouts, the local Ollama/routing journal, and the
 Zen pricing table. Verified end to end against ~103MB of real Claude Code logs — 5,879 requests
@@ -311,23 +313,19 @@ keeps every sibling key and the disclosure test names them.
 
 ### P1 (superseded) — the statusline route, kept for its schema
 
-The `l` panel, the header's fullest-fresh-window line and `--json`'s `limits[]` all come from
-Omarchy's agents-panel records (`src/omarchy/mod.rs`). On any machine without Omarchy there is
-no limits view at all — and "am I about to hit my weekly cap" is the single most-searched
-question in this category. Claude Code hands the official `rate_limits` block to a statusline
-command on stdin; claude-monitor, `caut` and CodexBar all consume it. This is table stakes and
-it is missing everywhere except this developer's desktop.
-
-The fix is a statusline mode that reads that block from stdin and feeds the same `limits[]`
-structure the panel already renders, making Omarchy one source of that data rather than the
-only one. Codex's collector already parses a `rate_limits` payload
-(`src/collector/codex.rs`, the `COUNT_1` / `LIMITS_ONLY` fixtures), so the shape is understood
-and the panel needs no new rendering. It also delivers the ambient always-visible surface every
-roundup names as what users want most, in the same change.
+When this was written (2026-09-01) the `l` panel, the header's fullest-fresh-window line and
+`--json`'s `limits[]` all came from Omarchy's agents-panel records (`src/omarchy/mod.rs`), so on
+any machine without Omarchy there was no limits view at all — and "am I about to hit my weekly
+cap" is the single most-searched question in this category. Claude Code hands the official
+`rate_limits` block to a statusline command on stdin; claude-monitor, `caut` and CodexBar all
+consume it. The route proposed here was a statusline mode feeding the same `limits[]` structure
+the panel already rendered. It was overtaken by the `~/.claude.json` reader (v0.13.0) and then
+built anyway as `--statusline` (`src/statusline.rs`), the smaller additive change the paragraph
+above describes. What follows is kept because the schema and the absence rules are what the
+implementation was checked against, and the capture recipe is how its fixture was made.
 
 **The schema, read from the reference on 2026-09-01** (`code.claude.com/docs/en/statusline`,
-"Rate limit usage"). Recorded so the next person starts from field names rather than a search,
-*not* as a licence to skip the capture:
+"Rate limit usage"), and held byte for byte by the capture from Claude Code 2.1.258:
 
 ```
 rate_limits.five_hour.used_percentage     0..100
@@ -351,16 +349,19 @@ Four documented absence rules, and every one of them is this project's kind of b
 - The status line is re-run when a window in the last-received data reaches its `resets_at`, so
   the refresh is pushed rather than polled.
 
-Three things to hold to when it is written. **A stale or absent block degrades to unknown, never
-to a fabricated percentage** — the `l` panel already dims rows older than 45 minutes and refuses
-to alarm on them, and that rule extends here; convention 1 is the same rule for cost. **The
-payload must still be captured and redacted into `tests/fixtures/`** like
-`gemini_telemetry.json` and `copilot_home/session-store.db` were, not transcribed from the block
-above: the docs have now been wrong about a payload twice (the `PostToolUseFailure` exit code,
-and Copilot's `cwd`/`repository` columns), and both times the wrong assumption cost data rather
-than failing loudly. **And the capture needs no settings file.** `claude --settings` takes inline
-JSON or a path, applies for one session only and *writes to no file* — so the capture never goes
-near `~/.claude/settings.json`:
+Three things it holds to. **A stale or absent block degrades to unknown, never to a fabricated
+percentage** — the `l` panel dims rows older than 45 minutes and refuses to alarm on them, and
+that rule extends here; convention 1 is the same rule for cost. **The payload was captured and
+redacted into `tests/fixtures/claude_statusline.json`** like `gemini_telemetry.json` and
+`copilot_home/session-store.db` were, not transcribed from the block above: the docs had been
+wrong about a payload twice before (the `PostToolUseFailure` exit code, and Copilot's
+`cwd`/`repository` columns), and both times the wrong assumption cost data rather than failing
+loudly. This time the reference was right, and the payload carried a good deal beside the block
+(the context window, the prompt cache, the workspace's repository owner) — which is why the
+fixture keeps every sibling key and the disclosure test names them. **And the capture needs no
+settings file.** `claude --settings` takes inline JSON or a path, applies for one session only
+and *writes to no file* — so the capture never goes near `~/.claude/settings.json`. The recipe,
+for the next payload that changes:
 
 ```sh
 printf '#!/usr/bin/env bash\ncat > /tmp/statusline-payload.json\necho captured\n' > /tmp/sl.sh
@@ -381,10 +382,8 @@ About box was applied by hand with `scripts/identity.sh --apply`, so `identity.y
 the first time in four runs. It still has no `REPO_METADATA_TOKEN`, so it can detect the next
 drift and not fix it.
 
-**Open and unmerged.** PR #84, branch `feat/aur-packaging`, commit `848a613`. All eight checks
-green; `claude-review` posted "No issues found". Nothing is blocking it but the merge. Note that
-pushing another commit to it will *not* get it re-reviewed — see the once-per-PR entry under the
-`claude-review` section above.
+PR #84 (`feat/aur-packaging`) merged on 2026-09-01 with all eight checks green; the packaging
+guideline fixes followed in a second pull request the same day.
 
 **The three things to pick up, in the order they are worth doing:**
 
@@ -421,8 +420,17 @@ pushing another commit to it will *not* get it re-reviewed — see the once-per-
    The document belongs to Claude Code, not to us, and this repository is public: `limits` is
    indexed as a self-describing array specifically so `utilization`'s sibling keys are never
    iterated, and the fixture is hand-authored so no byte of a real config is ever committed.
-3. **The demo and the write-up (P2 above).** Still the launch. A measurement — "was Opus worth
-   5x Sonnet on this codebase", from this machine's own routing data — not a feature table.
+3. **The demo and the write-up (P2 above).** Still the launch. The demo is done: the README opens
+   on `docs/assets/demo.gif`, rendered from the invented fixture through the dashboard's own key
+   dispatch (`App::apply`) by `scripts/render-readme-screenshots.sh`. The write-up is the
+   measurement — "was Opus worth 5x Sonnet on this codebase", from this machine's own numbers —
+   not a feature table. What the exploration on 2026-09-02 found, so the next person does not
+   re-find it: the routing journal on this machine holds one event, the `--claude-code-hook` was
+   never installed here, and on a Max plan every attempt is `quota`, so `$/SUCCESS` cannot be
+   the story yet. What the transcripts *do* support is API-equivalent by model, project and day
+   against the subscription, the derived escalation rate, and the repository's own commit and
+   release history — the first piece is that, stated with the provenance rules; the
+   Opus-versus-Sonnet piece waits on hook data.
 
 **Not started, and deliberately:** the `--doctor` AUR detection below, recorded with the
 evidence and the design question it turns on. (The `claude-review` once-per-PR fix that stood
@@ -456,9 +464,11 @@ likely) rather than reaching for the filesystem inside the pure one.
   Submitting it to the AUR is still manual and needs an account plus an Arch host for `.SRCINFO`;
   `docs/release-process.md` carries the commands and what has to change in the README and in
   `identity.sh --channels` when it lands.
-- **No GIF, no asciinema, no site** — seven static PNGs against a README that reads as a design
-  document. The routing panel is the thing worth showing and the only thing no competitor can
-  screenshot.
+- **Resolved: the GIF.** `docs/assets/demo.gif` walks the dashboard — the routing panel, a sort,
+  a project drill-down, the limits panel, the key reference — rendered off-screen from the
+  invented fixture by the same path as the stills (`examples/render-screenshots.rs --script`),
+  so no real path or spend can appear in it. Not an asciinema: a recording of a real terminal
+  is a recording of the author's machine. No site, still.
 - **The launch is a measurement, not a comparison table.** A write-up answering "was Opus worth
   5x Sonnet on this codebase" with this machine's own numbers is the story; a feature matrix
   against ccusage is a fight on their axis, and loses.
@@ -746,9 +756,10 @@ Remaining:
 
   A Homebrew tap and Scoop bucket exist too (`SophanaSok/homebrew-tap`,
   `SophanaSok/scoop-bucket`); the `update-taps` job pushes the rendered manifests on each tag.
-  Both that job and `publish-crate` skip with a notice if their secret is absent — including when
-  a fine-grained `TAP_TOKEN` **expires**, in which case the release still succeeds and the tap
-  silently stops updating. The job-log warning is the only signal.
+  Both that job and `publish-crate` skip with a notice if their secret is *unset*, the documented
+  pre-setup state. An expired `TAP_TOKEN` used to be treated the same way, so the release
+  succeeded while the tap silently stopped updating; since #88 an expired token fails the clone
+  and the job, and each pushed manifest is read back through the API and must name the tag.
 - **Resolved.** `docs/model-routing.md` no longer duplicates the agent-to-model table; that mapping
   lives in `~/.config/opencode/opencode.json` and `~/.config/opencode/ROUTING.md`, and the repo doc
   now carries only policy (tiers by role, privacy boundary, escalation, evaluation schema).

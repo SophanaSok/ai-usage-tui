@@ -53,7 +53,7 @@ use crate::model::CYAN;
 use crate::utils::journal_path;
 
 pub use aggregate::{coverage, project_labels, project_totals};
-pub use app::{App, Coverage, DerivedView, Panel};
+pub use app::{App, Coverage, DerivedView, Flow, Panel};
 pub use svg::{buffer_to_svg, render_svg};
 pub use theme::cost_display;
 
@@ -145,33 +145,10 @@ pub fn run(
                     KeyCode::Up => Some(keys::Action::SelectPrev),
                     _ => None,
                 };
-                match action {
-                    Some(keys::Action::Quit) => break,
-                    Some(keys::Action::Search) => app.begin_search(),
-                    Some(keys::Action::SortNext) => app.cycle_sort_column(true),
-                    Some(keys::Action::SortPrev) => app.cycle_sort_column(false),
-                    Some(keys::Action::SortReverse) => app.reverse_sort(),
-                    Some(keys::Action::DrillIn) => {
-                        app.drill_into_selected_project();
+                if let Some(action) = action {
+                    if app.apply(action) == app::Flow::Quit {
+                        break;
                     }
-                    // Innermost thing first: clear a filter, then leave a drilldown, and only
-                    // quit when there is nothing left to back out of.
-                    Some(keys::Action::Back) => {
-                        if app.search_status().is_some() {
-                            app.cancel_search();
-                        } else if !app.leave_drilldown() {
-                            break;
-                        }
-                    }
-                    Some(keys::Action::ToggleHelp) => app.show_help = !app.show_help,
-                    Some(keys::Action::Refresh) => app.refresh(),
-                    Some(keys::Action::Panel(panel)) => app.toggle_panel(panel),
-                    Some(keys::Action::Range(range)) => app.set_range(range),
-                    Some(keys::Action::SelectNext) => {
-                        app.selected = (app.selected + 1).min(app.visible_rows().saturating_sub(1))
-                    }
-                    Some(keys::Action::SelectPrev) => app.selected = app.selected.saturating_sub(1),
-                    None => {}
                 }
             }
         }

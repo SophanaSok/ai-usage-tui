@@ -2,8 +2,8 @@
 #
 # Regenerate with: scripts/refresh-litellm-pricing.py
 # Source:   https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json
-# Upstream: local file /tmp/litellm.json
-# Updated:  2026-08-24
+# Upstream: fetched 2026-09-02T21:36:16Z
+# Updated:  2026-09-02
 #
 # Format: one entry per line, tab-separated.
 #   <key>\t<field>=<rate>\t...   fields: input output cache_read cache_write reasoning
@@ -16,7 +16,7 @@
 # community one, and neither can be deleted by a bad refresh.
 #
 # Keys are `provider/model`. A bare `model` key is emitted only where every provider
-# publishing that name agrees on the rate: 1298 of 1478 names do, and the other 180 do not,
+# publishing that name agrees on the rate: 1346 of 1559 names do, and the other 213 do not,
 # so those resolve only when the usage row's provider matches. Guessing which provider's
 # rate to apply would be inventing a number, and unknown cost stays unknown.
 
@@ -43,6 +43,7 @@ anthropic/claude-4-opus-20250514	input=15.0	output=75.0	cache_read=1.5	cache_wri
 anthropic/claude-4-sonnet-20250514	input=3.0	output=15.0	cache_read=0.3	cache_write=3.75
 anthropic/claude-4-sonnet-20250514	tier=200000	input=6.0	output=22.5	cache_read=0.6	cache_write=7.5
 anthropic/claude-fable-5	input=10.0	output=50.0	cache_read=1.0	cache_write=12.5
+anthropic/claude-fable-5-1	input=10.0	output=50.0	cache_read=0.25	cache_write=12.5
 anthropic/claude-haiku-4-5	input=1.0	output=5.0	cache_read=0.1	cache_write=1.25
 anthropic/claude-haiku-4-5-20251001	input=1.0	output=5.0	cache_read=0.1	cache_write=1.25
 anthropic/claude-mythos-5	input=10.0	output=50.0	cache_read=1.0	cache_write=12.5
@@ -160,14 +161,14 @@ azure/gpt-5.5-pro	input=30.0	output=180.0	cache_read=3.0
 azure/gpt-5.5-pro	tier=272000	input=60.0	output=270.0	cache_read=6.0
 azure/gpt-5.5-pro-2026-04-23	input=30.0	output=180.0	cache_read=3.0
 azure/gpt-5.5-pro-2026-04-23	tier=272000	input=60.0	output=270.0	cache_read=6.0
-azure/gpt-5.6	input=5.0	output=30.0	cache_read=0.5
-azure/gpt-5.6	tier=272000	input=10.0	output=45.0	cache_read=1.0
-azure/gpt-5.6-luna	input=0.2	output=1.2	cache_read=0.02
-azure/gpt-5.6-luna	tier=272000	input=0.4	output=1.8	cache_read=0.04
-azure/gpt-5.6-sol	input=5.0	output=30.0	cache_read=0.5
-azure/gpt-5.6-sol	tier=272000	input=10.0	output=45.0	cache_read=1.0
-azure/gpt-5.6-terra	input=2.0	output=12.0	cache_read=0.2
-azure/gpt-5.6-terra	tier=272000	input=4.0	output=18.0	cache_read=0.4
+azure/gpt-5.6	input=5.0	output=30.0	cache_read=0.5	cache_write=6.25
+azure/gpt-5.6	tier=272000	input=10.0	output=45.0	cache_read=1.0	cache_write=12.5
+azure/gpt-5.6-luna	input=0.2	output=1.2	cache_read=0.02	cache_write=0.25
+azure/gpt-5.6-luna	tier=272000	input=0.4	output=1.8	cache_read=0.04	cache_write=0.5
+azure/gpt-5.6-sol	input=5.0	output=30.0	cache_read=0.5	cache_write=6.25
+azure/gpt-5.6-sol	tier=272000	input=10.0	output=45.0	cache_read=1.0	cache_write=12.5
+azure/gpt-5.6-terra	input=2.0	output=12.0	cache_read=0.2	cache_write=2.5
+azure/gpt-5.6-terra	tier=272000	input=4.0	output=18.0	cache_read=0.4	cache_write=5.0
 azure/gpt-audio-1.5-2026-02-23	input=2.5	output=10.0
 azure/gpt-audio-2025-08-28	input=2.5	output=10.0
 azure/gpt-audio-mini	input=0.6	output=2.4
@@ -190,6 +191,7 @@ azure/o3-pro-2025-06-10	input=20.0	output=80.0
 azure/o4-mini	input=1.1	output=4.4	cache_read=0.275
 azure/o4-mini-2025-04-16	input=1.1	output=4.4	cache_read=0.275
 azure_ai/claude-fable-5	input=10.0	output=50.0	cache_read=1.0	cache_write=12.5
+azure_ai/claude-fable-5-1	input=10.0	output=50.0	cache_read=0.25	cache_write=12.5
 azure_ai/claude-haiku-4-5	input=1.0	output=5.0	cache_read=0.1	cache_write=1.25
 azure_ai/claude-opus-4-1	input=15.0	output=75.0	cache_read=1.5	cache_write=18.75
 azure_ai/claude-opus-4-5	input=5.0	output=25.0	cache_read=0.5	cache_write=6.25
@@ -207,6 +209,7 @@ azure_ai/deepseek-v3.1	input=1.23	output=4.94
 azure_ai/deepseek-v3.2	input=0.58	output=1.68
 azure_ai/deepseek-v3.2-speciale	input=0.58	output=1.68
 azure_ai/deepseek-v4-flash	input=0.19	output=0.51
+azure_ai/deepseek-v4-flash-0731	input=0.19	output=0.51	cache_read=0.028
 azure_ai/deepseek-v4-pro	input=1.74	output=3.48
 azure_ai/fw-deepseek-v3.2	input=0.62	output=1.85	cache_read=0.31
 azure_ai/fw-deepseek-v4-pro	input=1.925	output=3.828	cache_read=0.165
@@ -389,6 +392,7 @@ bedrock_converse/amazon.nova-micro-v1:0	input=0.035	output=0.14
 bedrock_converse/amazon.nova-pro-v1:0	input=0.8	output=3.2
 bedrock_converse/anthropic.claude-3-7-sonnet-20250219-v1:0	input=3.0	output=15.0	cache_read=0.3	cache_write=3.75
 bedrock_converse/anthropic.claude-fable-5	input=10.0	output=50.0	cache_read=1.0	cache_write=12.5
+bedrock_converse/anthropic.claude-fable-5-1	input=10.0	output=50.0	cache_read=0.25	cache_write=12.5
 bedrock_converse/anthropic.claude-haiku-4-5-20251001-v1:0	input=1.0	output=5.0	cache_read=0.1	cache_write=1.25
 bedrock_converse/anthropic.claude-haiku-4-5@20251001	input=1.0	output=5.0	cache_read=0.1	cache_write=1.25
 bedrock_converse/anthropic.claude-opus-4-1-20250805-v1:0	input=15.0	output=75.0	cache_read=1.5	cache_write=18.75
@@ -429,6 +433,7 @@ bedrock_converse/eu.amazon.nova-lite-v1:0	input=0.078	output=0.312
 bedrock_converse/eu.amazon.nova-micro-v1:0	input=0.046	output=0.184
 bedrock_converse/eu.amazon.nova-pro-v1:0	input=1.05	output=4.2
 bedrock_converse/eu.anthropic.claude-fable-5	input=11.0	output=55.0	cache_read=1.1	cache_write=13.75
+bedrock_converse/eu.anthropic.claude-fable-5-1	input=11.0	output=55.0	cache_read=0.275	cache_write=13.75
 bedrock_converse/eu.anthropic.claude-haiku-4-5-20251001-v1:0	input=1.1	output=5.5	cache_read=0.11	cache_write=1.375
 bedrock_converse/eu.anthropic.claude-opus-4-1-20250805-v1:0	input=15.0	output=75.0	cache_read=1.5	cache_write=18.75
 bedrock_converse/eu.anthropic.claude-opus-4-20250514-v1:0	input=15.0	output=75.0	cache_read=1.5	cache_write=18.75
@@ -447,6 +452,7 @@ bedrock_converse/eu.deepseek.v3.2	input=0.74	output=2.22
 bedrock_converse/eu.mistral.pixtral-large-2502-v1:0	input=2.0	output=6.0
 bedrock_converse/global.amazon.nova-2-lite-v1:0	input=0.3	output=2.5	cache_read=0.075
 bedrock_converse/global.anthropic.claude-fable-5	input=10.0	output=50.0	cache_read=1.0	cache_write=12.5
+bedrock_converse/global.anthropic.claude-fable-5-1	input=10.0	output=50.0	cache_read=0.25	cache_write=12.5
 bedrock_converse/global.anthropic.claude-haiku-4-5-20251001-v1:0	input=1.0	output=5.0	cache_read=0.1	cache_write=1.25
 bedrock_converse/global.anthropic.claude-opus-4-5-20251101-v1:0	input=5.0	output=25.0	cache_read=0.5	cache_write=6.25
 bedrock_converse/global.anthropic.claude-opus-4-6-v1	input=5.0	output=25.0	cache_read=0.5	cache_write=6.25
@@ -461,8 +467,8 @@ bedrock_converse/global.anthropic.claude-sonnet-4-6	input=3.0	output=15.0	cache_
 bedrock_converse/global.anthropic.claude-sonnet-5	input=2.0	output=10.0	cache_read=0.2	cache_write=2.5
 bedrock_converse/global.openai.gpt-5.6-luna	input=0.2	output=1.2	cache_read=0.02	cache_write=0.25
 bedrock_converse/global.openai.gpt-5.6-luna	tier=272000	input=0.4	output=1.8	cache_read=0.04	cache_write=0.5
-bedrock_converse/global.openai.gpt-5.6-sol	input=5.0	output=30.0	cache_read=0.5	cache_write=6.25
-bedrock_converse/global.openai.gpt-5.6-sol	tier=272000	input=10.0	output=45.0	cache_read=1.0	cache_write=12.5
+bedrock_converse/global.openai.gpt-5.6-sol	input=4.0	output=20.0	cache_read=0.4	cache_write=5.0
+bedrock_converse/global.openai.gpt-5.6-sol	tier=272000	input=8.0	output=30.0	cache_read=0.8	cache_write=10.0
 bedrock_converse/global.openai.gpt-5.6-terra	input=2.0	output=12.0	cache_read=0.2	cache_write=2.5
 bedrock_converse/global.openai.gpt-5.6-terra	tier=272000	input=4.0	output=18.0	cache_read=0.4	cache_write=5.0
 bedrock_converse/global.xai.grok-4.6	input=2.0	output=6.0	cache_read=0.5
@@ -518,6 +524,7 @@ bedrock_converse/us.amazon.nova-premier-v1:0	input=2.5	output=12.5
 bedrock_converse/us.amazon.nova-pro-v1:0	input=0.8	output=3.2
 bedrock_converse/us.anthropic.claude-3-7-sonnet-20250219-v1:0	input=3.0	output=15.0	cache_read=0.3	cache_write=3.75
 bedrock_converse/us.anthropic.claude-fable-5	input=11.0	output=55.0	cache_read=1.1	cache_write=13.75
+bedrock_converse/us.anthropic.claude-fable-5-1	input=11.0	output=55.0	cache_read=0.275	cache_write=13.75
 bedrock_converse/us.anthropic.claude-haiku-4-5-20251001-v1:0	input=1.1	output=5.5	cache_read=0.11	cache_write=1.375
 bedrock_converse/us.anthropic.claude-opus-4-1-20250805-v1:0	input=15.0	output=75.0	cache_read=1.5	cache_write=18.75
 bedrock_converse/us.anthropic.claude-opus-4-20250514-v1:0	input=15.0	output=75.0	cache_read=1.5	cache_write=18.75
@@ -540,8 +547,8 @@ bedrock_converse/us.meta.llama4-scout-17b-instruct-v1:0	input=0.17	output=0.66
 bedrock_converse/us.mistral.pixtral-large-2502-v1:0	input=2.0	output=6.0
 bedrock_converse/us.openai.gpt-5.6-luna	input=0.22	output=1.32	cache_read=0.022	cache_write=0.275
 bedrock_converse/us.openai.gpt-5.6-luna	tier=272000	input=0.44	output=1.98	cache_read=0.044	cache_write=0.55
-bedrock_converse/us.openai.gpt-5.6-sol	input=5.5	output=33.0	cache_read=0.55	cache_write=6.875
-bedrock_converse/us.openai.gpt-5.6-sol	tier=272000	input=11.0	output=49.5	cache_read=1.1	cache_write=13.75
+bedrock_converse/us.openai.gpt-5.6-sol	input=4.4	output=22.0	cache_read=0.44	cache_write=5.5
+bedrock_converse/us.openai.gpt-5.6-sol	tier=272000	input=8.8	output=33.0	cache_read=0.88	cache_write=11.0
 bedrock_converse/us.openai.gpt-5.6-terra	input=2.2	output=13.2	cache_read=0.22	cache_write=2.75
 bedrock_converse/us.openai.gpt-5.6-terra	tier=272000	input=4.4	output=19.8	cache_read=0.44	cache_write=5.5
 bedrock_converse/us.writer.palmyra-x4-v1:0	input=2.5	output=10.0
@@ -556,7 +563,10 @@ bedrock_mantle/google.gemma-4-26b-a4b	input=0.13	output=0.4
 bedrock_mantle/google.gemma-4-31b	input=0.14	output=0.4
 bedrock_mantle/google.gemma-4-e2b	input=0.04	output=0.08
 bedrock_mantle/openai.gpt-5.4	input=2.75	output=16.5	cache_read=0.275
+bedrock_mantle/openai.gpt-5.4	tier=272000	input=5.5	output=24.75	cache_read=0.55
 bedrock_mantle/openai.gpt-5.5	input=5.5	output=33.0	cache_read=0.55
+bedrock_mantle/openai.gpt-5.5	tier=272000	input=11.0	output=49.5	cache_read=1.1
+bedrock_mantle/openai.gpt-5.6-cyber	input=13.75	output=82.5	cache_read=1.375	cache_write=17.1875
 bedrock_mantle/openai.gpt-5.6-luna	input=0.22	output=1.32	cache_read=0.022	cache_write=0.275
 bedrock_mantle/openai.gpt-5.6-luna	tier=272000	input=0.44	output=1.98	cache_read=0.044	cache_write=0.55
 bedrock_mantle/openai.gpt-5.6-sol	input=5.5	output=33.0	cache_read=0.55	cache_write=6.875
@@ -569,6 +579,7 @@ bedrock_mantle/openai.gpt-oss-safeguard-120b	input=0.15	output=0.6
 bedrock_mantle/openai.gpt-oss-safeguard-20b	input=0.075	output=0.3
 bedrock_mantle/xai.grok-4.3	input=1.25	output=2.5	cache_read=0.2
 bedrock_mantle/xai.grok-4.6	input=2.2	output=6.6	cache_read=0.55
+cerebras/gemma-4-31b	input=0.99	output=1.49
 cerebras/gpt-oss-120b	input=0.35	output=0.75
 cerebras/llama-3.3-70b	input=0.85	output=1.2
 cerebras/llama3.1-70b	input=0.6	output=0.6
@@ -654,113 +665,189 @@ dashscope/qwen3-vl-32b-thinking	input=0.16	output=2.87
 dashscope/qwen3.7-max	input=2.5	output=7.5	cache_read=0.5
 dashscope/qwen3.8-max	input=2.0	output=6.0	cache_read=0.25
 dashscope/qwq-plus	input=0.8	output=2.4
-databricks/databricks-claude-3-7-sonnet	input=2.99999	output=15.00002
-databricks/databricks-claude-haiku-4-5	input=1.00002	output=5.00003
-databricks/databricks-claude-opus-4	input=15.00002	output=75.00003
-databricks/databricks-claude-opus-4-1	input=15.00002	output=75.00003
-databricks/databricks-claude-opus-4-5	input=5.00003	output=25.00001
-databricks/databricks-claude-opus-4-6	input=5.00003	output=25.00001
-databricks/databricks-claude-sonnet-4	input=2.99999	output=15.00002
-databricks/databricks-claude-sonnet-4-1	input=2.99999	output=15.00002
-databricks/databricks-claude-sonnet-4-5	input=2.99999	output=15.00002
-databricks/databricks-claude-sonnet-4-6	input=2.99999	output=15.00002
-databricks/databricks-gemini-2-5-flash	input=0.30002	output=2.49998
-databricks/databricks-gemini-2-5-pro	input=1.24999	output=9.99999
-databricks/databricks-gemini-3-1-flash-lite	input=0.31248	output=1.87502
-databricks/databricks-gemini-3-1-pro	input=2.49998	output=15.00002
-databricks/databricks-gemini-3-flash	input=0.62503	output=3.74997
-databricks/databricks-gemini-3-pro	input=2.49998	output=15.00002
-databricks/databricks-gemma-3-12b	input=0.15001	output=0.50001
-databricks/databricks-gpt-5	input=1.24999	output=9.99999
-databricks/databricks-gpt-5-1	input=1.24999	output=9.99999
-databricks/databricks-gpt-5-1-codex-max	input=1.24999	output=9.99999
-databricks/databricks-gpt-5-1-codex-mini	input=0.24997	output=1.99997
-databricks/databricks-gpt-5-2	input=1.75	output=14.0
-databricks/databricks-gpt-5-2-codex	input=1.75	output=14.0
-databricks/databricks-gpt-5-3-codex	input=1.75	output=14.0
-databricks/databricks-gpt-5-4	input=2.49998	output=15.00002
-databricks/databricks-gpt-5-4-mini	input=0.74998	output=4.50002
-databricks/databricks-gpt-5-4-nano	input=0.19999	output=1.24999
-databricks/databricks-gpt-5-mini	input=0.24997	output=1.99997
-databricks/databricks-gpt-5-nano	input=0.04998	output=0.39998
-databricks/databricks-gpt-oss-120b	input=0.15001	output=0.59997
-databricks/databricks-gpt-oss-20b	input=0.07	output=0.30002
-databricks/databricks-llama-2-70b-chat	input=0.50001	output=1.50003
-databricks/databricks-llama-4-maverick	input=0.50001	output=1.50003
-databricks/databricks-meta-llama-3-1-405b-instruct	input=5.00003	output=15.00002
-databricks/databricks-meta-llama-3-1-8b-instruct	input=0.15001	output=0.45003
-databricks/databricks-meta-llama-3-3-70b-instruct	input=0.50001	output=1.50003
-databricks/databricks-meta-llama-3-70b-instruct	input=1.00002	output=2.99999
-databricks/databricks-mixtral-8x7b-instruct	input=0.50001	output=1.00002
-databricks/databricks-mpt-30b-instruct	input=1.00002	output=1.00002
-databricks/databricks-mpt-7b-instruct	input=0.50001	output=0.0
+databricks/databricks-claude-3-7-sonnet	input=2.99999	output=15.00002	cache_read=0.30002	cache_write=3.74997
+databricks/databricks-claude-fable-5	input=10.00006	output=50.00002	cache_read=1.00002	cache_write=12.50004
+databricks/databricks-claude-haiku-4-5	input=1.00002	output=5.00003	cache_read=0.10003	cache_write=1.24999
+databricks/databricks-claude-opus-4	input=15.00002	output=75.00003	cache_read=1.50003	cache_write=18.74999
+databricks/databricks-claude-opus-4-1	input=15.00002	output=75.00003	cache_read=1.50003	cache_write=18.74999
+databricks/databricks-claude-opus-4-5	input=5.00003	output=25.00001	cache_read=0.50001	cache_write=6.25002
+databricks/databricks-claude-opus-4-6	input=5.00003	output=25.00001	cache_read=0.50001	cache_write=6.25002
+databricks/databricks-claude-opus-4-7	input=5.00003	output=25.00001	cache_read=0.50001	cache_write=6.25002
+databricks/databricks-claude-opus-4-8	input=5.00003	output=25.00001	cache_read=0.50001	cache_write=6.25002
+databricks/databricks-claude-opus-5	input=5.00003	output=25.00001	cache_read=0.50001	cache_write=6.25002
+databricks/databricks-claude-sonnet-4	input=2.99999	output=15.00002	cache_read=0.30002	cache_write=3.74997
+databricks/databricks-claude-sonnet-4-1	input=2.99999	output=15.00002	cache_read=0.30002	cache_write=3.74997
+databricks/databricks-claude-sonnet-4-5	input=2.99999	output=15.00002	cache_read=0.30002	cache_write=3.74997
+databricks/databricks-claude-sonnet-4-6	input=2.99999	output=15.00002	cache_read=0.30002	cache_write=3.74997
+databricks/databricks-claude-sonnet-5	input=2.99999	output=15.00002	cache_read=0.30002	cache_write=3.74997
+databricks/databricks-deepseek-v4-flash-0731	input=0.14	output=0.28	cache_read=0.028	cache_write=0.14
+databricks/databricks-deepseek-v4-pro-0813	input=1.31999	output=3.95997	cache_read=0.13202	cache_write=1.31999
+databricks/databricks-gemini-2-5-flash	input=0.30002	output=2.49998	cache_read=0.030002	cache_write=0.30002
+databricks/databricks-gemini-2-5-pro	input=1.24999	output=9.99999	cache_read=0.124999	cache_write=1.24999
+databricks/databricks-gemini-3-1-flash-lite	input=0.31248	output=1.87502	cache_read=0.03122	cache_write=0.31248
+databricks/databricks-gemini-3-1-pro	input=2.49998	output=15.00002	cache_read=0.24997	cache_write=2.49998
+databricks/databricks-gemini-3-flash	input=0.62503	output=3.74997	cache_read=0.06251	cache_write=0.62503
+databricks/databricks-gemini-3-pro	input=2.49998	output=15.00002	cache_read=0.24997	cache_write=2.49998
+databricks/databricks-gemma-3-12b	input=0.15001	output=0.50001	cache_read=0.15001	cache_write=0.15001
+databricks/databricks-glm-5-2	input=1.4	output=4.39999	cache_read=0.25998	cache_write=1.4
+databricks/databricks-gpt-5	input=1.24999	output=9.99999	cache_read=0.12502	cache_write=1.24999
+databricks/databricks-gpt-5-1	input=1.24999	output=9.99999	cache_read=0.12502	cache_write=1.24999
+databricks/databricks-gpt-5-1-codex-max	input=1.24999	output=9.99999	cache_read=0.12502	cache_write=1.24999
+databricks/databricks-gpt-5-1-codex-mini	input=0.24997	output=1.99997	cache_read=0.02499	cache_write=0.24997
+databricks/databricks-gpt-5-2	input=1.75	output=14.0	cache_read=0.175	cache_write=1.75
+databricks/databricks-gpt-5-2-codex	input=1.75	output=14.0	cache_read=0.175	cache_write=1.75
+databricks/databricks-gpt-5-3-codex	input=1.75	output=14.0	cache_read=0.175	cache_write=1.75
+databricks/databricks-gpt-5-4	input=2.49998	output=15.00002	cache_read=0.24997	cache_write=2.49998
+databricks/databricks-gpt-5-4-mini	input=0.74998	output=4.50002	cache_read=0.07497	cache_write=0.74998
+databricks/databricks-gpt-5-4-nano	input=0.19999	output=1.24999	cache_read=0.02002	cache_write=0.19999
+databricks/databricks-gpt-5-mini	input=0.24997	output=1.99997	cache_read=0.02499	cache_write=0.24997
+databricks/databricks-gpt-5-nano	input=0.04998	output=0.39998	cache_read=0.00497	cache_write=0.04998
+databricks/databricks-gpt-oss-120b	input=0.15001	output=0.59997	cache_read=0.15001	cache_write=0.15001
+databricks/databricks-gpt-oss-20b	input=0.07	output=0.30002	cache_read=0.07	cache_write=0.07
+databricks/databricks-kimi-k3	input=2.99999	output=15.00002	cache_read=0.30002	cache_write=2.99999
+databricks/databricks-llama-2-70b-chat	input=0.50001	output=1.50003	cache_read=0.50001	cache_write=0.50001
+databricks/databricks-llama-4-maverick	input=0.50001	output=1.50003	cache_read=0.50001	cache_write=0.50001
+databricks/databricks-meta-llama-3-1-405b-instruct	input=5.00003	output=15.00002	cache_read=5.00003	cache_write=5.00003
+databricks/databricks-meta-llama-3-1-8b-instruct	input=0.15001	output=0.45003	cache_read=0.15001	cache_write=0.15001
+databricks/databricks-meta-llama-3-3-70b-instruct	input=0.50001	output=1.50003	cache_read=0.50001	cache_write=0.50001
+databricks/databricks-meta-llama-3-70b-instruct	input=1.00002	output=2.99999	cache_read=1.00002	cache_write=1.00002
+databricks/databricks-mixtral-8x7b-instruct	input=0.50001	output=1.00002	cache_read=0.50001	cache_write=0.50001
+databricks/databricks-mpt-30b-instruct	input=1.00002	output=1.00002	cache_read=1.00002	cache_write=1.00002
+databricks/databricks-mpt-7b-instruct	input=0.50001	output=0.0	cache_read=0.50001	cache_write=0.50001
 deepinfra/claude-3-7-sonnet-latest	input=3.3	output=16.5	cache_read=0.33
 deepinfra/claude-4-opus	input=16.5	output=82.5
 deepinfra/claude-4-sonnet	input=3.3	output=16.5
+deepinfra/claude-fable-5	input=10.0	output=50.0
+deepinfra/claude-haiku-4-5	input=1.0	output=5.0
+deepinfra/claude-opus-4-7	input=5.0	output=25.0
+deepinfra/claude-opus-4-8	input=5.0	output=25.0
+deepinfra/claude-opus-5	input=5.0	output=25.0
+deepinfra/claude-sonnet-4-6	input=3.0	output=15.0
+deepinfra/claude-sonnet-5	input=2.0	output=10.0
 deepinfra/deepseek-r1	input=0.7	output=2.4
 deepinfra/deepseek-r1-0528	input=0.5	output=2.15	cache_read=0.4
 deepinfra/deepseek-r1-0528-turbo	input=1.0	output=3.0
 deepinfra/deepseek-r1-distill-llama-70b	input=0.2	output=0.6
 deepinfra/deepseek-r1-distill-qwen-32b	input=0.27	output=0.27
 deepinfra/deepseek-r1-turbo	input=1.0	output=3.0
-deepinfra/deepseek-v3	input=0.38	output=0.89
-deepinfra/deepseek-v3-0324	input=0.25	output=0.88
-deepinfra/deepseek-v3.1	input=0.27	output=1.0	cache_read=0.216
+deepinfra/deepseek-v3	input=0.32	output=0.89
+deepinfra/deepseek-v3-0324	input=0.24	output=0.9	cache_read=0.135
+deepinfra/deepseek-v3.1	input=0.25	output=0.95	cache_read=0.216
 deepinfra/deepseek-v3.1-terminus	input=0.27	output=1.0	cache_read=0.216
+deepinfra/deepseek-v3.2	input=0.26	output=0.38	cache_read=0.13
+deepinfra/deepseek-v4-flash	input=0.09	output=0.18	cache_read=0.018
+deepinfra/deepseek-v4-flash-0731	input=0.08	output=0.18	cache_read=0.016
+deepinfra/deepseek-v4-pro	input=1.3	output=2.6	cache_read=0.1
+deepinfra/deepseek-v4-pro-0813	input=1.3	output=2.6	cache_read=0.1
 deepinfra/gemini-2.0-flash-001	input=0.1	output=0.4
 deepinfra/gemini-2.5-flash	input=0.3	output=2.5
 deepinfra/gemini-2.5-pro	input=1.25	output=10.0
-deepinfra/gemma-3-12b-it	input=0.05	output=0.1
-deepinfra/gemma-3-27b-it	input=0.09	output=0.16
-deepinfra/gemma-3-4b-it	input=0.04	output=0.08
+deepinfra/gemini-3.1-flash-lite	input=0.25	output=1.5
+deepinfra/gemini-3.1-pro	input=2.0	output=12.0
+deepinfra/gemini-3.5-flash	input=1.5	output=9.0
+deepinfra/gemini-3.7-flash	input=0.75	output=3.75
+deepinfra/gemma-3-12b-it	input=0.05	output=0.15
+deepinfra/gemma-3-27b-it	input=0.08	output=0.16
+deepinfra/gemma-3-4b-it	input=0.05	output=0.1
+deepinfra/gemma-4-26b-a4b-it	input=0.07	output=0.34
+deepinfra/gemma-4-31b-it	input=0.13	output=0.38
+deepinfra/gemma-4-31b-it-turbo	input=0.09	output=0.34	cache_read=0.05
+deepinfra/gemma-4-31b-it-ultra	input=0.27	output=0.76
+deepinfra/gemma-4-e4b-it	input=0.02	output=0.1
 deepinfra/glm-4.5	input=0.4	output=1.6
-deepinfra/gpt-oss-120b	input=0.05	output=0.45
-deepinfra/gpt-oss-20b	input=0.04	output=0.15
+deepinfra/glm-4.6	input=0.5	output=2.0	cache_read=0.1
+deepinfra/glm-4.7	input=0.4	output=1.75	cache_read=0.08
+deepinfra/glm-4.7-flash	input=0.06	output=0.4	cache_read=0.01
+deepinfra/glm-5	input=0.6	output=2.08	cache_read=0.12
+deepinfra/glm-5.1	input=1.05	output=3.5	cache_read=0.205
+deepinfra/glm-5.2	input=0.75	output=2.4	cache_read=0.14
+deepinfra/gpt-oss-120b	input=0.037	output=0.17
+deepinfra/gpt-oss-120b-turbo	input=0.15	output=0.6
+deepinfra/gpt-oss-120b-ultra	input=0.2	output=0.95
+deepinfra/gpt-oss-20b	input=0.03	output=0.14
 deepinfra/hermes-3-llama-3.1-405b	input=1.0	output=1.0
-deepinfra/hermes-3-llama-3.1-70b	input=0.3	output=0.3
+deepinfra/hermes-3-llama-3.1-70b	input=0.7	output=0.7
+deepinfra/hy3	input=0.14	output=0.58	cache_read=0.035
+deepinfra/inkling	input=0.95	output=4.05	cache_read=0.16
+deepinfra/inkling-small	input=0.45	output=1.2	cache_read=0.1
 deepinfra/kimi-k2-instruct	input=0.5	output=2.0
 deepinfra/kimi-k2-instruct-0905	input=0.5	output=2.0	cache_read=0.4
+deepinfra/kimi-k2.5	input=0.45	output=2.25	cache_read=0.07
+deepinfra/kimi-k2.6	input=0.75	output=3.5	cache_read=0.15
+deepinfra/kimi-k2.7-code	input=0.68	output=3.4	cache_read=0.136
+deepinfra/kimi-k3	input=2.85	output=14.25	cache_read=0.285
 deepinfra/l3-8b-lunaris-v1-turbo	input=0.04	output=0.05
-deepinfra/l3.1-70b-euryale-v2.2	input=0.65	output=0.75
+deepinfra/l3.1-70b-euryale-v2.2	input=0.85	output=0.85
 deepinfra/l3.3-70b-euryale-v2.3	input=0.65	output=0.75
+deepinfra/ling-3.0-flash	input=0.06	output=0.18	cache_read=0.012
 deepinfra/llama-3.1-nemotron-70b-instruct	input=0.6	output=0.6
 deepinfra/llama-3.2-11b-vision-instruct	input=0.049	output=0.049
 deepinfra/llama-3.2-3b-instruct	input=0.02	output=0.02
 deepinfra/llama-3.3-70b-instruct	input=0.23	output=0.4
-deepinfra/llama-3.3-70b-instruct-turbo	input=0.13	output=0.39
+deepinfra/llama-3.3-70b-instruct-turbo	input=0.1	output=0.32
 deepinfra/llama-3.3-nemotron-super-49b-v1.5	input=0.1	output=0.4
-deepinfra/llama-4-maverick-17b-128e-instruct-fp8	input=0.15	output=0.6
-deepinfra/llama-4-scout-17b-16e-instruct	input=0.08	output=0.3
+deepinfra/llama-4-maverick-17b-128e-instruct-fp8	input=0.2	output=0.8
+deepinfra/llama-4-scout-17b-16e-instruct	input=0.1	output=0.3
 deepinfra/llama-guard-3-8b	input=0.055	output=0.055
 deepinfra/llama-guard-4-12b	input=0.18	output=0.18
 deepinfra/meta-llama-3-8b-instruct	input=0.03	output=0.06
 deepinfra/meta-llama-3.1-70b-instruct	input=0.4	output=0.4
-deepinfra/meta-llama-3.1-70b-instruct-turbo	input=0.1	output=0.28
+deepinfra/meta-llama-3.1-70b-instruct-turbo	input=0.4	output=0.4
 deepinfra/meta-llama-3.1-8b-instruct	input=0.03	output=0.05
-deepinfra/meta-llama-3.1-8b-instruct-turbo	input=0.02	output=0.03
-deepinfra/mistral-nemo-instruct-2407	input=0.02	output=0.04
+deepinfra/meta-llama-3.1-8b-instruct-turbo	input=0.02	output=0.04
+deepinfra/mimo-v2.5	input=0.4	output=2.0	cache_read=0.08
+deepinfra/mimo-v2.5-pro	input=1.0	output=3.0	cache_read=0.2
+deepinfra/minimax-m2.7	input=0.25	output=1.0	cache_read=0.05
+deepinfra/minimax-m2.7-turbo	input=0.38	output=1.7	cache_read=0.07
+deepinfra/minimax-m3	input=0.28	output=1.1	cache_read=0.056
+deepinfra/mistral-nemo-instruct-2407	input=0.019	output=0.03
 deepinfra/mistral-small-24b-instruct-2501	input=0.05	output=0.08
 deepinfra/mistral-small-3.2-24b-instruct-2506	input=0.075	output=0.2
 deepinfra/mixtral-8x7b-instruct-v0.1	input=0.4	output=0.4
-deepinfra/mythomax-l2-13b	input=0.08	output=0.09
-deepinfra/nvidia-nemotron-3.5-lightning	input=0.05	output=0.2
+deepinfra/muse-glimmer-30b	input=0.3	output=1.2	cache_read=0.04
+deepinfra/mythomax-l2-13b	input=0.4	output=0.4
+deepinfra/nemotron-3-nano-30b-a3b	input=0.05	output=0.2	cache_read=0.025
+deepinfra/nemotron-content-safety-3.5	input=0.2	output=0.2
+deepinfra/nvidia-nemotron-3-super-120b-a12b	input=0.085	output=0.4
+deepinfra/nvidia-nemotron-3-ultra-550b-a55b	input=0.5	output=2.2	cache_read=0.1
+deepinfra/nvidia-nemotron-3.5-lightning	input=0.08	output=0.2	cache_read=0.04
 deepinfra/nvidia-nemotron-nano-9b-v2	input=0.04	output=0.16
 deepinfra/olmocr-7b-0725-fp8	input=0.27	output=1.5
 deepinfra/phi-4	input=0.07	output=0.14
-deepinfra/qwen2.5-72b-instruct	input=0.12	output=0.39
+deepinfra/qwen2.5-72b-instruct	input=0.36	output=0.4
 deepinfra/qwen2.5-7b-instruct	input=0.04	output=0.1
 deepinfra/qwen2.5-vl-32b-instruct	input=0.2	output=0.6
-deepinfra/qwen3-14b	input=0.06	output=0.24
+deepinfra/qwen3-14b	input=0.12	output=0.24
 deepinfra/qwen3-235b-a22b	input=0.18	output=0.54
-deepinfra/qwen3-235b-a22b-instruct-2507	input=0.09	output=0.6
+deepinfra/qwen3-235b-a22b-instruct-2507	input=0.09	output=0.55
 deepinfra/qwen3-235b-a22b-thinking-2507	input=0.3	output=2.9
-deepinfra/qwen3-30b-a3b	input=0.08	output=0.29
-deepinfra/qwen3-32b	input=0.1	output=0.28
+deepinfra/qwen3-30b-a3b	input=0.12	output=0.5
+deepinfra/qwen3-32b	input=0.08	output=0.28
 deepinfra/qwen3-coder-480b-a35b-instruct	input=0.4	output=1.6
-deepinfra/qwen3-coder-480b-a35b-instruct-turbo	input=0.29	output=1.2
-deepinfra/qwen3-next-80b-a3b-instruct	input=0.14	output=1.4
+deepinfra/qwen3-coder-480b-a35b-instruct-turbo	input=0.3	output=1.0	cache_read=0.1
+deepinfra/qwen3-max	input=1.2	output=6.0	cache_read=0.24
+deepinfra/qwen3-max-thinking	input=1.2	output=6.0	cache_read=0.24
+deepinfra/qwen3-next-80b-a3b-instruct	input=0.09	output=1.1
 deepinfra/qwen3-next-80b-a3b-thinking	input=0.14	output=1.4
+deepinfra/qwen3-vl-235b-a22b-instruct	input=0.2	output=0.88	cache_read=0.11
+deepinfra/qwen3-vl-30b-a3b-instruct	input=0.15	output=0.6
+deepinfra/qwen3.5-122b-a10b	input=0.29	output=2.4
+deepinfra/qwen3.5-27b	input=0.26	output=2.6
+deepinfra/qwen3.5-35b-a3b	input=0.14	output=1.0	cache_read=0.05
+deepinfra/qwen3.5-397b-a17b	input=0.45	output=3.0	cache_read=0.22
+deepinfra/qwen3.5-9b	input=0.1	output=0.15
+deepinfra/qwen3.6-27b	input=0.32	output=3.2
+deepinfra/qwen3.6-35b-a3b	input=0.1	output=0.95
+deepinfra/qwen3.7-max	input=2.5	output=7.5	cache_read=0.5
+deepinfra/qwen3.8-2.4t-a95b	input=2.0	output=6.0	cache_read=0.2
+deepinfra/qwen3.8-27b	input=0.4	output=3.0	cache_read=0.04
+deepinfra/qwen3.8-max	input=1.65	output=4.951	cache_read=0.206
 deepinfra/qwq-32b	input=0.15	output=0.4
+deepinfra/seed-1.8	input=0.25	output=2.0	cache_read=0.05
+deepinfra/seed-2.0-code	input=0.5	output=3.0	cache_read=0.1
+deepinfra/seed-2.0-mini	input=0.1	output=0.4	cache_read=0.02
+deepinfra/seed-2.0-pro	input=0.5	output=3.0	cache_read=0.1
+deepinfra/step-3.7-flash	input=0.2	output=1.15	cache_read=0.04
 deepinfra/wizardlm-2-8x22b	input=0.48	output=0.48
 deepseek/deepseek-chat	input=0.28	output=0.42	cache_read=0.028
 deepseek/deepseek-coder	input=0.14	output=0.28
@@ -769,6 +856,7 @@ deepseek/deepseek-reasoner	input=0.28	output=0.42	cache_read=0.028
 deepseek/deepseek-v3	input=0.27	output=1.1	cache_read=0.07	cache_write=0.0
 deepseek/deepseek-v3.2	input=0.28	output=0.4
 deepseek/deepseek-v4-flash	input=0.44	output=1.32	cache_read=0.014	cache_write=0.0
+deepseek/deepseek-v4-flash-vision-exp	input=0.44	output=1.32	cache_read=0.014	cache_write=0.0
 deepseek/deepseek-v4-pro	input=1.32	output=3.96	cache_read=0.044	cache_write=0.0
 fireworks_ai/chronos-hermes-13b-v2	input=0.2	output=0.2
 fireworks_ai/code-llama-13b	input=0.2	output=0.2
@@ -820,8 +908,9 @@ fireworks_ai/deepseek-v3p1	input=0.56	output=1.68
 fireworks_ai/deepseek-v3p1-terminus	input=0.56	output=1.68
 fireworks_ai/deepseek-v3p2	input=0.56	output=1.68
 fireworks_ai/deepseek-v4-flash	input=0.14	output=0.28	cache_read=0.028
-fireworks_ai/deepseek-v4-flash-0731	input=0.14	output=0.28	cache_read=0.028
+fireworks_ai/deepseek-v4-flash-0731	input=0.22	output=0.66	cache_read=0.007
 fireworks_ai/deepseek-v4-pro	input=1.74	output=3.48	cache_read=0.145
+fireworks_ai/deepseek-v4-pro-0813	input=1.32	output=3.96	cache_read=0.044
 fireworks_ai/devstral-small-2505	input=0.9	output=0.9
 fireworks_ai/dobby-mini-unhinged-plus-llama-3-1-8b	input=0.2	output=0.2
 fireworks_ai/dobby-unhinged-llama-3-3-70b-new	input=0.9	output=0.9
@@ -852,6 +941,7 @@ fireworks_ai/glm-5p1-fast	input=2.8	output=8.8	cache_read=0.52
 fireworks_ai/glm-5p2	input=1.4	output=4.4	cache_read=0.14
 fireworks_ai/glm-5p2-fast	input=2.1	output=6.6	cache_read=0.21
 fireworks_ai/glm-5p2-fast-us	input=2.1	output=6.6	cache_read=0.21
+fireworks_ai/glm-5p3	input=1.4	output=4.4	cache_read=0.26
 fireworks_ai/gpt-oss-120b	input=0.15	output=0.6	cache_read=0.015
 fireworks_ai/gpt-oss-20b	input=0.07	output=0.3	cache_read=0.035
 fireworks_ai/gpt-oss-safeguard-120b	input=1.2	output=1.2
@@ -1033,6 +1123,8 @@ fireworks_ai/yi-34b-chat	input=0.9	output=0.9
 fireworks_ai/yi-6b	input=0.2	output=0.2
 fireworks_ai/yi-large	input=3.0	output=3.0
 fireworks_ai/zephyr-7b-beta	input=0.2	output=0.2
+friendliai/glm-5.3	input=1.26	output=3.96	cache_read=0.234
+friendliai/glm-5.3-flash	input=0.15	output=0.5	cache_read=0.03
 friendliai/meta-llama-3.1-70b-instruct	input=0.6	output=0.6
 friendliai/meta-llama-3.1-8b-instruct	input=0.1	output=0.1
 gemini/gemini-2.0-flash	input=0.1	output=0.4	cache_read=0.025
@@ -1043,16 +1135,15 @@ gemini/gemini-2.5-computer-use-preview-10-2025	input=1.25	output=10.0
 gemini/gemini-2.5-computer-use-preview-10-2025	tier=200000	input=2.5	output=15.0
 gemini/gemini-2.5-flash	input=0.3	output=2.5	cache_read=0.03	reasoning=2.5
 gemini/gemini-2.5-flash-lite	input=0.1	output=0.4	cache_read=0.01	reasoning=0.4
-gemini/gemini-2.5-flash-lite-preview-06-17	input=0.1	output=0.4	cache_read=0.025	reasoning=0.4
+gemini/gemini-2.5-flash-lite-preview-06-17	input=0.1	output=0.4	cache_read=0.01	reasoning=0.4
 gemini/gemini-2.5-flash-lite-preview-09-2025	input=0.1	output=0.4	cache_read=0.01	reasoning=0.4
-gemini/gemini-2.5-flash-native-audio-latest	input=0.3	output=2.5
-gemini/gemini-2.5-flash-native-audio-preview-09-2025	input=0.3	output=2.5
-gemini/gemini-2.5-flash-native-audio-preview-12-2025	input=0.3	output=2.5
-gemini/gemini-2.5-flash-preview-09-2025	input=0.3	output=2.5	cache_read=0.075	reasoning=2.5
+gemini/gemini-2.5-flash-native-audio-latest	input=0.5	output=2.0
+gemini/gemini-2.5-flash-native-audio-preview-09-2025	input=0.5	output=2.0
+gemini/gemini-2.5-flash-native-audio-preview-12-2025	input=0.5	output=2.0
+gemini/gemini-2.5-flash-preview-09-2025	input=0.3	output=2.5	cache_read=0.03	reasoning=2.5
 gemini/gemini-2.5-pro	input=1.25	output=10.0	cache_read=0.125
 gemini/gemini-2.5-pro	tier=200000	input=2.5	output=15.0	cache_read=0.25
-gemini/gemini-2.5-pro-preview-tts	input=1.25	output=10.0	cache_read=0.125
-gemini/gemini-2.5-pro-preview-tts	tier=200000	input=2.5	output=15.0	cache_read=0.25
+gemini/gemini-2.5-pro-preview-tts	input=1.0	output=20.0	cache_read=0.125
 gemini/gemini-3-flash-preview	input=0.5	output=3.0	cache_read=0.05	reasoning=3.0
 gemini/gemini-3-pro-preview	input=2.0	output=12.0	cache_read=0.2
 gemini/gemini-3-pro-preview	tier=200000	input=4.0	output=18.0	cache_read=0.4
@@ -1072,10 +1163,11 @@ gemini/gemini-exp-1114	input=0.0	output=0.0
 gemini/gemini-exp-1114	tier=128000	input=0.0	output=0.0
 gemini/gemini-exp-1206	input=0.0	output=0.0
 gemini/gemini-exp-1206	tier=128000	input=0.0	output=0.0
-gemini/gemini-flash-latest	input=0.3	output=2.5	cache_read=0.075	reasoning=2.5
-gemini/gemini-flash-lite-latest	input=0.1	output=0.4	cache_read=0.025	reasoning=0.4
+gemini/gemini-flash-latest	input=0.3	output=2.5	cache_read=0.03	reasoning=2.5
+gemini/gemini-flash-lite-latest	input=0.1	output=0.4	cache_read=0.01	reasoning=0.4
 gemini/gemini-gemma-2-27b-it	input=0.35	output=1.05
 gemini/gemini-gemma-2-9b-it	input=0.35	output=1.05
+gemini/gemini-omni-1.1-flash	input=1.5	output=9.0	reasoning=9.0
 gemini/gemini-omni-flash-preview	input=1.5	output=9.0	reasoning=9.0
 gemini/gemini-pro-latest	input=1.25	output=10.0	cache_read=0.125
 gemini/gemini-pro-latest	tier=200000	input=2.5	output=15.0	cache_read=0.25
@@ -1085,11 +1177,13 @@ gemini/gemini-robotics-er-2-preview	input=2.0	output=10.0	cache_read=0.2	reasoni
 gemini/gemini-robotics-er-2-streaming-preview	input=2.0	output=10.0
 gemini/gemma-3-27b-it	input=0.0	output=0.0
 gemini/gemma-3-27b-it	tier=128000	input=0.0	output=0.0
+gemini/gemma-4-26b-a4b-it	input=0.0	output=0.0
+gemini/gemma-4-31b-it	input=0.0	output=0.0
 gemini/learnlm-1.5-pro-experimental	input=0.0	output=0.0
 gemini/learnlm-1.5-pro-experimental	tier=128000	input=0.0	output=0.0
 gemini/lyria-3-clip-preview	input=0.0	output=0.0
 gemini/lyria-3-pro-preview	input=0.0	output=0.0
-gigachat/gigachat-2-lite	input=0.0	output=0.0
+gigachat/gigachat-2	input=0.0	output=0.0
 gigachat/gigachat-2-max	input=0.0	output=0.0
 gigachat/gigachat-2-pro	input=0.0	output=0.0
 github_copilot/mai-code-1-flash	input=0.75	output=4.5	cache_read=0.075
@@ -1135,6 +1229,7 @@ groq/llama-prompt-guard-2-22m	input=0.03	output=0.03
 groq/llama-prompt-guard-2-86m	input=0.04	output=0.04
 groq/qwen3-32b	input=0.29	output=0.59
 groq/qwen3.6-27b	input=0.6	output=3.0
+groq/qwen3.8-27b	input=0.8	output=4.0
 hyperbolic/deepseek-r1	input=0.4	output=0.4
 hyperbolic/deepseek-r1-0528	input=0.25	output=0.25
 hyperbolic/deepseek-v3	input=0.2	output=0.2
@@ -1213,8 +1308,8 @@ minimax/minimax-m2.5-lightning	input=0.3	output=2.4	cache_read=0.03	cache_write=
 minimax/minimax-m3	input=0.3	output=1.2	cache_read=0.06
 minimax/minimax-m3	tier=512000	input=0.6	output=2.4	cache_read=0.12
 mistral/codestral-2405	input=1.0	output=3.0
-mistral/codestral-2508	input=0.3	output=0.9
-mistral/codestral-latest	input=0.3	output=0.9
+mistral/codestral-2508	input=0.3	output=0.9	cache_read=0.03
+mistral/codestral-latest	input=0.3	output=0.9	cache_read=0.03
 mistral/codestral-mamba-latest	input=0.25	output=0.25
 mistral/devstral-2512	input=0.4	output=2.0
 mistral/devstral-latest	input=0.4	output=2.0
@@ -1226,6 +1321,7 @@ mistral/devstral-small-latest	input=0.1	output=0.3
 mistral/glm-5-2	input=1.4	output=4.4	cache_read=0.14
 mistral/labs-devstral-small-2512	input=0.1	output=0.3
 mistral/labs-leanstral-1-5	input=0.0	output=0.0
+mistral/labs-leanstral-1-5-1	input=0.0	output=0.0
 mistral/magistral-medium-1-2-2509	input=2.0	output=5.0
 mistral/magistral-medium-2506	input=2.0	output=5.0
 mistral/magistral-medium-2509	input=2.0	output=5.0
@@ -1233,30 +1329,42 @@ mistral/magistral-medium-latest	input=2.0	output=5.0
 mistral/magistral-small-1-2-2509	input=0.5	output=1.5
 mistral/magistral-small-2506	input=0.5	output=1.5
 mistral/magistral-small-latest	input=0.5	output=1.5
-mistral/ministral-3-14b-2512	input=0.2	output=0.2
-mistral/ministral-3-3b-2512	input=0.1	output=0.1
-mistral/ministral-3-8b-2512	input=0.15	output=0.15
-mistral/ministral-8b-2512	input=0.15	output=0.15
-mistral/ministral-8b-latest	input=0.15	output=0.15
+mistral/ministral-14b-2512	input=0.2	output=0.2
+mistral/ministral-14b-latest	input=0.2	output=0.2
+mistral/ministral-3-14b-2512	input=0.2	output=0.2	cache_read=0.02
+mistral/ministral-3-3b-2512	input=0.1	output=0.1	cache_read=0.01
+mistral/ministral-3-8b-2512	input=0.15	output=0.15	cache_read=0.015
+mistral/ministral-3b-2512	input=0.1	output=0.1
+mistral/ministral-3b-latest	input=0.1	output=0.1
+mistral/ministral-8b-2512	input=0.15	output=0.15	cache_read=0.015
+mistral/ministral-8b-latest	input=0.15	output=0.15	cache_read=0.015
+mistral/mistral-code-agent-latest	input=0.4	output=2.0
+mistral/mistral-code-fim-latest	input=0.3	output=0.9	cache_read=0.03
+mistral/mistral-code-latest	input=0.3	output=0.9	cache_read=0.03
 mistral/mistral-large-2402	input=4.0	output=12.0
 mistral/mistral-large-2407	input=3.0	output=9.0
 mistral/mistral-large-2411	input=2.0	output=6.0
-mistral/mistral-large-2512	input=0.5	output=1.5
-mistral/mistral-large-3	input=0.5	output=1.5
-mistral/mistral-large-latest	input=0.5	output=1.5
+mistral/mistral-large-2512	input=0.5	output=1.5	cache_read=0.05
+mistral/mistral-large-3	input=0.5	output=1.5	cache_read=0.05
+mistral/mistral-large-latest	input=0.5	output=1.5	cache_read=0.05
 mistral/mistral-medium	input=2.7	output=8.1
 mistral/mistral-medium-2312	input=2.7	output=8.1
 mistral/mistral-medium-2505	input=0.4	output=2.0
 mistral/mistral-medium-2508	input=0.4	output=2.0
-mistral/mistral-medium-2604	input=1.5	output=7.5
+mistral/mistral-medium-2604	input=1.5	output=7.5	cache_read=0.15
+mistral/mistral-medium-3	input=1.5	output=7.5
 mistral/mistral-medium-3-1-2508	input=0.4	output=2.0
-mistral/mistral-medium-3-5	input=1.5	output=7.5
-mistral/mistral-medium-latest	input=1.5	output=7.5
+mistral/mistral-medium-3-5	input=1.5	output=7.5	cache_read=0.15
+mistral/mistral-medium-3.5	input=1.5	output=7.5	cache_read=0.15
+mistral/mistral-medium-latest	input=1.5	output=7.5	cache_read=0.15
 mistral/mistral-small	input=0.1	output=0.3
-mistral/mistral-small-2603	input=0.15	output=0.6
+mistral/mistral-small-2603	input=0.15	output=0.6	cache_read=0.015
 mistral/mistral-small-3-2-2506	input=0.06	output=0.18
-mistral/mistral-small-latest	input=0.15	output=0.6
+mistral/mistral-small-latest	input=0.15	output=0.6	cache_read=0.015
 mistral/mistral-tiny	input=0.25	output=0.25
+mistral/mistral-vibe-cli-fast	input=0.15	output=0.6	cache_read=0.015
+mistral/mistral-vibe-cli-latest	input=1.5	output=7.5	cache_read=0.15
+mistral/mistral-vibe-cli-with-tools	input=1.5	output=7.5	cache_read=0.15
 mistral/open-codestral-mamba	input=0.25	output=0.25
 mistral/open-mistral-7b	input=0.25	output=0.25
 mistral/open-mistral-nemo	input=0.3	output=0.3
@@ -1266,6 +1374,8 @@ mistral/open-mixtral-8x7b	input=0.7	output=0.7
 mistral/pixtral-12b-2409	input=0.15	output=0.15
 mistral/pixtral-large-2411	input=2.0	output=6.0
 mistral/pixtral-large-latest	input=2.0	output=6.0
+mistral/voxtral-small-2507	input=0.1	output=0.4
+mistral/voxtral-small-latest	input=0.1	output=0.4
 mistral/zai-glm-5-2	input=1.4	output=4.4	cache_read=0.14
 moonshot/kimi-k2-0711-preview	input=0.6	output=2.5	cache_read=0.15
 moonshot/kimi-k2-0905-preview	input=0.6	output=2.5	cache_read=0.15
@@ -1274,6 +1384,7 @@ moonshot/kimi-k2-thinking-turbo	input=1.15	output=8.0	cache_read=0.15
 moonshot/kimi-k2-turbo-preview	input=1.15	output=8.0	cache_read=0.15
 moonshot/kimi-k2.5	input=0.6	output=3.0	cache_read=0.1
 moonshot/kimi-k2.6	input=0.95	output=4.0	cache_read=0.16
+moonshot/kimi-k2.7-code	input=0.95	output=4.0	cache_read=0.19
 moonshot/kimi-k3	input=3.0	output=15.0	cache_read=0.3
 moonshot/kimi-latest	input=2.0	output=5.0	cache_read=0.15
 moonshot/kimi-latest-128k	input=2.0	output=5.0	cache_read=0.15
@@ -1323,8 +1434,12 @@ nlp_cloud/chatdolphin	input=0.5	output=0.5
 nlp_cloud/dolphin	input=0.5	output=0.5
 novita/autoglm-phone-9b-multilingual	input=0.035	output=0.138
 novita/baichuan-m2-32b	input=0.07	output=0.07
+novita/cobuddy	input=0.28	output=1.13	cache_read=0.07
+novita/community	input=0.89	output=0.89
 novita/deepseek-ocr	input=0.03	output=0.03
+novita/deepseek-ocr-2	input=0.03	output=0.03
 novita/deepseek-prover-v2-671b	input=0.7	output=2.5
+novita/deepseek-r1	input=4.0	output=4.0
 novita/deepseek-r1-0528	input=0.7	output=2.5	cache_read=0.35
 novita/deepseek-r1-0528-qwen3-8b	input=0.06	output=0.09
 novita/deepseek-r1-distill-llama-70b	input=0.8	output=0.8
@@ -1337,6 +1452,12 @@ novita/deepseek-v3.1	input=0.27	output=1.0	cache_read=0.135
 novita/deepseek-v3.1-terminus	input=0.27	output=1.0	cache_read=0.135
 novita/deepseek-v3.2	input=0.269	output=0.4	cache_read=0.1345
 novita/deepseek-v3.2-exp	input=0.27	output=0.41
+novita/deepseek-v4-flash	input=0.14	output=0.28	cache_read=0.028
+novita/deepseek-v4-flash-0731	input=0.44	output=1.32	cache_read=0.028
+novita/deepseek-v4-flash-vision-exp	input=0.44	output=1.32	cache_read=0.028
+novita/deepseek-v4-pro	input=1.6	output=3.2	cache_read=0.135
+novita/deepseek-v4-pro-0813	input=1.32	output=3.96	cache_read=0.132
+novita/deepseek_v3	input=0.89	output=0.89
 novita/ernie-4.5-21b-a3b	input=0.07	output=0.28
 novita/ernie-4.5-21b-a3b-thinking	input=0.07	output=0.28
 novita/ernie-4.5-300b-a47b-paddle	input=0.28	output=1.1
@@ -1345,36 +1466,65 @@ novita/ernie-4.5-vl-28b-a3b-thinking	input=0.39	output=0.39
 novita/ernie-4.5-vl-424b-a47b	input=0.42	output=1.25
 novita/gemma-3-12b-it	input=0.05	output=0.1
 novita/gemma-3-27b-it	input=0.119	output=0.2
+novita/gemma-4-26b-a4b-it	input=0.13	output=0.4
+novita/gemma-4-31b-it	input=0.14	output=0.4
+novita/glm-4-32b-0414	input=0.55	output=1.66
 novita/glm-4.5	input=0.6	output=2.2	cache_read=0.11
-novita/glm-4.5-air	input=0.13	output=0.85
+novita/glm-4.5-air	input=0.13	output=0.85	cache_read=0.025
 novita/glm-4.5v	input=0.6	output=1.8	cache_read=0.11
 novita/glm-4.6	input=0.55	output=2.2	cache_read=0.11
 novita/glm-4.6v	input=0.3	output=0.9	cache_read=0.055
 novita/glm-4.7	input=0.6	output=2.2	cache_read=0.11
+novita/glm-4.7-flash	input=0.07	output=0.4	cache_read=0.01
+novita/glm-4.7-h	input=0.6	output=2.2	cache_read=0.11
+novita/glm-5	input=1.0	output=3.2	cache_read=0.2
+novita/glm-5-turbo	input=1.2	output=4.0	cache_read=0.24
+novita/glm-5.1	input=1.38	output=4.4	cache_read=0.26
+novita/glm-5.2	input=1.4	output=4.4	cache_read=0.26
+novita/glm-5.3	input=1.4	output=4.4	cache_read=0.26
+novita/glm-5v-turbo	input=1.2	output=4.0	cache_read=0.24
 novita/gpt-oss-120b	input=0.05	output=0.25
 novita/gpt-oss-20b	input=0.04	output=0.15
 novita/hermes-2-pro-llama-3-8b	input=0.14	output=0.14
+novita/hy3	input=0.14	output=0.58	cache_read=0.035
 novita/kat-coder-pro	input=0.3	output=1.2	cache_read=0.06
 novita/kimi-k2-0905	input=0.6	output=2.5
 novita/kimi-k2-instruct	input=0.57	output=2.3
-novita/kimi-k2-thinking	input=0.6	output=2.5
+novita/kimi-k2-thinking	input=0.6	output=2.5	cache_read=0.15
+novita/kimi-k2.5	input=0.6	output=3.0	cache_read=0.1
+novita/kimi-k2.6	input=0.8	output=3.4	cache_read=0.16
+novita/kimi-k2.7-code	input=0.95	output=4.0	cache_read=0.19
+novita/kimi-k3	input=3.0	output=15.0	cache_read=0.3
 novita/l3-70b-euryale-v2.1	input=1.48	output=1.48
 novita/l3-8b-lunaris	input=0.05	output=0.05
 novita/l3-8b-stheno-v3.2	input=0.05	output=0.05
 novita/l31-70b-euryale-v2.2	input=1.48	output=1.48
+novita/ling-3.0-flash	input=0.06	output=0.18	cache_read=0.012
+novita/ling-3.0-flash-fast	input=0.06	output=0.18	cache_read=0.012
 novita/llama-3-70b-instruct	input=0.51	output=0.74
 novita/llama-3-8b-instruct	input=0.04	output=0.04
 novita/llama-3.1-8b-instruct	input=0.02	output=0.05
+novita/llama-3.2-1b-instruct	input=0.02	output=0.02
 novita/llama-3.2-3b-instruct	input=0.03	output=0.05
 novita/llama-3.3-70b-instruct	input=0.135	output=0.4
 novita/llama-4-maverick-17b-128e-instruct-fp8	input=0.27	output=0.85
 novita/llama-4-scout-17b-16e-instruct	input=0.18	output=0.59
-novita/mimo-v2-flash	input=0.1	output=0.3	cache_read=0.02
+novita/macaron-v1-tall	input=0.45	output=2.6	cache_read=0.08
+novita/macaron-v1-venti	input=1.5	output=4.5	cache_read=0.3
+novita/mimo-v2-flash	input=0.11	output=0.33	cache_read=0.024
+novita/mimo-v2.5	input=0.168	output=0.336	cache_read=0.0034
+novita/mimo-v2.5-pro	input=0.522	output=1.044	cache_read=0.0043
 novita/minimax-m1-80k	input=0.55	output=2.2
 novita/minimax-m2	input=0.3	output=1.2	cache_read=0.03
 novita/minimax-m2.1	input=0.3	output=1.2	cache_read=0.03
+novita/minimax-m2.5	input=0.3	output=1.2	cache_read=0.03
+novita/minimax-m2.5-highspeed	input=0.6	output=2.4	cache_read=0.03
+novita/minimax-m2.7	input=0.3	output=1.2	cache_read=0.06
+novita/minimax-m2.7-highspeed	input=0.6	output=2.4	cache_read=0.06
+novita/minimax-m3	input=0.3	output=1.2	cache_read=0.06
 novita/mistral-nemo	input=0.04	output=0.17
 novita/mythomax-l2-13b	input=0.09	output=0.09
+novita/nemotron-3-nano-30b-a3b	input=0.05	output=0.2
 novita/paddleocr-vl	input=0.02	output=0.02
 novita/qwen-2.5-72b-instruct	input=0.38	output=0.4
 novita/qwen-mt-plus	input=0.25	output=0.75
@@ -1388,7 +1538,8 @@ novita/qwen3-32b-fp8	input=0.1	output=0.45
 novita/qwen3-4b-fp8	input=0.03	output=0.03
 novita/qwen3-8b-fp8	input=0.035	output=0.138
 novita/qwen3-coder-30b-a3b-instruct	input=0.07	output=0.27
-novita/qwen3-coder-480b-a35b-instruct	input=0.3	output=1.3
+novita/qwen3-coder-480b-a35b-instruct	input=0.38	output=1.55
+novita/qwen3-coder-next	input=0.2	output=1.5
 novita/qwen3-max	input=2.11	output=8.45
 novita/qwen3-next-80b-a3b-instruct	input=0.15	output=1.5
 novita/qwen3-next-80b-a3b-thinking	input=0.15	output=1.5
@@ -1399,7 +1550,16 @@ novita/qwen3-vl-235b-a22b-thinking	input=0.98	output=3.95
 novita/qwen3-vl-30b-a3b-instruct	input=0.2	output=0.7
 novita/qwen3-vl-30b-a3b-thinking	input=0.2	output=1.0
 novita/qwen3-vl-8b-instruct	input=0.08	output=0.5
+novita/qwen3.5-122b-a10b	input=0.4	output=3.2
+novita/qwen3.5-27b	input=0.3	output=2.4
+novita/qwen3.5-35b-a3b	input=0.25	output=2.0
+novita/qwen3.5-397b-a17b	input=0.6	output=3.6
+novita/qwen3.6-27b	input=0.6	output=3.6
+novita/qwen3.6-35b-a3b	input=0.248	output=1.485
+novita/qwen3.7-max	input=1.25	output=3.75	cache_read=0.25
+novita/qwen3.8-max	input=2.0	output=6.0	cache_read=0.25
 novita/r1v4-lite	input=0.2	output=0.6
+novita/step-3.7-flash	input=0.2	output=1.15	cache_read=0.04
 novita/wizardlm-2-8x22b	input=0.62	output=0.62
 nscale/deepseek-r1-distill-llama-70b	input=0.375	output=0.375
 nscale/deepseek-r1-distill-llama-8b	input=0.025	output=0.025
@@ -1776,6 +1936,56 @@ publicai/olmo-3-7b-instruct	input=0.0	output=0.0
 publicai/olmo-3-7b-think	input=0.0	output=0.0
 publicai/qwen-sea-lion-v4-32b-it	input=0.0	output=0.0
 publicai/salamandra-7b-instruct-tools-16k	input=0.0	output=0.0
+qwen_ai_platform/deepseek-v4-flash	input=0.2	output=0.4	cache_read=0.04
+qwen_ai_platform/deepseek-v4-flash-0731	input=0.2	output=0.4	cache_read=0.04
+qwen_ai_platform/deepseek-v4-pro	input=2.4	output=4.8	cache_read=0.2
+qwen_ai_platform/glm-5.1	input=1.4	output=4.4	cache_read=0.26
+qwen_ai_platform/glm-5.2	input=1.4	output=4.4	cache_read=0.28
+qwen_ai_platform/kimi-k2.7-code	input=0.95	output=4.0	cache_read=0.19
+qwen_ai_platform/qwen-coder	input=0.3	output=1.5
+qwen_ai_platform/qwen-max	input=1.6	output=6.4
+qwen_ai_platform/qwen-plus	input=0.4	output=1.2
+qwen_ai_platform/qwen-plus-2025-01-25	input=0.4	output=1.2
+qwen_ai_platform/qwen-plus-2025-04-28	input=0.4	output=1.2	reasoning=4.0
+qwen_ai_platform/qwen-plus-2025-07-14	input=0.4	output=1.2	reasoning=4.0
+qwen_ai_platform/qwen-turbo	input=0.05	output=0.2	reasoning=0.5
+qwen_ai_platform/qwen-turbo-2024-11-01	input=0.05	output=0.2
+qwen_ai_platform/qwen-turbo-2025-04-28	input=0.05	output=0.2	reasoning=0.5
+qwen_ai_platform/qwen-turbo-latest	input=0.05	output=0.2	reasoning=0.5
+qwen_ai_platform/qwen3-next-80b-a3b-instruct	input=0.15	output=1.2
+qwen_ai_platform/qwen3-next-80b-a3b-thinking	input=0.15	output=1.2
+qwen_ai_platform/qwen3-vl-235b-a22b-instruct	input=0.4	output=1.6
+qwen_ai_platform/qwen3-vl-235b-a22b-thinking	input=0.4	output=4.0
+qwen_ai_platform/qwen3-vl-32b-instruct	input=0.16	output=0.64
+qwen_ai_platform/qwen3-vl-32b-thinking	input=0.16	output=2.87
+qwen_ai_platform/qwen3.7-max	input=2.5	output=7.5	cache_read=0.5
+qwen_ai_platform/qwen3.8-max	input=2.0	output=6.0	cache_read=0.25
+qwen_ai_platform/qwq-plus	input=0.8	output=2.4
+qwencloud/deepseek-v4-flash	input=0.2	output=0.4	cache_read=0.04
+qwencloud/deepseek-v4-flash-0731	input=0.2	output=0.4	cache_read=0.04
+qwencloud/deepseek-v4-pro	input=2.4	output=4.8	cache_read=0.2
+qwencloud/glm-5.1	input=1.4	output=4.4	cache_read=0.26
+qwencloud/glm-5.2	input=1.4	output=4.4	cache_read=0.28
+qwencloud/kimi-k2.7-code	input=0.95	output=4.0	cache_read=0.19
+qwencloud/qwen-coder	input=0.3	output=1.5
+qwencloud/qwen-max	input=1.6	output=6.4
+qwencloud/qwen-plus	input=0.4	output=1.2
+qwencloud/qwen-plus-2025-01-25	input=0.4	output=1.2
+qwencloud/qwen-plus-2025-04-28	input=0.4	output=1.2	reasoning=4.0
+qwencloud/qwen-plus-2025-07-14	input=0.4	output=1.2	reasoning=4.0
+qwencloud/qwen-turbo	input=0.05	output=0.2	reasoning=0.5
+qwencloud/qwen-turbo-2024-11-01	input=0.05	output=0.2
+qwencloud/qwen-turbo-2025-04-28	input=0.05	output=0.2	reasoning=0.5
+qwencloud/qwen-turbo-latest	input=0.05	output=0.2	reasoning=0.5
+qwencloud/qwen3-next-80b-a3b-instruct	input=0.15	output=1.2
+qwencloud/qwen3-next-80b-a3b-thinking	input=0.15	output=1.2
+qwencloud/qwen3-vl-235b-a22b-instruct	input=0.4	output=1.6
+qwencloud/qwen3-vl-235b-a22b-thinking	input=0.4	output=4.0
+qwencloud/qwen3-vl-32b-instruct	input=0.16	output=0.64
+qwencloud/qwen3-vl-32b-thinking	input=0.16	output=2.87
+qwencloud/qwen3.7-max	input=2.5	output=7.5	cache_read=0.5
+qwencloud/qwen3.8-max	input=2.0	output=6.0	cache_read=0.25
+qwencloud/qwq-plus	input=0.8	output=2.4
 replicate/claude-3.5-haiku	input=1.0	output=5.0
 replicate/claude-3.5-sonnet	input=3.75	output=18.75
 replicate/claude-3.7-sonnet	input=3.0	output=15.0
@@ -1879,6 +2089,7 @@ snowflake/openai-gpt-5-nano	input=0.15	output=0.6
 snowflake/snowflake-llama-3.3-70b	input=0.72	output=0.72
 tencent/deepseek-v4-flash	input=0.14	output=0.28	cache_read=0.0028	cache_write=0.0
 tencent/deepseek-v4-pro	input=0.435	output=0.87	cache_read=0.003625	cache_write=0.0
+tencent/minimax-m3	input=0.3	output=1.2	cache_read=0.06	cache_write=0.0
 tensormesh/deepseek-v4-flash	input=0.14	output=0.28	cache_read=0.0
 tensormesh/gemma-4-31b-it	input=0.14	output=0.56	cache_read=0.0
 tensormesh/glm-5.1-nvfp4-mtp	input=1.4	output=4.4	cache_read=0.0
@@ -1902,29 +2113,53 @@ together_ai/deepseek-r1	input=3.0	output=7.0
 together_ai/deepseek-r1-0528-tput	input=0.55	output=2.19
 together_ai/deepseek-v3	input=1.25	output=1.25
 together_ai/deepseek-v3.1	input=0.6	output=1.7
+together_ai/deepseek-v4-flash-0731	input=0.14	output=0.28	cache_read=0.03
+together_ai/deepseek-v4-pro	input=1.74	output=3.48	cache_read=0.2
+together_ai/deepseek-v4-pro-0813	input=1.32	output=3.96	cache_read=0.13
+together_ai/gemma-3n-e4b-it	input=0.06	output=0.12
+together_ai/gemma-4-31b-it	input=0.39	output=0.97
 together_ai/glm-4.5-air-fp8	input=0.2	output=1.1
 together_ai/glm-4.6	input=0.6	output=2.2
 together_ai/glm-4.7	input=0.45	output=2.0
+together_ai/glm-5.2	input=1.4	output=4.4	cache_read=0.26
+together_ai/glm-5.3	input=1.4	output=4.4	cache_read=0.26
+together_ai/glm-5.3-flash	input=0.15	output=0.5	cache_read=0.03
 together_ai/gpt-oss-120b	input=0.15	output=0.6
 together_ai/gpt-oss-20b	input=0.05	output=0.2
+together_ai/inkling	input=1.0	output=4.05	cache_read=0.17
+together_ai/inkling-small	input=0.5	output=1.2	cache_read=0.1
 together_ai/kimi-k2-instruct	input=1.0	output=3.0
 together_ai/kimi-k2-instruct-0905	input=1.0	output=3.0
 together_ai/kimi-k2.5	input=0.5	output=2.8
-together_ai/llama-3.3-70b-instruct-turbo	input=0.88	output=0.88
+together_ai/kimi-k2.7-code	input=0.95	output=4.0	cache_read=0.19
+together_ai/kimi-k3	input=3.0	output=15.0	cache_read=0.3
+together_ai/llama-3.3-70b-instruct-turbo	input=1.04	output=1.04
 together_ai/llama-3.3-70b-instruct-turbo-free	input=0.0	output=0.0
 together_ai/llama-4-maverick-17b-128e-instruct-fp8	input=0.27	output=0.85
 together_ai/llama-4-scout-17b-16e-instruct	input=0.18	output=0.59
+together_ai/llama-guard-4-12b	input=0.2	output=0.2
 together_ai/meta-llama-3.1-405b-instruct-turbo	input=3.5	output=3.5
 together_ai/meta-llama-3.1-70b-instruct-turbo	input=0.88	output=0.88
 together_ai/meta-llama-3.1-8b-instruct-turbo	input=0.18	output=0.18
+together_ai/minimax-m3	input=0.3	output=1.2	cache_read=0.06
 together_ai/mixtral-8x7b-instruct-v0.1	input=0.6	output=0.6
+together_ai/muse-glimmer-30b	input=0.35	output=1.5	cache_read=0.04
+together_ai/nemotron-3-ultra-550b-a55b	input=0.6	output=3.6	cache_read=0.2
+together_ai/qwen-2-1.5b-instruct	input=0.1	output=0.1
 together_ai/qwen3-235b-a22b-fp8-tput	input=0.2	output=0.6
 together_ai/qwen3-235b-a22b-instruct-2507-tput	input=0.2	output=6.0
 together_ai/qwen3-235b-a22b-thinking-2507	input=0.65	output=3.0
 together_ai/qwen3-coder-480b-a35b-instruct-fp8	input=2.0	output=2.0
 together_ai/qwen3-next-80b-a3b-instruct	input=0.15	output=1.5
 together_ai/qwen3-next-80b-a3b-thinking	input=0.15	output=1.5
-together_ai/qwen3.5-397b-a17b	input=0.6	output=3.6
+together_ai/qwen3.5-397b-a17b	input=0.6	output=3.6	cache_read=0.35
+together_ai/qwen3.5-9b	input=0.17	output=0.25
+together_ai/qwen3.6-plus	input=0.5	output=3.0
+together_ai/qwen3.7-max	input=2.5	output=7.5	cache_read=0.5
+together_ai/qwen3.7-plus	input=0.32	output=1.28
+together_ai/qwen3.8-2.4t-a95b	input=2.5	output=6.25	cache_read=0.5
+together_ai/qwen3.8-flash	input=0.15	output=0.47
+together_ai/ternary-bonsai-27b	input=0.0	output=0.0
 together_ai/together-ai-21.1b-41b	input=0.8	output=0.8
 together_ai/together-ai-4.1b-8b	input=0.2	output=0.2
 together_ai/together-ai-41.1b-80b	input=0.9	output=0.9
@@ -2060,6 +2295,8 @@ vertex_ai-anthropic_models/claude-3-opus@20240229	input=15.0	output=75.0
 vertex_ai-anthropic_models/claude-3-sonnet	input=3.0	output=15.0
 vertex_ai-anthropic_models/claude-3-sonnet@20240229	input=3.0	output=15.0
 vertex_ai-anthropic_models/claude-fable-5	input=10.0	output=50.0	cache_read=1.0	cache_write=12.5
+vertex_ai-anthropic_models/claude-fable-5-1	input=10.0	output=50.0	cache_read=0.25	cache_write=12.5
+vertex_ai-anthropic_models/claude-fable-5-1@default	input=10.0	output=50.0	cache_read=0.25	cache_write=12.5
 vertex_ai-anthropic_models/claude-fable-5@default	input=10.0	output=50.0	cache_read=1.0	cache_write=12.5
 vertex_ai-anthropic_models/claude-haiku-4-5	input=1.0	output=5.0	cache_read=0.1	cache_write=1.25
 vertex_ai-anthropic_models/claude-haiku-4-5@20251001	input=1.0	output=5.0	cache_read=0.1	cache_write=1.25
@@ -2100,13 +2337,12 @@ vertex_ai-language-models/gemini-2.5-computer-use-preview-10-2025	input=1.25	out
 vertex_ai-language-models/gemini-2.5-computer-use-preview-10-2025	tier=200000	input=2.5	output=15.0
 vertex_ai-language-models/gemini-2.5-flash	input=0.3	output=2.5	cache_read=0.03	reasoning=2.5
 vertex_ai-language-models/gemini-2.5-flash-lite	input=0.1	output=0.4	cache_read=0.01	reasoning=0.4
-vertex_ai-language-models/gemini-2.5-flash-lite-preview-06-17	input=0.1	output=0.4	cache_read=0.025	reasoning=0.4
+vertex_ai-language-models/gemini-2.5-flash-lite-preview-06-17	input=0.1	output=0.4	cache_read=0.01	reasoning=0.4
 vertex_ai-language-models/gemini-2.5-flash-lite-preview-09-2025	input=0.1	output=0.4	cache_read=0.01	reasoning=0.4
-vertex_ai-language-models/gemini-2.5-flash-preview-09-2025	input=0.3	output=2.5	cache_read=0.075	reasoning=2.5
+vertex_ai-language-models/gemini-2.5-flash-preview-09-2025	input=0.3	output=2.5	cache_read=0.03	reasoning=2.5
 vertex_ai-language-models/gemini-2.5-pro	input=1.25	output=10.0	cache_read=0.125
 vertex_ai-language-models/gemini-2.5-pro	tier=200000	input=2.5	output=15.0	cache_read=0.25	cache_write=0.25
-vertex_ai-language-models/gemini-2.5-pro-preview-tts	input=1.25	output=10.0	cache_read=0.125
-vertex_ai-language-models/gemini-2.5-pro-preview-tts	tier=200000	input=2.5	output=15.0	cache_read=0.25
+vertex_ai-language-models/gemini-2.5-pro-preview-tts	input=1.0	output=20.0	cache_read=0.125
 vertex_ai-language-models/gemini-3-flash-preview	input=0.5	output=3.0	cache_read=0.05	reasoning=3.0
 vertex_ai-language-models/gemini-3-pro-preview	input=2.0	output=12.0	cache_read=0.2
 vertex_ai-language-models/gemini-3-pro-preview	tier=200000	input=4.0	output=18.0	cache_read=0.4	cache_write=0.25
@@ -2166,20 +2402,39 @@ volcengine/glm-4-7-251222	input=0.0	output=0.0
 volcengine/kimi-k2-thinking-251104	input=0.0	output=0.0
 wandb/deepseek-r1-0528	input=135000.0	output=540000.0
 wandb/deepseek-v3-0324	input=114000.0	output=275000.0
-wandb/deepseek-v3.1	input=55000.0	output=165000.0
+wandb/deepseek-v3.1	input=0.55	output=1.65
+wandb/deepseek-v4-flash	input=0.14	output=0.28	cache_read=0.07
+wandb/deepseek-v4-flash-0731	input=0.13	output=0.28	cache_read=0.07
+wandb/deepseek-v4-pro	input=1.15	output=2.55	cache_read=0.2
+wandb/gemma-4-31b-it	input=0.1	output=0.34
 wandb/glm-4.5	input=55000.0	output=200000.0
-wandb/gpt-oss-120b	input=15000.0	output=60000.0
-wandb/gpt-oss-20b	input=5000.0	output=20000.0
+wandb/glm-5.2	input=0.76	output=2.42	cache_read=0.14
+wandb/gpt-oss-120b	input=0.03	output=0.17
+wandb/gpt-oss-20b	input=0.03	output=0.13
+wandb/granite-4.1-8b	input=0.05	output=0.1
 wandb/kimi-k2-instruct	input=0.6	output=2.5
 wandb/kimi-k2.5	input=0.6	output=3.0	cache_read=0.1
-wandb/llama-3.1-8b-instruct	input=22000.0	output=22000.0
-wandb/llama-3.3-70b-instruct	input=71000.0	output=71000.0
+wandb/kimi-k2.6	input=0.65	output=3.41	cache_read=0.15
+wandb/kimi-k2.7-code	input=0.71	output=3.5	cache_read=0.15
+wandb/llama-3.1-70b-instruct	input=0.8	output=0.8
+wandb/llama-3.1-8b-instruct	input=0.22	output=0.22
+wandb/llama-3.3-70b-instruct	input=0.71	output=0.71
 wandb/llama-4-scout-17b-16e-instruct	input=17000.0	output=66000.0
+wandb/mellum2-12b-a2.5b-instruct	input=0.05	output=0.1
 wandb/minimax-m2.5	input=0.3	output=1.2
+wandb/minimax-m3	input=0.23	output=0.96	cache_read=0.05
+wandb/nvidia-nemotron-3-ultra-550b-a55b	input=0.75	output=2.75	cache_read=0.15
+wandb/nvidia-nemotron-3.5-lightning-30b-a3b	input=0.1	output=0.25	cache_read=0.05
 wandb/phi-4-mini-instruct	input=8000.0	output=35000.0
+wandb/qwen3-14b-instruct	input=0.05	output=0.22
 wandb/qwen3-235b-a22b-instruct-2507	input=10000.0	output=10000.0
 wandb/qwen3-235b-a22b-thinking-2507	input=10000.0	output=10000.0
-wandb/qwen3-coder-480b-a35b-instruct	input=100000.0	output=150000.0
+wandb/qwen3-30b-a3b-instruct-2507	input=0.1	output=0.3
+wandb/qwen3-coder-480b-a35b-instruct	input=1.0	output=1.5
+wandb/qwen3.5-35b-a3b	input=0.25	output=1.25
+wandb/qwen3.6-27b	input=0.6	output=3.6	cache_read=0.12
+wandb/qwen3.6-35b-a3b	input=0.25	output=1.25
+wandb/qwen3.8-27b	input=0.4	output=3.0	cache_read=0.15
 watsonx/allam-1-13b-instruct	input=1.8	output=1.8
 watsonx/flan-t5-xl-3b	input=0.6	output=0.6
 watsonx/gpt-oss-120b	input=0.15	output=0.6
@@ -2208,42 +2463,50 @@ watsonx/mistral-small-2503	input=0.1	output=0.3
 watsonx/mistral-small-3-1-24b-instruct-2503	input=0.1	output=0.3
 watsonx/mt0-xxl-13b	input=500.0	output=2000.0
 watsonx/pixtral-12b-2409	input=0.35	output=0.35
-xai/grok-2	input=2.0	output=10.0
-xai/grok-2-1212	input=2.0	output=10.0
-xai/grok-2-latest	input=2.0	output=10.0
-xai/grok-2-vision	input=2.0	output=10.0
-xai/grok-2-vision-1212	input=2.0	output=10.0
-xai/grok-2-vision-latest	input=2.0	output=10.0
-xai/grok-3	input=3.0	output=15.0	cache_read=0.75
-xai/grok-3-beta	input=3.0	output=15.0	cache_read=0.75
-xai/grok-3-fast-beta	input=5.0	output=25.0	cache_read=1.25
-xai/grok-3-fast-latest	input=5.0	output=25.0	cache_read=1.25
-xai/grok-3-latest	input=3.0	output=15.0	cache_read=0.75
-xai/grok-3-mini	input=0.3	output=0.5	cache_read=0.075
-xai/grok-3-mini-beta	input=0.3	output=0.5	cache_read=0.075
-xai/grok-3-mini-fast	input=0.6	output=4.0	cache_read=0.15
-xai/grok-3-mini-fast-beta	input=0.6	output=4.0	cache_read=0.15
-xai/grok-3-mini-fast-latest	input=0.6	output=4.0	cache_read=0.15
-xai/grok-3-mini-latest	input=0.3	output=0.5	cache_read=0.075
-xai/grok-4	input=3.0	output=15.0
-xai/grok-4-0709	input=3.0	output=15.0
-xai/grok-4-0709	tier=128000	input=6.0	output=30.0
-xai/grok-4-1-fast	input=0.2	output=0.5	cache_read=0.05
-xai/grok-4-1-fast	tier=128000	input=0.4	output=1.0
-xai/grok-4-1-fast-non-reasoning	input=0.2	output=0.5	cache_read=0.05
-xai/grok-4-1-fast-non-reasoning	tier=128000	input=0.4	output=1.0
-xai/grok-4-1-fast-non-reasoning-latest	input=0.2	output=0.5	cache_read=0.05
-xai/grok-4-1-fast-non-reasoning-latest	tier=128000	input=0.4	output=1.0
-xai/grok-4-1-fast-reasoning	input=0.2	output=0.5	cache_read=0.05
-xai/grok-4-1-fast-reasoning	tier=128000	input=0.4	output=1.0
-xai/grok-4-1-fast-reasoning-latest	input=0.2	output=0.5	cache_read=0.05
-xai/grok-4-1-fast-reasoning-latest	tier=128000	input=0.4	output=1.0
-xai/grok-4-fast-non-reasoning	input=0.2	output=0.5	cache_read=0.05
-xai/grok-4-fast-non-reasoning	tier=128000	input=0.4	output=1.0
-xai/grok-4-fast-reasoning	input=0.2	output=0.5	cache_read=0.05
-xai/grok-4-fast-reasoning	tier=128000	input=0.4	output=1.0
-xai/grok-4-latest	input=3.0	output=15.0
-xai/grok-4-latest	tier=128000	input=6.0	output=30.0
+xai/grok-3	input=1.25	output=2.5	cache_read=0.2
+xai/grok-3	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-3-beta	input=1.25	output=2.5	cache_read=0.2
+xai/grok-3-beta	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-3-fast-beta	input=1.25	output=2.5	cache_read=0.2
+xai/grok-3-fast-beta	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-3-fast-latest	input=1.25	output=2.5	cache_read=0.2
+xai/grok-3-fast-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-3-latest	input=1.25	output=2.5	cache_read=0.2
+xai/grok-3-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-3-mini	input=1.25	output=2.5	cache_read=0.2
+xai/grok-3-mini	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-3-mini-beta	input=1.25	output=2.5	cache_read=0.2
+xai/grok-3-mini-beta	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-3-mini-fast	input=1.25	output=2.5	cache_read=0.2
+xai/grok-3-mini-fast	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-3-mini-fast-beta	input=1.25	output=2.5	cache_read=0.2
+xai/grok-3-mini-fast-beta	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-3-mini-fast-latest	input=1.25	output=2.5	cache_read=0.2
+xai/grok-3-mini-fast-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-3-mini-latest	input=1.25	output=2.5	cache_read=0.2
+xai/grok-3-mini-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-4	input=1.25	output=2.5	cache_read=0.2
+xai/grok-4	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-4-0709	input=1.25	output=2.5	cache_read=0.2
+xai/grok-4-0709	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-4-1-fast	input=1.25	output=2.5	cache_read=0.2
+xai/grok-4-1-fast	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-4-1-fast-non-reasoning	input=1.25	output=2.5	cache_read=0.2
+xai/grok-4-1-fast-non-reasoning	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-4-1-fast-non-reasoning-latest	input=1.25	output=2.5	cache_read=0.2
+xai/grok-4-1-fast-non-reasoning-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-4-1-fast-reasoning	input=1.25	output=2.5	cache_read=0.2
+xai/grok-4-1-fast-reasoning	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-4-1-fast-reasoning-latest	input=1.25	output=2.5	cache_read=0.2
+xai/grok-4-1-fast-reasoning-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-4-fast-non-reasoning	input=1.25	output=2.5	cache_read=0.2
+xai/grok-4-fast-non-reasoning	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-4-fast-reasoning	input=1.25	output=2.5	cache_read=0.2
+xai/grok-4-fast-reasoning	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-4-latest	input=1.25	output=2.5	cache_read=0.2
+xai/grok-4-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-4.20	input=1.25	output=2.5	cache_read=0.2
+xai/grok-4.20	tier=200000	input=2.5	output=5.0	cache_read=0.4
 xai/grok-4.20-0309-non-reasoning	input=1.25	output=2.5	cache_read=0.2
 xai/grok-4.20-0309-non-reasoning	tier=200000	input=2.5	output=5.0	cache_read=0.4
 xai/grok-4.20-0309-reasoning	input=1.25	output=2.5	cache_read=0.2
@@ -2252,10 +2515,22 @@ xai/grok-4.20-beta-0309-non-reasoning	input=1.25	output=2.5	cache_read=0.2
 xai/grok-4.20-beta-0309-non-reasoning	tier=200000	input=2.5	output=5.0	cache_read=0.4
 xai/grok-4.20-beta-0309-reasoning	input=1.25	output=2.5	cache_read=0.2
 xai/grok-4.20-beta-0309-reasoning	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-4.20-multi-agent	input=1.25	output=2.5	cache_read=0.2
+xai/grok-4.20-multi-agent	tier=200000	input=2.5	output=5.0	cache_read=0.4
 xai/grok-4.20-multi-agent-0309	input=1.25	output=2.5	cache_read=0.2
 xai/grok-4.20-multi-agent-0309	tier=200000	input=2.5	output=5.0	cache_read=0.4
 xai/grok-4.20-multi-agent-beta-0309	input=1.25	output=2.5	cache_read=0.2
 xai/grok-4.20-multi-agent-beta-0309	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-4.20-multi-agent-latest	input=1.25	output=2.5	cache_read=0.2
+xai/grok-4.20-multi-agent-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-4.20-non-reasoning	input=1.25	output=2.5	cache_read=0.2
+xai/grok-4.20-non-reasoning	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-4.20-non-reasoning-latest	input=1.25	output=2.5	cache_read=0.2
+xai/grok-4.20-non-reasoning-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-4.20-reasoning	input=1.25	output=2.5	cache_read=0.2
+xai/grok-4.20-reasoning	tier=200000	input=2.5	output=5.0	cache_read=0.4
+xai/grok-4.20-reasoning-latest	input=1.25	output=2.5	cache_read=0.2
+xai/grok-4.20-reasoning-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
 xai/grok-4.3	input=1.25	output=2.5	cache_read=0.2
 xai/grok-4.3	tier=200000	input=2.5	output=5.0	cache_read=0.4
 xai/grok-4.3-latest	input=1.25	output=2.5	cache_read=0.2
@@ -2266,7 +2541,6 @@ xai/grok-4.5-latest	input=2.0	output=6.0	cache_read=0.3
 xai/grok-4.5-latest	tier=200000	input=4.0	output=12.0	cache_read=0.6
 xai/grok-4.6	input=2.0	output=6.0	cache_read=0.5
 xai/grok-4.6	tier=200000	input=4.0	output=12.0	cache_read=1.0
-xai/grok-beta	input=5.0	output=15.0
 xai/grok-build-0.1	input=1.0	output=2.0	cache_read=0.2
 xai/grok-build-0.1	tier=200000	input=2.0	output=4.0	cache_read=0.4
 xai/grok-code-fast	input=1.0	output=2.0	cache_read=0.2
@@ -2275,7 +2549,6 @@ xai/grok-code-fast-1	input=1.0	output=2.0	cache_read=0.2
 xai/grok-code-fast-1	tier=200000	input=2.0	output=4.0	cache_read=0.4
 xai/grok-code-fast-1-0825	input=1.0	output=2.0	cache_read=0.2
 xai/grok-code-fast-1-0825	tier=200000	input=2.0	output=4.0	cache_read=0.4
-xai/grok-vision-beta	input=5.0	output=15.0
 zai/glm-4-32b-0414-128k	input=0.1	output=0.1
 zai/glm-4.5	input=0.6	output=2.2
 zai/glm-4.5-air	input=0.2	output=1.1
@@ -2289,6 +2562,9 @@ zai/glm-4.7-flash	input=0.0	output=0.0	cache_read=0.0	cache_write=0.0
 zai/glm-5	input=1.0	output=3.2	cache_read=0.2	cache_write=0.0
 zai/glm-5-code	input=1.2	output=5.0	cache_read=0.3	cache_write=0.0
 zai/glm-5.1	input=1.4	output=4.4	cache_read=0.26	cache_write=0.0
+zai/glm-5.2	input=1.4	output=4.4	cache_read=0.26	cache_write=0.0
+zai/glm-5.3	input=1.4	output=4.4	cache_read=0.26	cache_write=0.0
+zai/glm-5.3-flash	input=0.15	output=0.5	cache_read=0.03	cache_write=0.0
 j2-light	input=3.0	output=3.0
 j2-mid	input=10.0	output=10.0
 j2-ultra	input=15.0	output=15.0
@@ -2312,6 +2588,7 @@ claude-4-opus-20250514	input=15.0	output=75.0	cache_read=1.5	cache_write=18.75
 claude-4-sonnet-20250514	input=3.0	output=15.0	cache_read=0.3	cache_write=3.75
 claude-4-sonnet-20250514	tier=200000	input=6.0	output=22.5	cache_read=0.6	cache_write=7.5
 claude-fable-5	input=10.0	output=50.0	cache_read=1.0	cache_write=12.5
+claude-fable-5-1	input=10.0	output=50.0	cache_read=0.25	cache_write=12.5
 claude-haiku-4-5	input=1.0	output=5.0	cache_read=0.1	cache_write=1.25
 claude-haiku-4-5-20251001	input=1.0	output=5.0	cache_read=0.1	cache_write=1.25
 claude-mythos-5	input=10.0	output=50.0	cache_read=1.0	cache_write=12.5
@@ -2410,10 +2687,10 @@ gpt-5.5-pro	input=30.0	output=180.0	cache_read=3.0
 gpt-5.5-pro	tier=272000	input=60.0	output=270.0	cache_read=6.0
 gpt-5.5-pro-2026-04-23	input=30.0	output=180.0	cache_read=3.0
 gpt-5.5-pro-2026-04-23	tier=272000	input=60.0	output=270.0	cache_read=6.0
-gpt-5.6-luna	input=0.2	output=1.2	cache_read=0.02
-gpt-5.6-luna	tier=272000	input=0.4	output=1.8	cache_read=0.04
-gpt-5.6-terra	input=2.0	output=12.0	cache_read=0.2
-gpt-5.6-terra	tier=272000	input=4.0	output=18.0	cache_read=0.4
+gpt-5.6-luna	input=0.2	output=1.2	cache_read=0.02	cache_write=0.25
+gpt-5.6-luna	tier=272000	input=0.4	output=1.8	cache_read=0.04	cache_write=0.5
+gpt-5.6-terra	input=2.0	output=12.0	cache_read=0.2	cache_write=2.5
+gpt-5.6-terra	tier=272000	input=4.0	output=18.0	cache_read=0.4	cache_write=5.0
 gpt-audio-1.5-2026-02-23	input=2.5	output=10.0
 gpt-audio-2025-08-28	input=2.5	output=10.0
 gpt-audio-mini	input=0.6	output=2.4
@@ -2444,11 +2721,6 @@ fw-kimi-k3	input=3.3	output=16.5	cache_read=0.33
 fw-minimax-m2.5	input=0.33	output=1.32	cache_read=0.033
 fw-minimax-m3	input=0.33	output=1.32	cache_read=0.066
 fw-nemotron-3-ultra-nvfp4	input=0.6	output=2.4	cache_read=0.119
-grok-3	input=3.0	output=15.0
-grok-4-1-fast-non-reasoning	input=0.2	output=0.5
-grok-4-1-fast-reasoning	input=0.2	output=0.5
-grok-4-fast-non-reasoning	input=0.2	output=0.5
-grok-4-fast-reasoning	input=0.2	output=0.5
 grok-4.3	input=1.25	output=2.5	cache_read=0.2
 jais-30b-chat	input=3200.0	output=9710.0
 jamba-instruct	input=0.5	output=0.7
@@ -2550,6 +2822,7 @@ amazon.nova-2-pro-preview-20251202-v1:0	input=2.1875	output=17.5	cache_read=0.54
 amazon.nova-lite-v1:0	input=0.06	output=0.24
 amazon.nova-micro-v1:0	input=0.035	output=0.14
 anthropic.claude-fable-5	input=10.0	output=50.0	cache_read=1.0	cache_write=12.5
+anthropic.claude-fable-5-1	input=10.0	output=50.0	cache_read=0.25	cache_write=12.5
 anthropic.claude-haiku-4-5@20251001	input=1.0	output=5.0	cache_read=0.1	cache_write=1.25
 anthropic.claude-opus-4-1-20250805-v1:0	input=15.0	output=75.0	cache_read=1.5	cache_write=18.75
 anthropic.claude-opus-4-20250514-v1:0	input=15.0	output=75.0	cache_read=1.5	cache_write=18.75
@@ -2586,6 +2859,7 @@ eu.amazon.nova-lite-v1:0	input=0.078	output=0.312
 eu.amazon.nova-micro-v1:0	input=0.046	output=0.184
 eu.amazon.nova-pro-v1:0	input=1.05	output=4.2
 eu.anthropic.claude-fable-5	input=11.0	output=55.0	cache_read=1.1	cache_write=13.75
+eu.anthropic.claude-fable-5-1	input=11.0	output=55.0	cache_read=0.275	cache_write=13.75
 eu.anthropic.claude-haiku-4-5-20251001-v1:0	input=1.1	output=5.5	cache_read=0.11	cache_write=1.375
 eu.anthropic.claude-opus-4-1-20250805-v1:0	input=15.0	output=75.0	cache_read=1.5	cache_write=18.75
 eu.anthropic.claude-opus-4-20250514-v1:0	input=15.0	output=75.0	cache_read=1.5	cache_write=18.75
@@ -2604,6 +2878,7 @@ eu.deepseek.v3.2	input=0.74	output=2.22
 eu.mistral.pixtral-large-2502-v1:0	input=2.0	output=6.0
 global.amazon.nova-2-lite-v1:0	input=0.3	output=2.5	cache_read=0.075
 global.anthropic.claude-fable-5	input=10.0	output=50.0	cache_read=1.0	cache_write=12.5
+global.anthropic.claude-fable-5-1	input=10.0	output=50.0	cache_read=0.25	cache_write=12.5
 global.anthropic.claude-haiku-4-5-20251001-v1:0	input=1.0	output=5.0	cache_read=0.1	cache_write=1.25
 global.anthropic.claude-opus-4-5-20251101-v1:0	input=5.0	output=25.0	cache_read=0.5	cache_write=6.25
 global.anthropic.claude-opus-4-6-v1	input=5.0	output=25.0	cache_read=0.5	cache_write=6.25
@@ -2618,8 +2893,8 @@ global.anthropic.claude-sonnet-4-6	input=3.0	output=15.0	cache_read=0.3	cache_wr
 global.anthropic.claude-sonnet-5	input=2.0	output=10.0	cache_read=0.2	cache_write=2.5
 global.openai.gpt-5.6-luna	input=0.2	output=1.2	cache_read=0.02	cache_write=0.25
 global.openai.gpt-5.6-luna	tier=272000	input=0.4	output=1.8	cache_read=0.04	cache_write=0.5
-global.openai.gpt-5.6-sol	input=5.0	output=30.0	cache_read=0.5	cache_write=6.25
-global.openai.gpt-5.6-sol	tier=272000	input=10.0	output=45.0	cache_read=1.0	cache_write=12.5
+global.openai.gpt-5.6-sol	input=4.0	output=20.0	cache_read=0.4	cache_write=5.0
+global.openai.gpt-5.6-sol	tier=272000	input=8.0	output=30.0	cache_read=0.8	cache_write=10.0
 global.openai.gpt-5.6-terra	input=2.0	output=12.0	cache_read=0.2	cache_write=2.5
 global.openai.gpt-5.6-terra	tier=272000	input=4.0	output=18.0	cache_read=0.4	cache_write=5.0
 global.xai.grok-4.6	input=2.0	output=6.0	cache_read=0.5
@@ -2670,6 +2945,7 @@ us.amazon.nova-premier-v1:0	input=2.5	output=12.5
 us.amazon.nova-pro-v1:0	input=0.8	output=3.2
 us.anthropic.claude-3-7-sonnet-20250219-v1:0	input=3.0	output=15.0	cache_read=0.3	cache_write=3.75
 us.anthropic.claude-fable-5	input=11.0	output=55.0	cache_read=1.1	cache_write=13.75
+us.anthropic.claude-fable-5-1	input=11.0	output=55.0	cache_read=0.275	cache_write=13.75
 us.anthropic.claude-haiku-4-5-20251001-v1:0	input=1.1	output=5.5	cache_read=0.11	cache_write=1.375
 us.anthropic.claude-opus-4-1-20250805-v1:0	input=15.0	output=75.0	cache_read=1.5	cache_write=18.75
 us.anthropic.claude-opus-4-20250514-v1:0	input=15.0	output=75.0	cache_read=1.5	cache_write=18.75
@@ -2692,8 +2968,8 @@ us.meta.llama4-scout-17b-instruct-v1:0	input=0.17	output=0.66
 us.mistral.pixtral-large-2502-v1:0	input=2.0	output=6.0
 us.openai.gpt-5.6-luna	input=0.22	output=1.32	cache_read=0.022	cache_write=0.275
 us.openai.gpt-5.6-luna	tier=272000	input=0.44	output=1.98	cache_read=0.044	cache_write=0.55
-us.openai.gpt-5.6-sol	input=5.5	output=33.0	cache_read=0.55	cache_write=6.875
-us.openai.gpt-5.6-sol	tier=272000	input=11.0	output=49.5	cache_read=1.1	cache_write=13.75
+us.openai.gpt-5.6-sol	input=4.4	output=22.0	cache_read=0.44	cache_write=5.5
+us.openai.gpt-5.6-sol	tier=272000	input=8.8	output=33.0	cache_read=0.88	cache_write=11.0
 us.openai.gpt-5.6-terra	input=2.2	output=13.2	cache_read=0.22	cache_write=2.75
 us.openai.gpt-5.6-terra	tier=272000	input=4.4	output=19.8	cache_read=0.44	cache_write=5.5
 us.writer.palmyra-x4-v1:0	input=2.5	output=10.0
@@ -2707,7 +2983,10 @@ google.gemma-4-26b-a4b	input=0.13	output=0.4
 google.gemma-4-31b	input=0.14	output=0.4
 google.gemma-4-e2b	input=0.04	output=0.08
 openai.gpt-5.4	input=2.75	output=16.5	cache_read=0.275
+openai.gpt-5.4	tier=272000	input=5.5	output=24.75	cache_read=0.55
 openai.gpt-5.5	input=5.5	output=33.0	cache_read=0.55
+openai.gpt-5.5	tier=272000	input=11.0	output=49.5	cache_read=1.1
+openai.gpt-5.6-cyber	input=13.75	output=82.5	cache_read=1.375	cache_write=17.1875
 openai.gpt-5.6-luna	input=0.22	output=1.32	cache_read=0.022	cache_write=0.275
 openai.gpt-5.6-luna	tier=272000	input=0.44	output=1.98	cache_read=0.044	cache_write=0.55
 openai.gpt-5.6-sol	input=5.5	output=33.0	cache_read=0.55	cache_write=6.875
@@ -2718,18 +2997,17 @@ openai.gpt-oss-120b	input=0.15	output=0.6
 openai.gpt-oss-20b	input=0.075	output=0.3
 xai.grok-4.3	input=1.25	output=2.5	cache_read=0.2
 xai.grok-4.6	input=2.2	output=6.6	cache_read=0.55
+gemma-4-31b	input=0.99	output=1.49
 zai-glm-4.6	input=2.25	output=2.75
 zai-glm-4.7	input=2.25	output=2.75
 codellama-7b-instruct-awq	input=1.923	output=1.923
 gemma-2b-it-lora	input=0.0	output=0.0
 gemma-7b-it-lora	input=0.0	output=0.0
 granite-4.0-h-micro	input=0.017	output=0.112
-kimi-k2.7-code	input=0.95	output=4.0	cache_read=0.19
 llama-2-7b-chat-fp16	input=1.923	output=1.923
 llama-2-7b-chat-hf-lora	input=0.0	output=0.0
 llama-2-7b-chat-int8	input=1.923	output=1.923
 llama-3.1-8b-instruct-fp8	input=0.152	output=0.287
-llama-3.2-1b-instruct	input=0.027	output=0.201
 llama-3.3-70b-instruct-fp8-fast	input=0.293	output=2.253
 mistral-7b-instruct-v0.2-lora	input=0.0	output=0.0
 nemotron-3-120b-a12b	input=0.5	output=1.5
@@ -2756,63 +3034,93 @@ qwen-turbo-2024-11-01	input=0.05	output=0.2
 qwen-turbo-2025-04-28	input=0.05	output=0.2	reasoning=0.5
 qwen-turbo-latest	input=0.05	output=0.2	reasoning=0.5
 qwen3-vl-32b-thinking	input=0.16	output=2.87
-qwen3.7-max	input=2.5	output=7.5	cache_read=0.5
 qwq-plus	input=0.8	output=2.4
-databricks-claude-3-7-sonnet	input=2.99999	output=15.00002
-databricks-claude-haiku-4-5	input=1.00002	output=5.00003
-databricks-claude-opus-4	input=15.00002	output=75.00003
-databricks-claude-opus-4-1	input=15.00002	output=75.00003
-databricks-claude-opus-4-5	input=5.00003	output=25.00001
-databricks-claude-opus-4-6	input=5.00003	output=25.00001
-databricks-claude-sonnet-4	input=2.99999	output=15.00002
-databricks-claude-sonnet-4-1	input=2.99999	output=15.00002
-databricks-claude-sonnet-4-5	input=2.99999	output=15.00002
-databricks-claude-sonnet-4-6	input=2.99999	output=15.00002
-databricks-gemini-2-5-flash	input=0.30002	output=2.49998
-databricks-gemini-2-5-pro	input=1.24999	output=9.99999
-databricks-gemini-3-1-flash-lite	input=0.31248	output=1.87502
-databricks-gemini-3-1-pro	input=2.49998	output=15.00002
-databricks-gemini-3-flash	input=0.62503	output=3.74997
-databricks-gemini-3-pro	input=2.49998	output=15.00002
-databricks-gemma-3-12b	input=0.15001	output=0.50001
-databricks-gpt-5	input=1.24999	output=9.99999
-databricks-gpt-5-1	input=1.24999	output=9.99999
-databricks-gpt-5-1-codex-max	input=1.24999	output=9.99999
-databricks-gpt-5-1-codex-mini	input=0.24997	output=1.99997
-databricks-gpt-5-2	input=1.75	output=14.0
-databricks-gpt-5-2-codex	input=1.75	output=14.0
-databricks-gpt-5-3-codex	input=1.75	output=14.0
-databricks-gpt-5-4	input=2.49998	output=15.00002
-databricks-gpt-5-4-mini	input=0.74998	output=4.50002
-databricks-gpt-5-4-nano	input=0.19999	output=1.24999
-databricks-gpt-5-mini	input=0.24997	output=1.99997
-databricks-gpt-5-nano	input=0.04998	output=0.39998
-databricks-gpt-oss-120b	input=0.15001	output=0.59997
-databricks-gpt-oss-20b	input=0.07	output=0.30002
-databricks-llama-2-70b-chat	input=0.50001	output=1.50003
-databricks-llama-4-maverick	input=0.50001	output=1.50003
-databricks-meta-llama-3-1-405b-instruct	input=5.00003	output=15.00002
-databricks-meta-llama-3-1-8b-instruct	input=0.15001	output=0.45003
-databricks-meta-llama-3-3-70b-instruct	input=0.50001	output=1.50003
-databricks-meta-llama-3-70b-instruct	input=1.00002	output=2.99999
-databricks-mixtral-8x7b-instruct	input=0.50001	output=1.00002
-databricks-mpt-30b-instruct	input=1.00002	output=1.00002
-databricks-mpt-7b-instruct	input=0.50001	output=0.0
+databricks-claude-3-7-sonnet	input=2.99999	output=15.00002	cache_read=0.30002	cache_write=3.74997
+databricks-claude-fable-5	input=10.00006	output=50.00002	cache_read=1.00002	cache_write=12.50004
+databricks-claude-haiku-4-5	input=1.00002	output=5.00003	cache_read=0.10003	cache_write=1.24999
+databricks-claude-opus-4	input=15.00002	output=75.00003	cache_read=1.50003	cache_write=18.74999
+databricks-claude-opus-4-1	input=15.00002	output=75.00003	cache_read=1.50003	cache_write=18.74999
+databricks-claude-opus-4-5	input=5.00003	output=25.00001	cache_read=0.50001	cache_write=6.25002
+databricks-claude-opus-4-6	input=5.00003	output=25.00001	cache_read=0.50001	cache_write=6.25002
+databricks-claude-opus-4-7	input=5.00003	output=25.00001	cache_read=0.50001	cache_write=6.25002
+databricks-claude-opus-4-8	input=5.00003	output=25.00001	cache_read=0.50001	cache_write=6.25002
+databricks-claude-opus-5	input=5.00003	output=25.00001	cache_read=0.50001	cache_write=6.25002
+databricks-claude-sonnet-4	input=2.99999	output=15.00002	cache_read=0.30002	cache_write=3.74997
+databricks-claude-sonnet-4-1	input=2.99999	output=15.00002	cache_read=0.30002	cache_write=3.74997
+databricks-claude-sonnet-4-5	input=2.99999	output=15.00002	cache_read=0.30002	cache_write=3.74997
+databricks-claude-sonnet-4-6	input=2.99999	output=15.00002	cache_read=0.30002	cache_write=3.74997
+databricks-claude-sonnet-5	input=2.99999	output=15.00002	cache_read=0.30002	cache_write=3.74997
+databricks-deepseek-v4-flash-0731	input=0.14	output=0.28	cache_read=0.028	cache_write=0.14
+databricks-deepseek-v4-pro-0813	input=1.31999	output=3.95997	cache_read=0.13202	cache_write=1.31999
+databricks-gemini-2-5-flash	input=0.30002	output=2.49998	cache_read=0.030002	cache_write=0.30002
+databricks-gemini-2-5-pro	input=1.24999	output=9.99999	cache_read=0.124999	cache_write=1.24999
+databricks-gemini-3-1-flash-lite	input=0.31248	output=1.87502	cache_read=0.03122	cache_write=0.31248
+databricks-gemini-3-1-pro	input=2.49998	output=15.00002	cache_read=0.24997	cache_write=2.49998
+databricks-gemini-3-flash	input=0.62503	output=3.74997	cache_read=0.06251	cache_write=0.62503
+databricks-gemini-3-pro	input=2.49998	output=15.00002	cache_read=0.24997	cache_write=2.49998
+databricks-gemma-3-12b	input=0.15001	output=0.50001	cache_read=0.15001	cache_write=0.15001
+databricks-glm-5-2	input=1.4	output=4.39999	cache_read=0.25998	cache_write=1.4
+databricks-gpt-5	input=1.24999	output=9.99999	cache_read=0.12502	cache_write=1.24999
+databricks-gpt-5-1	input=1.24999	output=9.99999	cache_read=0.12502	cache_write=1.24999
+databricks-gpt-5-1-codex-max	input=1.24999	output=9.99999	cache_read=0.12502	cache_write=1.24999
+databricks-gpt-5-1-codex-mini	input=0.24997	output=1.99997	cache_read=0.02499	cache_write=0.24997
+databricks-gpt-5-2	input=1.75	output=14.0	cache_read=0.175	cache_write=1.75
+databricks-gpt-5-2-codex	input=1.75	output=14.0	cache_read=0.175	cache_write=1.75
+databricks-gpt-5-3-codex	input=1.75	output=14.0	cache_read=0.175	cache_write=1.75
+databricks-gpt-5-4	input=2.49998	output=15.00002	cache_read=0.24997	cache_write=2.49998
+databricks-gpt-5-4-mini	input=0.74998	output=4.50002	cache_read=0.07497	cache_write=0.74998
+databricks-gpt-5-4-nano	input=0.19999	output=1.24999	cache_read=0.02002	cache_write=0.19999
+databricks-gpt-5-mini	input=0.24997	output=1.99997	cache_read=0.02499	cache_write=0.24997
+databricks-gpt-5-nano	input=0.04998	output=0.39998	cache_read=0.00497	cache_write=0.04998
+databricks-gpt-oss-120b	input=0.15001	output=0.59997	cache_read=0.15001	cache_write=0.15001
+databricks-gpt-oss-20b	input=0.07	output=0.30002	cache_read=0.07	cache_write=0.07
+databricks-kimi-k3	input=2.99999	output=15.00002	cache_read=0.30002	cache_write=2.99999
+databricks-llama-2-70b-chat	input=0.50001	output=1.50003	cache_read=0.50001	cache_write=0.50001
+databricks-llama-4-maverick	input=0.50001	output=1.50003	cache_read=0.50001	cache_write=0.50001
+databricks-meta-llama-3-1-405b-instruct	input=5.00003	output=15.00002	cache_read=5.00003	cache_write=5.00003
+databricks-meta-llama-3-1-8b-instruct	input=0.15001	output=0.45003	cache_read=0.15001	cache_write=0.15001
+databricks-meta-llama-3-3-70b-instruct	input=0.50001	output=1.50003	cache_read=0.50001	cache_write=0.50001
+databricks-meta-llama-3-70b-instruct	input=1.00002	output=2.99999	cache_read=1.00002	cache_write=1.00002
+databricks-mixtral-8x7b-instruct	input=0.50001	output=1.00002	cache_read=0.50001	cache_write=0.50001
+databricks-mpt-30b-instruct	input=1.00002	output=1.00002	cache_read=1.00002	cache_write=1.00002
+databricks-mpt-7b-instruct	input=0.50001	output=0.0	cache_read=0.50001	cache_write=0.50001
 claude-3-7-sonnet-latest	input=3.3	output=16.5	cache_read=0.33
 deepseek-r1-0528-turbo	input=1.0	output=3.0
 deepseek-v3.1-terminus	input=0.27	output=1.0	cache_read=0.216
-gemma-3-4b-it	input=0.04	output=0.08
+gemini-3.1-flash-lite	input=0.25	output=1.5
+gemini-3.1-pro	input=2.0	output=12.0
+gemini-3.5-flash	input=1.5	output=9.0
+gemini-3.7-flash	input=0.75	output=3.75
+gemma-3-4b-it	input=0.05	output=0.1
+gemma-4-31b-it-turbo	input=0.09	output=0.34	cache_read=0.05
+gemma-4-31b-it-ultra	input=0.27	output=0.76
+gemma-4-e4b-it	input=0.02	output=0.1
+gpt-oss-120b-turbo	input=0.15	output=0.6
+gpt-oss-120b-ultra	input=0.2	output=0.95
+hy3	input=0.14	output=0.58	cache_read=0.035
 l3-8b-lunaris-v1-turbo	input=0.04	output=0.05
-l3.1-70b-euryale-v2.2	input=0.65	output=0.75
+l3.1-70b-euryale-v2.2	input=0.85	output=0.85
 l3.3-70b-euryale-v2.3	input=0.65	output=0.75
+ling-3.0-flash	input=0.06	output=0.18	cache_read=0.012
 llama-3.1-nemotron-70b-instruct	input=0.6	output=0.6
 llama-3.3-nemotron-super-49b-v1.5	input=0.1	output=0.4
-nvidia-nemotron-3.5-lightning	input=0.05	output=0.2
+minimax-m2.7-turbo	input=0.38	output=1.7	cache_read=0.07
+nemotron-3-nano-30b-a3b	input=0.05	output=0.2	cache_read=0.025
+nemotron-content-safety-3.5	input=0.2	output=0.2
+nvidia-nemotron-3-super-120b-a12b	input=0.085	output=0.4
+nvidia-nemotron-3.5-lightning	input=0.08	output=0.2	cache_read=0.04
 olmocr-7b-0725-fp8	input=0.27	output=1.5
 qwen2.5-vl-32b-instruct	input=0.2	output=0.6
-qwen3-coder-480b-a35b-instruct-turbo	input=0.29	output=1.2
+qwen3-coder-480b-a35b-instruct-turbo	input=0.3	output=1.0	cache_read=0.1
+qwen3-max-thinking	input=1.2	output=6.0	cache_read=0.24
+seed-1.8	input=0.25	output=2.0	cache_read=0.05
+seed-2.0-code	input=0.5	output=3.0	cache_read=0.1
+seed-2.0-mini	input=0.1	output=0.4	cache_read=0.02
+seed-2.0-pro	input=0.5	output=3.0	cache_read=0.1
+step-3.7-flash	input=0.2	output=1.15	cache_read=0.04
 deepseek-coder	input=0.14	output=0.28
 deepseek-reasoner	input=0.28	output=0.42	cache_read=0.028
+deepseek-v4-flash-vision-exp	input=0.44	output=1.32	cache_read=0.014	cache_write=0.0
 chronos-hermes-13b-v2	input=0.2	output=0.2
 code-llama-13b	input=0.2	output=0.2
 code-llama-13b-instruct	input=0.2	output=0.2
@@ -2878,6 +3186,7 @@ glm-5p1-fast	input=2.8	output=8.8	cache_read=0.52
 glm-5p2	input=1.4	output=4.4	cache_read=0.14
 glm-5p2-fast	input=2.1	output=6.6	cache_read=0.21
 glm-5p2-fast-us	input=2.1	output=6.6	cache_read=0.21
+glm-5p3	input=1.4	output=4.4	cache_read=0.26
 gpt-oss-safeguard-120b	input=1.2	output=1.2
 hermes-2-pro-mistral-7b	input=0.2	output=0.2
 internvl3-38b	input=0.9	output=0.9
@@ -2891,7 +3200,6 @@ kimi-k2p6	input=0.95	output=4.0	cache_read=0.16
 kimi-k2p6-fast	input=2.0	output=8.0	cache_read=0.3
 kimi-k2p7-code	input=0.95	output=4.0	cache_read=0.19
 kimi-k2p7-code-fast	input=1.9	output=8.0	cache_read=0.38
-kimi-k3	input=3.0	output=15.0	cache_read=0.3
 kimi-k3-fast	input=4.5	output=22.5	cache_read=0.45
 kimi-k3-us	input=3.3	output=16.5	cache_read=0.33
 llama-guard-2-8b	input=0.2	output=0.2
@@ -2925,7 +3233,6 @@ llamaguard-7b	input=0.2	output=0.2
 llava-yi-34b	input=0.9	output=0.9
 minimax-m2p1	input=0.3	output=1.2	cache_read=0.03
 minimax-m2p7	input=0.3	output=1.2	cache_read=0.06
-minimax-m3	input=0.3	output=1.2	cache_read=0.06
 ministral-3-14b-instruct-2512	input=0.2	output=0.2
 ministral-3-3b-instruct-2512	input=0.1	output=0.1
 ministral-3-8b-instruct-2512	input=0.2	output=0.2
@@ -2940,7 +3247,6 @@ mixtral-8x22b	input=1.2	output=1.2
 mixtral-8x22b-instruct-hf	input=1.2	output=1.2
 mixtral-8x7b	input=0.5	output=0.5
 mixtral-8x7b-instruct-hf	input=0.5	output=0.5
-muse-glimmer-30b	input=0.35	output=1.5	cache_read=0.04
 nemotron-3-ultra-nvfp4	input=0.6	output=2.4	cache_read=0.12
 nemotron-lightning-3p5-30b-a3b	input=0.05	output=0.2	cache_read=0.01
 nemotron-nano-v2-12b-vl	input=0.1	output=0.1
@@ -3001,7 +3307,6 @@ qwen3-1p7b	input=0.1	output=0.1
 qwen3-1p7b-fp8-draft	input=0.1	output=0.1
 qwen3-1p7b-fp8-draft-131072	input=0.1	output=0.1
 qwen3-1p7b-fp8-draft-40960	input=0.1	output=0.1
-qwen3-30b-a3b-instruct-2507	input=0.5	output=0.5
 qwen3-30b-a3b-thinking-2507	input=0.9	output=0.9
 qwen3-4b-instruct-2507	input=0.2	output=0.2
 qwen3-coder-480b-instruct-bf16	input=0.9	output=0.9
@@ -3021,42 +3326,40 @@ yi-34b-200k-capybara	input=0.9	output=0.9
 yi-34b-chat	input=0.9	output=0.9
 yi-6b	input=0.2	output=0.2
 yi-large	input=3.0	output=3.0
+glm-5.3-flash	input=0.15	output=0.5	cache_read=0.03
 gemini-2.0-flash-lite	input=0.075	output=0.3	cache_read=0.01875
 gemini-2.0-flash-lite-001	input=0.075	output=0.3	cache_read=0.01875
 gemini-2.5-computer-use-preview-10-2025	input=1.25	output=10.0
 gemini-2.5-computer-use-preview-10-2025	tier=200000	input=2.5	output=15.0
 gemini-2.5-flash-lite	input=0.1	output=0.4	cache_read=0.01	reasoning=0.4
-gemini-2.5-flash-lite-preview-06-17	input=0.1	output=0.4	cache_read=0.025	reasoning=0.4
+gemini-2.5-flash-lite-preview-06-17	input=0.1	output=0.4	cache_read=0.01	reasoning=0.4
 gemini-2.5-flash-lite-preview-09-2025	input=0.1	output=0.4	cache_read=0.01	reasoning=0.4
-gemini-2.5-flash-native-audio-latest	input=0.3	output=2.5
-gemini-2.5-flash-native-audio-preview-09-2025	input=0.3	output=2.5
-gemini-2.5-flash-native-audio-preview-12-2025	input=0.3	output=2.5
-gemini-2.5-flash-preview-09-2025	input=0.3	output=2.5	cache_read=0.075	reasoning=2.5
-gemini-2.5-pro-preview-tts	input=1.25	output=10.0	cache_read=0.125
-gemini-2.5-pro-preview-tts	tier=200000	input=2.5	output=15.0	cache_read=0.25
+gemini-2.5-flash-native-audio-latest	input=0.5	output=2.0
+gemini-2.5-flash-native-audio-preview-09-2025	input=0.5	output=2.0
+gemini-2.5-flash-native-audio-preview-12-2025	input=0.5	output=2.0
+gemini-2.5-flash-preview-09-2025	input=0.3	output=2.5	cache_read=0.03	reasoning=2.5
+gemini-2.5-pro-preview-tts	input=1.0	output=20.0	cache_read=0.125
 gemini-3-flash-preview	input=0.5	output=3.0	cache_read=0.05	reasoning=3.0
 gemini-3-pro-preview	input=2.0	output=12.0	cache_read=0.2
 gemini-3-pro-preview	tier=200000	input=4.0	output=18.0	cache_read=0.4
-gemini-3.1-flash-lite	input=0.25	output=1.5	cache_read=0.025	reasoning=1.5
 gemini-3.1-flash-lite-preview	input=0.25	output=1.5	cache_read=0.025	reasoning=1.5
 gemini-3.1-flash-live-preview	input=0.75	output=4.5
 gemini-3.1-pro-preview	input=2.0	output=12.0	cache_read=0.2
 gemini-3.1-pro-preview	tier=200000	input=4.0	output=18.0	cache_read=0.4
 gemini-3.1-pro-preview-customtools	input=2.0	output=12.0	cache_read=0.2
 gemini-3.1-pro-preview-customtools	tier=200000	input=4.0	output=18.0	cache_read=0.4
-gemini-3.5-flash	input=1.5	output=9.0	cache_read=0.15	reasoning=9.0
 gemini-3.5-flash-lite	input=0.3	output=2.5	cache_read=0.03	reasoning=2.5
 gemini-3.5-live-translate-preview	input=3.5	output=21.0
 gemini-3.6-flash	input=0.75	output=3.75	cache_read=0.075	reasoning=3.75
-gemini-3.7-flash	input=0.75	output=3.75	cache_read=0.075	reasoning=3.75
 gemini-exp-1114	input=0.0	output=0.0
 gemini-exp-1114	tier=128000	input=0.0	output=0.0
 gemini-exp-1206	input=0.0	output=0.0
 gemini-exp-1206	tier=128000	input=0.0	output=0.0
-gemini-flash-latest	input=0.3	output=2.5	cache_read=0.075	reasoning=2.5
-gemini-flash-lite-latest	input=0.1	output=0.4	cache_read=0.025	reasoning=0.4
+gemini-flash-latest	input=0.3	output=2.5	cache_read=0.03	reasoning=2.5
+gemini-flash-lite-latest	input=0.1	output=0.4	cache_read=0.01	reasoning=0.4
 gemini-gemma-2-27b-it	input=0.35	output=1.05
 gemini-gemma-2-9b-it	input=0.35	output=1.05
+gemini-omni-1.1-flash	input=1.5	output=9.0	reasoning=9.0
 gemini-omni-flash-preview	input=1.5	output=9.0	reasoning=9.0
 gemini-pro-latest	input=1.25	output=10.0	cache_read=0.125
 gemini-pro-latest	tier=200000	input=2.5	output=15.0	cache_read=0.25
@@ -3068,7 +3371,7 @@ learnlm-1.5-pro-experimental	input=0.0	output=0.0
 learnlm-1.5-pro-experimental	tier=128000	input=0.0	output=0.0
 lyria-3-clip-preview	input=0.0	output=0.0
 lyria-3-pro-preview	input=0.0	output=0.0
-gigachat-2-lite	input=0.0	output=0.0
+gigachat-2	input=0.0	output=0.0
 gigachat-2-max	input=0.0	output=0.0
 gigachat-2-pro	input=0.0	output=0.0
 mai-code-1-flash	input=0.75	output=4.5	cache_read=0.075
@@ -3133,7 +3436,7 @@ muse-spark-1.2	input=1.25	output=4.25	cache_read=0.15
 muse-spark-1.2-contributor	input=0.1	output=0.2	cache_read=0.002
 minimax-m2.1-lightning	input=0.3	output=2.4	cache_read=0.03	cache_write=0.375
 minimax-m2.5-lightning	input=0.3	output=2.4	cache_read=0.03	cache_write=0.375
-codestral-2508	input=0.3	output=0.9
+codestral-2508	input=0.3	output=0.9	cache_read=0.03
 codestral-mamba-latest	input=0.25	output=0.25
 devstral-latest	input=0.4	output=2.0
 devstral-medium-2507	input=0.4	output=2.0
@@ -3143,6 +3446,7 @@ devstral-small-latest	input=0.1	output=0.3
 glm-5-2	input=1.4	output=4.4	cache_read=0.14
 labs-devstral-small-2512	input=0.1	output=0.3
 labs-leanstral-1-5	input=0.0	output=0.0
+labs-leanstral-1-5-1	input=0.0	output=0.0
 magistral-medium-1-2-2509	input=2.0	output=5.0
 magistral-medium-2506	input=2.0	output=5.0
 magistral-medium-2509	input=2.0	output=5.0
@@ -3150,24 +3454,35 @@ magistral-medium-latest	input=2.0	output=5.0
 magistral-small-1-2-2509	input=0.5	output=1.5
 magistral-small-2506	input=0.5	output=1.5
 magistral-small-latest	input=0.5	output=1.5
-ministral-3-14b-2512	input=0.2	output=0.2
-ministral-3-3b-2512	input=0.1	output=0.1
-ministral-3-8b-2512	input=0.15	output=0.15
-ministral-8b-2512	input=0.15	output=0.15
-ministral-8b-latest	input=0.15	output=0.15
+ministral-14b-2512	input=0.2	output=0.2
+ministral-14b-latest	input=0.2	output=0.2
+ministral-3-14b-2512	input=0.2	output=0.2	cache_read=0.02
+ministral-3-3b-2512	input=0.1	output=0.1	cache_read=0.01
+ministral-3-8b-2512	input=0.15	output=0.15	cache_read=0.015
+ministral-3b-2512	input=0.1	output=0.1
+ministral-3b-latest	input=0.1	output=0.1
+ministral-8b-2512	input=0.15	output=0.15	cache_read=0.015
+ministral-8b-latest	input=0.15	output=0.15	cache_read=0.015
+mistral-code-agent-latest	input=0.4	output=2.0
+mistral-code-fim-latest	input=0.3	output=0.9	cache_read=0.03
+mistral-code-latest	input=0.3	output=0.9	cache_read=0.03
 mistral-large-2411	input=2.0	output=6.0
-mistral-large-2512	input=0.5	output=1.5
+mistral-large-2512	input=0.5	output=1.5	cache_read=0.05
 mistral-medium	input=2.7	output=8.1
 mistral-medium-2312	input=2.7	output=8.1
 mistral-medium-2508	input=0.4	output=2.0
-mistral-medium-2604	input=1.5	output=7.5
+mistral-medium-2604	input=1.5	output=7.5	cache_read=0.15
 mistral-medium-3-1-2508	input=0.4	output=2.0
-mistral-medium-3-5	input=1.5	output=7.5
-mistral-medium-latest	input=1.5	output=7.5
-mistral-small-2603	input=0.15	output=0.6
+mistral-medium-3-5	input=1.5	output=7.5	cache_read=0.15
+mistral-medium-3.5	input=1.5	output=7.5	cache_read=0.15
+mistral-medium-latest	input=1.5	output=7.5	cache_read=0.15
+mistral-small-2603	input=0.15	output=0.6	cache_read=0.015
 mistral-small-3-2-2506	input=0.06	output=0.18
-mistral-small-latest	input=0.15	output=0.6
+mistral-small-latest	input=0.15	output=0.6	cache_read=0.015
 mistral-tiny	input=0.25	output=0.25
+mistral-vibe-cli-fast	input=0.15	output=0.6	cache_read=0.015
+mistral-vibe-cli-latest	input=1.5	output=7.5	cache_read=0.15
+mistral-vibe-cli-with-tools	input=1.5	output=7.5	cache_read=0.15
 open-codestral-mamba	input=0.25	output=0.25
 open-mistral-7b	input=0.25	output=0.25
 open-mistral-nemo	input=0.3	output=0.3
@@ -3176,6 +3491,8 @@ open-mixtral-8x22b	input=2.0	output=6.0
 open-mixtral-8x7b	input=0.7	output=0.7
 pixtral-large-2411	input=2.0	output=6.0
 pixtral-large-latest	input=2.0	output=6.0
+voxtral-small-2507	input=0.1	output=0.4
+voxtral-small-latest	input=0.1	output=0.4
 zai-glm-5-2	input=1.4	output=4.4	cache_read=0.14
 kimi-k2-0711-preview	input=0.6	output=2.5	cache_read=0.15
 kimi-k2-0905-preview	input=0.6	output=2.5	cache_read=0.15
@@ -3205,18 +3522,26 @@ chatdolphin	input=0.5	output=0.5
 dolphin	input=0.5	output=0.5
 autoglm-phone-9b-multilingual	input=0.035	output=0.138
 baichuan-m2-32b	input=0.07	output=0.07
+cobuddy	input=0.28	output=1.13	cache_read=0.07
+community	input=0.89	output=0.89
 deepseek-ocr	input=0.03	output=0.03
+deepseek-ocr-2	input=0.03	output=0.03
 deepseek-prover-v2-671b	input=0.7	output=2.5
 deepseek-r1-0528-qwen3-8b	input=0.06	output=0.09
 deepseek-v3-turbo	input=0.4	output=1.3
+deepseek_v3	input=0.89	output=0.89
 ernie-4.5-21b-a3b	input=0.07	output=0.28
 ernie-4.5-21b-a3b-thinking	input=0.07	output=0.28
 ernie-4.5-300b-a47b-paddle	input=0.28	output=1.1
 ernie-4.5-vl-28b-a3b	input=0.14	output=0.56
 ernie-4.5-vl-28b-a3b-thinking	input=0.39	output=0.39
 ernie-4.5-vl-424b-a47b	input=0.42	output=1.25
+glm-4-32b-0414	input=0.55	output=1.66
 glm-4.5v	input=0.6	output=1.8	cache_read=0.11
 glm-4.6v	input=0.3	output=0.9	cache_read=0.055
+glm-4.7-h	input=0.6	output=2.2	cache_read=0.11
+glm-5-turbo	input=1.2	output=4.0	cache_read=0.24
+glm-5v-turbo	input=1.2	output=4.0	cache_read=0.24
 hermes-2-pro-llama-3-8b	input=0.14	output=0.14
 kat-coder-pro	input=0.3	output=1.2	cache_read=0.06
 kimi-k2-0905	input=0.6	output=2.5
@@ -3224,14 +3549,18 @@ l3-70b-euryale-v2.1	input=1.48	output=1.48
 l3-8b-lunaris	input=0.05	output=0.05
 l3-8b-stheno-v3.2	input=0.05	output=0.05
 l31-70b-euryale-v2.2	input=1.48	output=1.48
-mimo-v2-flash	input=0.1	output=0.3	cache_read=0.02
+ling-3.0-flash-fast	input=0.06	output=0.18	cache_read=0.012
+macaron-v1-tall	input=0.45	output=2.6	cache_read=0.08
+macaron-v1-venti	input=1.5	output=4.5	cache_read=0.3
+minimax-m2.5-highspeed	input=0.6	output=2.4	cache_read=0.03
+minimax-m2.7-highspeed	input=0.6	output=2.4	cache_read=0.06
 paddleocr-vl	input=0.02	output=0.02
 qwen-2.5-72b-instruct	input=0.38	output=0.4
 qwen-mt-plus	input=0.25	output=0.75
 qwen3-235b-a22b-fp8	input=0.2	output=0.8
 qwen3-4b-fp8	input=0.03	output=0.03
 qwen3-8b-fp8	input=0.035	output=0.138
-qwen3-max	input=2.11	output=8.45
+qwen3-coder-next	input=0.2	output=1.5
 qwen3-omni-30b-a3b-instruct	input=0.25	output=0.97
 qwen3-omni-30b-a3b-thinking	input=0.25	output=0.97
 r1v4-lite	input=0.2	output=0.6
@@ -3353,13 +3682,8 @@ claude-sonnet-4.6	input=3.0	output=15.0	cache_read=0.3	cache_write=3.75
 claude-sonnet-4.6	tier=200000	input=6.0	output=22.5	cache_read=0.6	cache_write=7.5
 deepseek-chat-v3-0324	input=0.14	output=0.28
 deepseek-chat-v3.1	input=0.2	output=0.8
-deepseek-v4-pro-0813	input=1.32	output=3.96
 free	input=0.0	output=0.0
 glm-4.6:exacto	input=0.45	output=1.9
-mimo-v2.5	input=0.4	output=2.0	cache_read=0.08	cache_write=0.0
-mimo-v2.5-pro	input=1.0	output=3.0	cache_read=0.2	cache_write=0.0
-ministral-14b-2512	input=0.2	output=0.2
-ministral-3b-2512	input=0.1	output=0.1
 mistral-small-3.2-24b-instruct	input=0.1	output=0.3
 nemotron-3.5-lightning	input=0.05	output=0.2
 o3-mini-high	input=1.1	output=4.4
@@ -3367,13 +3691,9 @@ qwen-2.5-coder-32b-instruct	input=0.18	output=0.18
 qwen-vl-plus	input=0.21	output=0.63
 qwen3-235b-a22b-2507	input=0.071	output=0.1
 qwen3-coder-plus	input=1.0	output=5.0
-qwen3.5-27b	input=0.3	output=2.4
-qwen3.5-35b-a3b	input=0.25	output=2.0
-qwen3.5-397b-a17b	input=0.6	output=3.6
 qwen3.5-flash-02-23	input=0.1	output=0.4
 qwen3.5-plus-02-15	input=0.4	output=2.4
 qwen3.5-plus-02-15	tier=256000	input=0.5	output=3.0
-qwen3.6-plus	input=0.325	output=1.95
 remm-slerp-l2-13b	input=1.875	output=1.875
 router	input=0.85	output=3.4
 ui-tars-1.5-7b	input=0.1	output=0.2
@@ -3391,7 +3711,6 @@ text-bison-safety-off	input=0.125	output=0.125
 text-bison-safety-recitation-off	input=0.125	output=0.125
 codellama-34b-instruct	input=0.35	output=1.4
 codellama-70b-instruct	input=0.7	output=2.8
-llama-3.1-70b-instruct	input=1.0	output=1.0
 pplx-70b-chat	input=0.7	output=2.8
 pplx-70b-online	input=0.0	output=2.8
 pplx-7b-chat	input=0.07	output=0.28
@@ -3461,11 +3780,17 @@ ft:babbage-002	input=1.6	output=1.6
 ft:davinci-002	input=12.0	output=12.0
 gpt-3.5-turbo-instruct	input=1.5	output=2.0
 deepseek-r1-0528-tput	input=0.55	output=2.19
+gemma-3n-e4b-it	input=0.06	output=0.12
 glm-4.5-air-fp8	input=0.2	output=1.1
 llama-3.3-70b-instruct-turbo-free	input=0.0	output=0.0
 meta-llama-3.1-405b-instruct-turbo	input=3.5	output=3.5
+nemotron-3-ultra-550b-a55b	input=0.6	output=3.6	cache_read=0.2
+qwen-2-1.5b-instruct	input=0.1	output=0.1
 qwen3-235b-a22b-fp8-tput	input=0.2	output=0.6
 qwen3-235b-a22b-instruct-2507-tput	input=0.2	output=6.0
+qwen3.7-plus	input=0.32	output=1.28
+qwen3.8-flash	input=0.15	output=0.47
+ternary-bonsai-27b	input=0.0	output=0.0
 together-ai-21.1b-41b	input=0.8	output=0.8
 together-ai-4.1b-8b	input=0.2	output=0.2
 together-ai-41.1b-80b	input=0.9	output=0.9
@@ -3486,7 +3811,6 @@ gemma-2-9b	input=0.2	output=0.2
 grok-2	input=2.0	output=10.0
 grok-2-vision	input=2.0	output=10.0
 grok-3-fast	input=5.0	output=25.0
-grok-3-mini-fast	input=0.6	output=4.0
 kimi-k2	input=0.55	output=2.2
 llama-3.1-70b	input=0.72	output=0.72
 llama-3.2-11b	input=0.16	output=0.16
@@ -3511,8 +3835,6 @@ qwen-3-30b	input=0.1	output=0.3
 titan-embed-text-v2	input=0.02	output=0.0
 grok-4.1-fast-non-reasoning	input=0.2	output=0.5	cache_read=0.05
 grok-4.1-fast-reasoning	input=0.2	output=0.5	cache_read=0.05
-grok-4.20-non-reasoning	input=2.0	output=6.0	cache_read=0.2
-grok-4.20-reasoning	input=2.0	output=6.0	cache_read=0.2
 claude-3-5-haiku	input=1.0	output=5.0
 claude-3-5-haiku@20241022	input=1.0	output=5.0
 claude-3-5-sonnet@20240620	input=3.0	output=15.0
@@ -3521,6 +3843,7 @@ claude-3-haiku@20240307	input=0.25	output=1.25
 claude-3-opus@20240229	input=15.0	output=75.0
 claude-3-sonnet	input=3.0	output=15.0
 claude-3-sonnet@20240229	input=3.0	output=15.0
+claude-fable-5-1@default	input=10.0	output=50.0	cache_read=0.25	cache_write=12.5
 claude-fable-5@default	input=10.0	output=50.0	cache_read=1.0	cache_write=12.5
 claude-haiku-4-5@20251001	input=1.0	output=5.0	cache_read=0.1	cache_write=1.25
 claude-opus-4-1@20250805	input=15.0	output=75.0	cache_read=1.5	cache_write=18.75
@@ -3559,7 +3882,6 @@ codestral@latest	input=0.2	output=0.6
 mistral-large@2407	input=2.0	output=6.0
 mistral-large@2411-001	input=2.0	output=6.0
 mistral-large@latest	input=2.0	output=6.0
-mistral-medium-3	input=0.4	output=2.0
 mistral-medium-3@001	input=0.4	output=2.0
 mistral-nemo@2407	input=3.0	output=3.0
 mistral-nemo@latest	input=0.15	output=0.15
@@ -3579,6 +3901,10 @@ glm-5-maas	input=1.0	output=3.2	cache_read=0.1
 deepseek-v3-2-251201	input=0.0	output=0.0
 glm-4-7-251222	input=0.0	output=0.0
 kimi-k2-thinking-251104	input=0.0	output=0.0
+granite-4.1-8b	input=0.05	output=0.1
+mellum2-12b-a2.5b-instruct	input=0.05	output=0.1
+nvidia-nemotron-3.5-lightning-30b-a3b	input=0.1	output=0.25	cache_read=0.05
+qwen3-14b-instruct	input=0.05	output=0.22
 allam-1-13b-instruct	input=1.8	output=1.8
 flan-t5-xl-3b	input=0.6	output=0.6
 granite-13b-chat-v2	input=0.6	output=0.6
@@ -3602,28 +3928,34 @@ llama-4-maverick-17b	input=0.35	output=1.4
 llama-guard-3-11b-vision	input=0.35	output=0.35
 mistral-small-3-1-24b-instruct-2503	input=0.1	output=0.3
 mt0-xxl-13b	input=500.0	output=2000.0
-grok-2-1212	input=2.0	output=10.0
-grok-2-latest	input=2.0	output=10.0
-grok-2-vision-1212	input=2.0	output=10.0
-grok-2-vision-latest	input=2.0	output=10.0
-grok-3-beta	input=3.0	output=15.0	cache_read=0.75
-grok-3-fast-beta	input=5.0	output=25.0	cache_read=1.25
-grok-3-fast-latest	input=5.0	output=25.0	cache_read=1.25
-grok-3-latest	input=3.0	output=15.0	cache_read=0.75
-grok-3-mini-beta	input=0.3	output=0.5	cache_read=0.075
-grok-3-mini-fast-beta	input=0.6	output=4.0	cache_read=0.15
-grok-3-mini-fast-latest	input=0.6	output=4.0	cache_read=0.15
-grok-3-mini-latest	input=0.3	output=0.5	cache_read=0.075
-grok-4-0709	input=3.0	output=15.0
-grok-4-0709	tier=128000	input=6.0	output=30.0
-grok-4-1-fast	input=0.2	output=0.5	cache_read=0.05
-grok-4-1-fast	tier=128000	input=0.4	output=1.0
-grok-4-1-fast-non-reasoning-latest	input=0.2	output=0.5	cache_read=0.05
-grok-4-1-fast-non-reasoning-latest	tier=128000	input=0.4	output=1.0
-grok-4-1-fast-reasoning-latest	input=0.2	output=0.5	cache_read=0.05
-grok-4-1-fast-reasoning-latest	tier=128000	input=0.4	output=1.0
-grok-4-latest	input=3.0	output=15.0
-grok-4-latest	tier=128000	input=6.0	output=30.0
+grok-3-beta	input=1.25	output=2.5	cache_read=0.2
+grok-3-beta	tier=200000	input=2.5	output=5.0	cache_read=0.4
+grok-3-fast-beta	input=1.25	output=2.5	cache_read=0.2
+grok-3-fast-beta	tier=200000	input=2.5	output=5.0	cache_read=0.4
+grok-3-fast-latest	input=1.25	output=2.5	cache_read=0.2
+grok-3-fast-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+grok-3-latest	input=1.25	output=2.5	cache_read=0.2
+grok-3-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+grok-3-mini-beta	input=1.25	output=2.5	cache_read=0.2
+grok-3-mini-beta	tier=200000	input=2.5	output=5.0	cache_read=0.4
+grok-3-mini-fast-beta	input=1.25	output=2.5	cache_read=0.2
+grok-3-mini-fast-beta	tier=200000	input=2.5	output=5.0	cache_read=0.4
+grok-3-mini-fast-latest	input=1.25	output=2.5	cache_read=0.2
+grok-3-mini-fast-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+grok-3-mini-latest	input=1.25	output=2.5	cache_read=0.2
+grok-3-mini-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+grok-4-0709	input=1.25	output=2.5	cache_read=0.2
+grok-4-0709	tier=200000	input=2.5	output=5.0	cache_read=0.4
+grok-4-1-fast	input=1.25	output=2.5	cache_read=0.2
+grok-4-1-fast	tier=200000	input=2.5	output=5.0	cache_read=0.4
+grok-4-1-fast-non-reasoning-latest	input=1.25	output=2.5	cache_read=0.2
+grok-4-1-fast-non-reasoning-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+grok-4-1-fast-reasoning-latest	input=1.25	output=2.5	cache_read=0.2
+grok-4-1-fast-reasoning-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+grok-4-latest	input=1.25	output=2.5	cache_read=0.2
+grok-4-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+grok-4.20	input=1.25	output=2.5	cache_read=0.2
+grok-4.20	tier=200000	input=2.5	output=5.0	cache_read=0.4
 grok-4.20-0309-non-reasoning	input=1.25	output=2.5	cache_read=0.2
 grok-4.20-0309-non-reasoning	tier=200000	input=2.5	output=5.0	cache_read=0.4
 grok-4.20-0309-reasoning	input=1.25	output=2.5	cache_read=0.2
@@ -3632,10 +3964,18 @@ grok-4.20-beta-0309-non-reasoning	input=1.25	output=2.5	cache_read=0.2
 grok-4.20-beta-0309-non-reasoning	tier=200000	input=2.5	output=5.0	cache_read=0.4
 grok-4.20-beta-0309-reasoning	input=1.25	output=2.5	cache_read=0.2
 grok-4.20-beta-0309-reasoning	tier=200000	input=2.5	output=5.0	cache_read=0.4
+grok-4.20-multi-agent	input=1.25	output=2.5	cache_read=0.2
+grok-4.20-multi-agent	tier=200000	input=2.5	output=5.0	cache_read=0.4
 grok-4.20-multi-agent-0309	input=1.25	output=2.5	cache_read=0.2
 grok-4.20-multi-agent-0309	tier=200000	input=2.5	output=5.0	cache_read=0.4
 grok-4.20-multi-agent-beta-0309	input=1.25	output=2.5	cache_read=0.2
 grok-4.20-multi-agent-beta-0309	tier=200000	input=2.5	output=5.0	cache_read=0.4
+grok-4.20-multi-agent-latest	input=1.25	output=2.5	cache_read=0.2
+grok-4.20-multi-agent-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+grok-4.20-non-reasoning-latest	input=1.25	output=2.5	cache_read=0.2
+grok-4.20-non-reasoning-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
+grok-4.20-reasoning-latest	input=1.25	output=2.5	cache_read=0.2
+grok-4.20-reasoning-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
 grok-4.3-latest	input=1.25	output=2.5	cache_read=0.2
 grok-4.3-latest	tier=200000	input=2.5	output=5.0	cache_read=0.4
 grok-4.5	input=2.0	output=6.0	cache_read=0.3
@@ -3644,14 +3984,12 @@ grok-4.5-latest	input=2.0	output=6.0	cache_read=0.3
 grok-4.5-latest	tier=200000	input=4.0	output=12.0	cache_read=0.6
 grok-4.6	input=2.0	output=6.0	cache_read=0.5
 grok-4.6	tier=200000	input=4.0	output=12.0	cache_read=1.0
-grok-beta	input=5.0	output=15.0
 grok-build-0.1	input=1.0	output=2.0	cache_read=0.2
 grok-build-0.1	tier=200000	input=2.0	output=4.0	cache_read=0.4
 grok-code-fast	input=1.0	output=2.0	cache_read=0.2
 grok-code-fast	tier=200000	input=2.0	output=4.0	cache_read=0.4
 grok-code-fast-1-0825	input=1.0	output=2.0	cache_read=0.2
 grok-code-fast-1-0825	tier=200000	input=2.0	output=4.0	cache_read=0.4
-grok-vision-beta	input=5.0	output=15.0
 glm-4-32b-0414-128k	input=0.1	output=0.1
 glm-4.5-airx	input=1.1	output=4.5
 glm-4.5-flash	input=0.0	output=0.0

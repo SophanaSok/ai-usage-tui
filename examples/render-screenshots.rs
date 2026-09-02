@@ -1,11 +1,16 @@
-//! Render every panel to SVG, off-screen.
+//! Render every panel to SVG, off-screen -- and, given a key script, the frames of the demo.
 //!
 //! Run through `scripts/render-readme-screenshots.sh`, which builds the demo dataset first and
-//! rasterises the output to PNG. See `src/ui/svg.rs` for why the README images are generated
-//! rather than photographed.
+//! rasterises the output to PNG and the frames to a GIF. See `src/ui/svg.rs` for why the README
+//! images are generated rather than photographed.
 //!
 //!   cargo run --example render-screenshots -- <out-dir> --claude-dir <dir> --journal <path> \
-//!       --config <path> [--db <path>]
+//!       --config <path> [--db <path>] [--script "t,hold,>,o,p,down,enter,esc,l,?"]
+//!
+//! The script is the demo: one token per key, replayed through the same dispatch the dashboard's
+//! event loop uses (`App::apply`), with a frame written after each. A single character is looked
+//! up in the key table; `enter`, `esc`, `down` and `up` are the keys the loop handles beside the
+//! table; `hold` writes the previous frame again, which the GIF assembler turns into a pause.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -15,7 +20,8 @@ use ai_usage_tui::budget::BudgetEngine;
 use ai_usage_tui::cli::Cli;
 use ai_usage_tui::config::load_config;
 use ai_usage_tui::model::Range;
-use ai_usage_tui::ui::{render_svg, App, Panel};
+use ai_usage_tui::ui::keys::{action_for, Action};
+use ai_usage_tui::ui::{render_svg, App, Flow, Panel};
 
 /// The geometry the README images are sized for. 132 columns is comfortably wider than the
 /// footer's full key line (120 today; `ui::keys::footer_forms` is the source), so the images
@@ -27,7 +33,7 @@ const ROWS: u16 = 38;
 /// produce different bytes and every regeneration shows up as a diff.
 const FIXED_CLOCK: &str = "14:07:22";
 
-const PANELS: [(&str, Panel); 7] = [
+const PANELS: [(&str, Panel); 8] = [
     ("dashboard", Panel::Models),
     ("budgets", Panel::Budgets),
     ("routing", Panel::Routing),
@@ -35,12 +41,45 @@ const PANELS: [(&str, Panel); 7] = [
     ("timeseries", Panel::TimeSeries),
     ("burn", Panel::Burn),
     ("sessions", Panel::Sessions),
+    ("limits", Panel::Limits),
 ];
+
+/// One token of the demo script.
+enum Step {
+    Key(Action),
+    Hold,
+}
+
+/// Parse the script, refusing anything the key table does not know. A typo that silently did
+/// nothing would leave a frame missing from the demo with no sign of which one.
+fn parse_script(script: &str) -> Result<Vec<Step>, String> {
+    script
+        .split(',')
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(|token| match token {
+            "hold" => Ok(Step::Hold),
+            "enter" => Ok(Step::Key(Action::DrillIn)),
+            "esc" => Ok(Step::Key(Action::Back)),
+            "down" => Ok(Step::Key(Action::SelectNext)),
+            "up" => Ok(Step::Key(Action::SelectPrev)),
+            _ => {
+                let mut chars = token.chars();
+                match (chars.next(), chars.next()) {
+                    (Some(key), None) => action_for(key)
+                        .map(Step::Key)
+                        .ok_or_else(|| format!("`{key}` is not a dashboard key")),
+                    _ => Err(format!("`{token}` is neither a key nor a script word")),
+                }
+            }
+        })
+        .collect()
+}
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let Some(out_dir) = args.next().map(PathBuf::from) else {
-        eprintln!("usage: render-screenshots <out-dir> --claude-dir D --codex-dir D --omarchy-dir D --journal P --db P [--config P]");
+        eprintln!("usage: render-screenshots <out-dir> --claude-dir D --codex-dir D --omarchy-dir D --journal P --db P [--config P] [--script S]");
         return ExitCode::FAILURE;
     };
 
@@ -49,26 +88,37 @@ fn main() -> ExitCode {
         refresh_interval: Duration::from_secs(60),
         ..Cli::default()
     };
+    let mut script = None;
     while let Some(flag) = args.next() {
-        let Some(value) = args.next().map(PathBuf::from) else {
+        let Some(value) = args.next() else {
             eprintln!("{flag} needs a value");
             return ExitCode::FAILURE;
         };
+        let path = PathBuf::from(&value);
         match flag.as_str() {
-            "--claude-dir" => cli.claude_dir = Some(value),
-            "--codex-dir" => cli.codex_dir = Some(value),
-            "--copilot-dir" => cli.copilot_dir = Some(value),
-            "--gemini-dir" => cli.gemini_dir = Some(value),
-            "--omarchy-dir" => cli.omarchy_dir = Some(value),
-            "--journal" => cli.journal_path = Some(value),
-            "--config" => cli.config_path = Some(value),
-            "--db" => cli.db_path = Some(value),
+            "--claude-dir" => cli.claude_dir = Some(path),
+            "--codex-dir" => cli.codex_dir = Some(path),
+            "--copilot-dir" => cli.copilot_dir = Some(path),
+            "--gemini-dir" => cli.gemini_dir = Some(path),
+            "--omarchy-dir" => cli.omarchy_dir = Some(path),
+            "--journal" => cli.journal_path = Some(path),
+            "--config" => cli.config_path = Some(path),
+            "--db" => cli.db_path = Some(path),
+            "--script" => script = Some(value),
             other => {
                 eprintln!("unknown flag {other}");
                 return ExitCode::FAILURE;
             }
         }
     }
+    let steps = match script.as_deref().map(parse_script) {
+        Some(Ok(steps)) => steps,
+        Some(Err(error)) => {
+            eprintln!("--script: {error}");
+            return ExitCode::FAILURE;
+        }
+        None => Vec::new(),
+    };
 
     // Every source is required, and none of them may be inferred. Left unset, the collectors
     // discover the machine's real OpenCode database and Claude Code transcripts, and the images
@@ -103,7 +153,9 @@ fn main() -> ExitCode {
     // third leak into these images (cleared below); the statusline cache would have been the
     // fourth -- the author's own rate-limit window in every header, from the day the statusline
     // entry was installed. So the data root is pinned the way the sources are: required, never
-    // inferred. `scripts/render-readme-screenshots.sh` points it at a scratch directory.
+    // inferred. `scripts/render-readme-screenshots.sh` points it at a scratch directory, and
+    // seeds that directory's statusline cache from the fixture so the limits panel has something
+    // invented to show.
     if std::env::var_os("XDG_DATA_HOME").is_none_or(|value| value.is_empty()) {
         eprintln!(
             "XDG_DATA_HOME must name a scratch directory: unset, the statusline, update and \
@@ -151,14 +203,54 @@ fn main() -> ExitCode {
         eprintln!("could not create {}: {error}", out_dir.display());
         return ExitCode::FAILURE;
     }
-    for (name, panel) in PANELS {
-        app.panel = panel;
-        let path = out_dir.join(format!("{name}.svg"));
-        if let Err(error) = std::fs::write(&path, render_svg(&app, COLS, ROWS)) {
+    let write = |path: &PathBuf, svg: String| -> bool {
+        if let Err(error) = std::fs::write(path, svg) {
             eprintln!("could not write {}: {error}", path.display());
-            return ExitCode::FAILURE;
+            return false;
         }
         println!("{}", path.display());
+        true
+    };
+    for (name, panel) in PANELS {
+        app.panel = panel;
+        if !write(
+            &out_dir.join(format!("{name}.svg")),
+            render_svg(&app, COLS, ROWS),
+        ) {
+            return ExitCode::FAILURE;
+        }
+    }
+
+    // The demo starts where the dashboard starts, then replays the script. A frame is written
+    // before the first key so the GIF opens on the model list rather than mid-gesture. `Quit`
+    // ends the script early: nothing after it would be a frame a user could see.
+    app.panel = Panel::Models;
+    app.selected = 0;
+    app.show_help = false;
+    let mut frame = 0usize;
+    let mut last = render_svg(&app, COLS, ROWS);
+    if steps.is_empty() {
+        return ExitCode::SUCCESS;
+    }
+    if !write(&out_dir.join(format!("frame-{frame:03}.svg")), last.clone()) {
+        return ExitCode::FAILURE;
+    }
+    for step in steps {
+        frame += 1;
+        match step {
+            Step::Hold => {}
+            Step::Key(action) => {
+                // `Refresh` would re-read the sources -- harmless here, but the frame would not
+                // change, and a script that leans on it is asking for the clock.
+                if app.apply(action) == Flow::Quit {
+                    break;
+                }
+                last = render_svg(&app, COLS, ROWS);
+            }
+        }
+        if !write(&out_dir.join(format!("frame-{frame:03}.svg")), last.clone()) {
+            return ExitCode::FAILURE;
+        }
     }
     ExitCode::SUCCESS
 }

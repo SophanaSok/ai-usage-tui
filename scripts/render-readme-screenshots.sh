@@ -13,6 +13,10 @@
 #   sudo pacman -S --needed librsvg    # Arch; provides rsvg-convert
 #   sudo apt install librsvg2-bin      # Debian/Ubuntu
 #
+# The demo GIF is the same renderer walking a key script: one frame per key, through the same
+# dispatch the dashboard's event loop uses, assembled by ImageMagick. Its script is DEMO_SCRIPT
+# below; `hold` repeats a frame, which is how a pause is spelled.
+#
 # Pass --svg to keep the intermediate SVGs alongside the PNGs.
 set -euo pipefail
 
@@ -35,6 +39,16 @@ DEMO_DB="${CLAUDE_DIR}/opencode.db"
 JOURNAL="${WORK}/usage.db"
 CONFIG="${WORK}/config.toml"
 SVG_DIR="${WORK}/svg"
+# The data root the renderer is pinned to. The statusline cache below lands here, and the
+# update and pricing caches would if anything wrote them; nothing of the author's does.
+DATA_HOME="${WORK}/data-home"
+
+# The demo, key by key: open on the model list; the routing panel and a pause on it; sort by
+# the next column and reverse it; the projects panel, two rows down, drill into the project;
+# back out; the limits panel and a pause; the key reference. Every token is a real binding.
+DEMO_SCRIPT="hold,t,hold,hold,>,o,hold,p,down,down,enter,hold,esc,l,hold,hold,?,hold"
+# Hundredths of a second per frame. A held frame repeats, so a pause is a multiple of this.
+FRAME_DELAY=110
 
 cat >"${CONFIG}" <<'EOF'
 [[budgets.entry]]
@@ -89,21 +103,28 @@ record_routing '{"agent":"drafter","model":"claude-haiku-4-5","provider":"anthro
 record_routing '{"agent":"drafter","model":"claude-haiku-4-5","provider":"anthropic","task":"docstrings","phase":"polish","tokens":26000,"cost":0.03,"retries":0,"escalations":0,"test_result":true,"review_defects":0}'
 record_routing '{"agent":"reviewer","model":"claude-sonnet-5","provider":"anthropic","task":"api-review","phase":"verification","tokens":74000,"cost":0.22,"retries":0,"escalations":0,"test_result":true,"review_defects":0}'
 
+# The limits panel reads what Claude Code last pushed to `--statusline`, from the data root. The
+# fixture's payload goes through the real command into the scratch root, so the panel and the
+# header's limits line show invented windows -- and the author's real cache, which lives in the
+# real data root, is never in the picture.
+XDG_DATA_HOME="${DATA_HOME}" "${BIN}" --statusline <"${CLAUDE_DIR}/statusline.json" >/dev/null
+
 # The data root has no flag, and the statusline, update and pricing caches all resolve from it;
 # the renderer refuses to run unless it is pinned. A statusline cache left unpinned would put
 # the author's own rate-limit window into every header below.
-XDG_DATA_HOME="${WORK}/no-data-home" \
+XDG_DATA_HOME="${DATA_HOME}" \
 cargo run --release --locked --quiet --manifest-path "${ROOT}/Cargo.toml" \
   --example render-screenshots -- \
   "${SVG_DIR}" --claude-dir "${CLAUDE_DIR}" --codex-dir "${CLAUDE_DIR}/no-codex-home" \
   --copilot-dir "${CLAUDE_DIR}/no-copilot-home" --gemini-dir "${CLAUDE_DIR}/no-gemini-home" \
   --omarchy-dir "${CLAUDE_DIR}/no-omarchy" \
   --db "${DEMO_DB}" --journal "${JOURNAL}" \
-  --config "${CONFIG}" >/dev/null
+  --config "${CONFIG}" --script "${DEMO_SCRIPT}" >/dev/null
 
 mkdir -p "${OUT_DIR}"
 for svg in "${SVG_DIR}"/*.svg; do
   name="$(basename "${svg}" .svg)"
+  [[ "${name}" == frame-* ]] && continue   # the demo's frames are assembled below, not kept
   # 2x the SVG's own geometry, so the images stay sharp on a high-DPI display at README width.
   rsvg-convert --zoom=2 --format=png --output="${OUT_DIR}/${name}.png" "${svg}"
   [[ -s "${OUT_DIR}/${name}.png" ]] || { echo "rasterising ${name} produced nothing" >&2; exit 1; }
@@ -117,3 +138,23 @@ for svg in "${SVG_DIR}"/*.svg; do
   (( KEEP_SVG )) && cp "${svg}" "${OUT_DIR}/${name}.svg"
   echo "${OUT_DIR}/${name}.png"
 done
+
+# The GIF: every frame at the SVG's own size (the README shows it at column width, and 2x
+# would double a file that is committed), the same 64-colour quantisation as the stills, and
+# ImageMagick's frame optimiser so a held frame costs nothing. Needs ImageMagick, unlike the
+# stills, so it is skipped with a warning rather than failing the run.
+FRAMES=("${SVG_DIR}"/frame-*.svg)
+if [[ -e "${FRAMES[0]}" ]]; then
+  if command -v magick >/dev/null; then
+    FRAME_DIR="${WORK}/frames"
+    mkdir -p "${FRAME_DIR}"
+    for svg in "${FRAMES[@]}"; do
+      rsvg-convert --format=png --output="${FRAME_DIR}/$(basename "${svg}" .svg).png" "${svg}"
+    done
+    magick -delay "${FRAME_DELAY}" -loop 0 "${FRAME_DIR}"/frame-*.png \
+      -colors 64 -layers Optimize "${OUT_DIR}/demo.gif"
+    echo "${OUT_DIR}/demo.gif ($(( $(stat -c %s "${OUT_DIR}/demo.gif") / 1024 )) KB, ${#FRAMES[@]} frames)"
+  else
+    echo "no ImageMagick (magick): the demo GIF was not assembled" >&2
+  fi
+fi
