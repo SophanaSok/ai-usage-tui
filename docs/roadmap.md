@@ -16,8 +16,12 @@ push-only trigger never noticed it.
 
 `just check` runs exactly what CI runs, in CI's order. Use it before pushing.
 
-**Every P0 and P1 finding from the original audit has shipped.** What remains is P2 and P3 — depth
-and breadth, not correctness.
+**Every P0 and P1 finding from the original audit has shipped**, and what remains *of that audit*
+is P2 and P3 — depth and breadth, not correctness. That sentence is about the 2026-08-18 audit
+only, and it is no longer the whole picture: the 2026-09-01 market survey under `## Positioning`
+filed a **new, open P1** (quota and reset windows exist only on Omarchy). Findings numbered since
+the audit take the priority they would have had there, so a P1 can be open again — read
+`## Positioning` alongside `## Outstanding findings`, not instead of it.
 
 Sources read today: OpenCode SQLite, Claude Code JSONL, Codex CLI rollouts, the local Ollama/routing journal, and the
 Zen pricing table. Verified end to end against ~103MB of real Claude Code logs — 5,879 requests
