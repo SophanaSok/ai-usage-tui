@@ -182,9 +182,12 @@ sync quietly stops working:
 | Secret valid, nothing changed | `PATCH` is idempotent, verify passes — green, no churn |
 | Someone edits the description in the web UI | next Monday's scheduled run goes **red** |
 
-That last property is why this is not modelled on `publish-crate` and `update-taps`, which skip
-with a notice and go green when their secret is missing. A silently expiring `TAP_TOKEN` is a
-known hazard of that pattern: the release still succeeds and the tap simply stops updating.
+That last property is why this is not modelled on `publish-crate`, which skips with a notice and
+goes green when its secret is missing. `update-taps` used to share that pattern, and a silently
+expiring `TAP_TOKEN` was its known hazard: the release still succeeded and the tap simply stopped
+updating. It now skips only when the secret is *unset*; an expired token fails the clone and the
+job, and after the push each manifest is read back through the API and must name the tag, so a
+green `update-taps` means what a user installs from each channel is this release.
 
 To set it up: create a fine-grained personal access token scoped to **this repository only**, with
 **Administration: read and write** and nothing else, and add it as the repository secret
