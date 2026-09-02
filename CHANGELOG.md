@@ -29,6 +29,43 @@
   Ubuntu. Rendering a second template from the same placeholders would be a hand-maintained copy
   of generated data. `docs/release-process.md` carries the commands.
 
+### Fixed
+
+- **The AUR package now follows Arch's packaging guidelines**, checked against `man PKGBUILD` and
+  `/usr/share/pacman/PKGBUILD.proto` rather than from memory. Three things were wrong, and all
+  three would have surfaced in an AUR review rather than in CI:
+
+  **`pkgdesc` was the crate's full 302-character description.** The man page asks to "keep the
+  description to one line of text and to not use the package's name"; that would have rendered as
+  three lines in `pacman -Si` and in every AUR search result. It takes the clause before the em
+  dash now -- 90 characters, no package name -- derived from the same single source of truth by
+  one rule rather than becoming a sixth hand-written wording. `release.yml` spells the rule as one
+  parameter expansion and refuses a result over 100 characters, and
+  `tests/docs.rs::aur_pkgdesc_is_one_line_and_derived` pins the properties, so a description edit
+  that breaks them fails the build instead.
+
+  **`depends` was absent** while the binary dynamically links `libgcc_s`, `libc` and `libm`. Read
+  off the shipped binary with `ldd` rather than assumed: `gcc-libs` and `glibc`, and nothing more
+  -- rustls means no OpenSSL, and rusqlite is the bundled build, so there is no system sqlite
+  link. An undeclared dependency is a namcap error.
+
+  **The `# Maintainer:` comment was below the explanatory block.** The prototype puts it above
+  `pkgname`; it is the one comment in that file with a required position, and the test asserts it
+  is line 1.
+
+  Verified by rebuilding against the published v0.12.1 tarball: the package's `.PKGINFO` now
+  carries the one-line `pkgdesc` and both dependencies. **`namcap` 3.6.0 then ran against both the
+  PKGBUILD and the built package and reported no errors.** Its three warnings are recorded in
+  `docs/release-process.md` with the reason each stands.
+
+  One of them is a trap worth naming here: namcap suggests replacing the literal `x86_64` in the
+  source arrays with `$CARCH`, and **that would break the ARM package**. `$CARCH` is the build
+  host's architecture, so inside `source_aarch64` it expands to whatever machine ran makepkg --
+  substituting it and running `makepkg --printsrcinfo` on x86_64 pointed `source_aarch64` at the
+  x86_64 tarball. `.SRCINFO` is generated once and pushed, so every aarch64 user would download
+  the wrong file and fail its checksum. `tests/docs.rs` now asserts both source lines keep their
+  literal architecture and contain no `$CARCH`, so the warning cannot be silenced by obeying it.
+
 ### Changed
 
 - **`--doctor`'s system-package label names the AUR too.** All three of the `.deb`, the `.rpm`

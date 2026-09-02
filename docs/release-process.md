@@ -75,6 +75,47 @@ so the release path stays green whether or not these have been done.
    release, so `curl` + `makepkg -si` works today. It is an `-bin` package: it installs the
    published `x86_64-linux` and `aarch64-linux` tarballs and needs no build infrastructure.
 
+   **Checked against `man PKGBUILD` and `/usr/share/pacman/PKGBUILD.proto`, not from memory**
+   (the wiki is behind a bot filter and cannot be fetched; the man page ships with pacman and is
+   authoritative). Three things it got wrong, all fixed:
+
+   - **`pkgdesc` was the crate's full description, 302 characters.** The man page asks to "keep
+     the description to one line of text and to not use the package's name" -- that would have
+     been three lines in `pacman -Si` and in every AUR search result. It renders the clause
+     before the em dash now (90 characters), derived from the same single source of truth by one
+     rule rather than becoming a sixth hand-written wording. `release.yml` spells the rule as
+     `${DESCRIPTION%% — *}` and refuses a result over 100 characters;
+     `tests/docs.rs::aur_pkgdesc_is_one_line_and_derived` pins the properties.
+   - **`depends` was absent** while the binary dynamically links `libgcc_s`, `libc` and `libm`.
+     Read off the shipped binary with `ldd` rather than assumed: `depends=('gcc-libs' 'glibc')`,
+     and nothing more -- rustls means no OpenSSL and rusqlite is the bundled build, so there is
+     no system sqlite link. An undeclared dependency is a namcap error.
+   - **The `# Maintainer:` comment sat below the explanatory block.** The prototype puts it above
+     `pkgname`; it is the one comment in the file with a required position, and the test now
+     asserts it is line 1.
+
+   **`namcap` 3.6.0 has been run**, against both the rendered PKGBUILD and a package built from
+   it. **No errors.** Three warnings, all understood, none acted on -- re-run it after any change
+   here (`namcap PKGBUILD` and `namcap *.pkg.tar.zst`) and compare against this list rather than
+   re-deriving it:
+
+   - **`Reference to x86_64 should be changed to $CARCH`** -- a false positive, and following it
+     breaks the ARM package. `$CARCH` is the *build host's* architecture, so inside
+     `source_aarch64` it expands to whatever machine ran makepkg. Substituting it and running
+     `makepkg --printsrcinfo` on an x86_64 box produced
+     `source_aarch64 = ...-aarch64.tar.gz::.../ai-usage-tui-v0.12.1-x86_64-linux.tar.gz`, and
+     `.SRCINFO` is generated once and pushed, so every aarch64 user would fetch the x86_64
+     tarball. It fails the checksum rather than installing the wrong binary, which is the safe
+     direction, but the package is simply broken on ARM. The arch-specific source arrays exist to
+     name an architecture that is *not* necessarily the builder's. `tests/docs.rs` asserts the
+     literals stay, so the warning cannot be silenced by taking its advice.
+   - **`Unused shared library '/usr/lib64/ld-linux-x86-64.so.2'`** -- the dynamic loader, which
+     `ldd` lists for every dynamically linked binary. Not actionable.
+   - **`Dependency included, but may not be needed ('gcc-libs')`** -- namcap sees libgcc as
+     implicitly satisfied through the dependency tree. Kept anyway: the binary links
+     `libgcc_s.so.1` directly, and declaring what you link is more robust than relying on another
+     package continuing to pull it in.
+
    **Two things it cost, both worth not relearning.** `pkgdesc` is single-quoted, and has to
    stay that way: a PKGBUILD is bash, the description contains the literal `$0.00`, and inside
    double quotes bash expanded it to the script's own path -- `makepkg --printsrcinfo` rendered

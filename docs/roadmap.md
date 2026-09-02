@@ -342,11 +342,29 @@ pushing another commit to it will *not* get it re-reviewed — see the once-per-
 
 **The three things to pick up, in the order they are worth doing:**
 
-1. **Merge PR #84**, then submit `ai-usage-tui-bin` to the AUR. Everything except the push to
-   `aur.archlinux.org` can be done on this box — `makepkg` and `updpkgsums` are installed and the
-   package was already built here against the published v0.12.1 tarball. It needs an AUR account
-   with an SSH key. Commands, and what to change in the README and `identity.sh --channels`
-   afterwards, are in `docs/release-process.md` item 3.
+1. **Submit `ai-usage-tui-bin` to the AUR.** (PR #84 is merged; the guideline fixes followed in
+   a second pull request.) Everything except the push to `aur.archlinux.org` can be done on this
+   box — `makepkg`, `updpkgsums` and `namcap` are installed and the package has been built here
+   against the published v0.12.1 tarball. **The pre-submission checks are done**: `namcap` 3.6.0
+   reports no errors on either the PKGBUILD or a built package, and all three of its warnings are
+   recorded in `docs/release-process.md` item 3 with the reason each is not acted on — including
+   the one whose advice would break the ARM package. What is left is an AUR account with an SSH
+   key, `makepkg --printsrcinfo > .SRCINFO`, and the push. That item also carries what to change
+   in the README and `identity.sh --channels` once it lands.
+
+   **Blocked as of 2026-09-01, and not by us.** AUR account registration is paused — the register
+   page returns HTTP 503: "Registration on the AUR is paused while we deal with a wave of
+   automated account creation. This is a temporary measure and it is not specific to you or your
+   network." Without an account there is no SSH key to register and no repository to push to, so
+   everything above waits.
+
+   Two things follow. **Do not poll the register page** — its own notice says so, and asks that
+   reopening be tracked through the `aur-general` mailing list and the Arch news feed instead;
+   scripting retries against it is exactly the automated traffic that closed registration.
+   And **nothing of value is actually blocked**: the PKGBUILD renders and attaches to every
+   release already, so an Arch user installs today with `curl` plus `makepkg -si`, which is what
+   the README documents. What waits is the `yay -S ai-usage-tui-bin` convenience and the AUR's
+   search listing — reach, not function.
 2. **The statusline capture (P1 above).** One interactive session — `claude --settings` with a
    dump command, which writes to no file and never touches `~/.claude/settings.json`. The exact
    invocation is in that entry. It has to be interactive: print mode renders no status line, and
