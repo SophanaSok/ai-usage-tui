@@ -191,17 +191,14 @@ fn escalations_json(filtered: &[Usage]) -> serde_json::Value {
     })
 }
 
-/// Omarchy's subscription windows, for scripts that want "session window at 92%" without
+/// Subscription windows from every source that reports them -- Omarchy's agents panel and
+/// Claude Code's own cached utilisation -- for scripts that want "session window at 92%" without
 /// scraping the dashboard. `percent_used` is on the 0..100 scale, like `--check-budgets` `pct`.
+///
+/// Goes through `limits::load` rather than reading Omarchy directly, so a script and the
+/// dashboard cannot disagree about one run: they previously ran two independent reads.
 fn limits_json(roots: &SourceRoots) -> Vec<serde_json::Value> {
-    if !roots.limits_enabled {
-        return Vec::new();
-    }
-    let Some(dir) = roots.omarchy_usage_dir() else {
-        return Vec::new();
-    };
-    let report =
-        crate::omarchy::load_limits(&dir, crate::utils::now(), crate::omarchy::STALE_AFTER_SECS);
+    let report = crate::limits::load(roots, crate::utils::now());
     report
         .snapshots
         .iter()

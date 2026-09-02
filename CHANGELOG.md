@@ -4,6 +4,54 @@
 
 ### Added
 
+- **Subscription rate limits on every machine, not just Omarchy.** The `l` panel, the header's
+  fullest-window line and `--json`'s `limits[]` were fed by exactly one source — Omarchy's agents
+  panel — so everywhere else the panel was permanently empty. Claude Code caches its own
+  subscription utilisation in `~/.claude.json` on every platform, and `src/limits.rs` now reads
+  it: the 5-hour window, the weekly window, and any per-model weekly window, merged with Omarchy's
+  records into the one report the panel and the export already speak. Nothing is fetched, no
+  credential is read, and no configuration is required.
+
+  **Both call sites now go through `limits::load`.** The dashboard and `--json` previously ran two
+  independent reads of the same directory and could disagree about one run.
+
+  **The panel's empty state was gating on the wrong thing.** It short-circuited on "Omarchy's
+  directory is absent" *before* it considered the rows, so a second source's windows would have
+  been unreachable on exactly the machines it was added for. It gates on having no rows now.
+
+  **What is read, and the guarantee around it.** Only `cachedUsageUtilization.fetchedAtMs` and the
+  entries of `cachedUsageUtilization.utilization.limits`; from each entry only `kind`, `percent`,
+  `resets_at` and the scoped model's display name. The sibling per-window keys are an open,
+  undocumented set and are never iterated — `limits` is indexed as the self-describing array it is
+  — and `kind` is matched as a closed vocabulary, so an unrecognised value is dropped and counted
+  rather than formatted into a label. A hand-authored fixture (no bytes from any real config)
+  plants a credential and a placeholder account id, and two tests fail if anything from the
+  document reaches the readout's `Debug` or the process's stdout.
+
+  **The freshness rule is two-sided now, and that is load-bearing.** `omarchy::snapshot` scored
+  staleness as `age > stale_after`, which is right for every age a correct reader produces and
+  silently wrong for the one an incorrect reader produces: `fetchedAtMs` is *milliseconds* against
+  a seconds clock, so a reader that forgets to divide computes an age near -1.79e12 — hugely
+  negative, and therefore *fresh*. A unit bug would have presented as a permanently up-to-date
+  panel showing an arbitrary moment's numbers. `limits::is_stale` rejects a stamp from the future
+  beyond a 60-second skew tolerance, both readers share it, and the test was confirmed
+  discriminating by restoring the one-sided form and watching it fail.
+
+  **Merging is keyed on a normalised agent id** (`omarchy::record_id_for_agent`), not a raw
+  string: Omarchy's agent id comes from its own record's `id` field, which this tool does not
+  control, so comparing raw strings would file one subscription as two rows the day a record
+  spells itself `claude_code`. Fresh beats stale; between two fresh readings the newer wins.
+
+### Fixed
+
+- **`hermetic()` did not pin Claude Code's config document.** `config_json_path` consults
+  `CLAUDE_CONFIG_DIR` *before* deriving a path from `--claude-dir`, and falls back to
+  `CLAUDE_PROJECTS_DIR`, so a developer with either exported had fixture-only CLI tests resolving
+  their real `~/.claude.json`. That cost a tier label while billing detection was the only reader;
+  with the limits reader consuming the same document it would have put real subscription
+  percentages into a fixture-only `--json` run. Both variables are removed in `hermetic_with` now.
+  This is the same lesson as the journal: hermetic has to mean every document a source reads.
+
 - **An AUR package.** `packaging/aur/PKGBUILD` builds `ai-usage-tui-bin`, renders with the other
   manifests from the same `sed` loop and the same checksums, and attaches to each release, so
   `curl` the PKGBUILD and `makepkg -si` installs on Arch. It is a `-bin` package: it takes the

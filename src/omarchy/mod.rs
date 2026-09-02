@@ -244,14 +244,19 @@ fn snapshot(
         updated_at,
         age_secs,
         // Undated or unparsable is stale, not fresh: an unknown age is no reason to trust it.
-        stale: age_secs.is_none_or(|age| age > stale_after),
+        // The rule lives in `limits::is_stale` because a second source now shares it, and
+        // because it has to reject a *negative* age too -- see that function.
+        stale: crate::limits::is_stale(age_secs, stale_after),
         windows,
     })
 }
 
 /// Omarchy writes Python `isoformat()` output with an offset, or a trailing `Z`. Both are
 /// RFC 3339 once the `Z` is accepted, which `chrono` does.
-fn parse_timestamp(value: &str) -> Option<i64> {
+///
+/// Shared with `crate::limits`, whose Claude Code cache spells reset instants the same way.
+/// Returning Unix **seconds** is the contract every caller depends on.
+pub fn parse_timestamp(value: &str) -> Option<i64> {
     let value = value.trim();
     if value.is_empty() {
         return None;

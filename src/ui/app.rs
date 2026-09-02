@@ -13,7 +13,7 @@ use crate::model::{
     BurnRate, Category, CostStatus, DayTotals, ProjectTotals, Range, RoutingAggregates,
     SessionTotals, Totals, Usage,
 };
-use crate::omarchy::{self, LimitsReport};
+use crate::omarchy::LimitsReport;
 use crate::pricing::PricingEngine;
 use crate::utils::format_clock;
 
@@ -914,23 +914,22 @@ impl App {
         // Omarchy's records: three small files, read here beside the routing table so the
         // render path stays free of I/O. Absent on any machine without Omarchy.
         if self.roots.limits_enabled {
-            if let Some(dir) = self.roots.omarchy_usage_dir() {
-                let report =
-                    omarchy::load_limits(&dir, crate::utils::now(), omarchy::STALE_AFTER_SECS);
-                if !report.present && !self.limits_absence_logged {
-                    crate::logging::info(
-                        "omarchy",
-                        &format!("no usage records at {}; limits panel idle", dir.display()),
-                    );
-                    self.limits_absence_logged = true;
-                }
-                if !report.problems.is_empty() {
-                    self.status =
-                        format!("{} | limits: {}", self.status, report.problems.join("; "));
-                    self.degraded = true;
-                }
-                self.view.limits = report;
+            let report = crate::limits::load(&self.roots, crate::utils::now());
+            if report.snapshots.is_empty() && !self.limits_absence_logged {
+                crate::logging::info(
+                    "limits",
+                    &format!(
+                        "no rate-limit windows at {} or from Claude Code's cache; panel idle",
+                        report.dir.display()
+                    ),
+                );
+                self.limits_absence_logged = true;
             }
+            if !report.problems.is_empty() {
+                self.status = format!("{} | limits: {}", self.status, report.problems.join("; "));
+                self.degraded = true;
+            }
+            self.view.limits = report;
         }
         if !self.budget_engine.is_empty() {
             self.alerts = self.budget_engine.check(&self.usages);

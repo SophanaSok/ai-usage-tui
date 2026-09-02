@@ -263,7 +263,39 @@ half has no competitor below a gateway.
 opening now lead with cost-per-delivered-result; the provenance claim above is restated at its
 true width.
 
-### P1 — Quota and reset windows exist only on Omarchy
+### P1 — Resolved. Quota and reset windows existed only on Omarchy
+
+**Resolved**, and not by the route this entry proposed. It called for a statusline mode reading
+Claude Code's official `rate_limits` from stdin. That was measured and rejected: the status line
+renders only in an interactive session — `claude --settings '{...}' -p` produced no payload at all
+— so the capture could never be automated, and every user would have had to configure a statusline
+command to get a limits panel.
+
+Claude Code already writes the same facts to disk. `~/.claude.json` carries
+`cachedUsageUtilization`, with a `limits` array giving the session window, the weekly window and
+any per-model weekly window, plus a `fetchedAtMs` stamp. `src/limits.rs` reads it on every
+platform with no configuration, and merges it with Omarchy's records into the one `LimitsReport`
+the panel and `--json` already spoke. It is strictly more than the statusline offers: the
+statusline exposes `five_hour`, `seven_day` and `spend_limit` only, with no per-model scoping.
+
+Four things worth not relearning. **The panel gated on the wrong thing** — `!report.present`, the
+absence of Omarchy's *directory*, short-circuited before the rows, so a second source's windows
+were unreachable on exactly the machines it was added for. **The freshness rule had to become
+two-sided**: `fetchedAtMs` is milliseconds against a seconds clock, and the old `age > stale_after`
+scored the resulting hugely-negative age as *fresh*, which would have shown an arbitrary moment's
+numbers forever with no staleness marker. **The merge key had to be normalised** through
+`record_id_for_agent`, because Omarchy's agent id comes from its own record and the two namespaces
+are already known to differ. And **`hermetic()` did not pin the config document** —
+`CLAUDE_CONFIG_DIR` outranks `--claude-dir` in `config_json_path`, so a developer with it exported
+would have had their real subscription percentages in a fixture-only `--json` run.
+
+Still open: the statusline surface itself. It remains the only *push* signal — Claude Code re-runs
+the command when a window reaches its `resets_at` — and it is the ambient always-visible surface
+every roundup names as what users want most. The schema below is still accurate and still needs a
+captured payload, which needs an interactive session. It is a smaller, additive change now that
+the `limits` vocabulary and the merge exist.
+
+### P1 (superseded) — the statusline route, kept for its schema
 
 The `l` panel, the header's fullest-fresh-window line and `--json`'s `limits[]` all come from
 Omarchy's agents-panel records (`src/omarchy/mod.rs`). On any machine without Omarchy there is

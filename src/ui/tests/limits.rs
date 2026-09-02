@@ -80,8 +80,14 @@ fn the_limits_panel_says_why_it_is_empty() {
         ..Default::default()
     });
     let rendered = render_limits(&app, 100, 8);
-    assert!(rendered.contains("No Omarchy usage records"), "{rendered}");
+    assert!(
+        rendered.contains("No rate-limit windows to show"),
+        "{rendered}"
+    );
     assert!(rendered.contains("/nonexistent/omarchy"), "{rendered}");
+    // The empty state names both sources now. It used to name only Omarchy, from a branch that
+    // also short-circuited the rows -- which is why a second source could not render at all.
+    assert!(rendered.contains("Claude Code"), "{rendered}");
 
     app.set_limits_for_test(crate::omarchy::LimitsReport {
         dir: PathBuf::from("/x"),
