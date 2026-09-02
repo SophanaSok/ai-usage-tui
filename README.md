@@ -1,6 +1,6 @@
 # ai-usage-tui
 
-> A btop-inspired terminal dashboard for AI coding-agent token usage, cost and budgets — reads Claude Code, Codex CLI, GitHub Copilot, Gemini CLI, OpenCode and Ollama, live TUI or JSON/CSV.
+> Terminal dashboard that measures what each AI coding model actually costs per passing test — routing, escalation and budget analytics across Claude Code, Codex CLI, GitHub Copilot, Gemini CLI, OpenCode and Ollama, where an unknown cost stays unknown instead of rendering as $0.00. Live TUI or JSON/CSV.
 
 [![CI](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/ci.yml)
 [![Release](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/release.yml/badge.svg)](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/release.yml)
@@ -9,11 +9,21 @@
 
 [Quick start](#quick-start) · [Install](#installation) · [Configuration](#configuration) · [Docs](#more-documentation) · [Contributing](CONTRIBUTING.md)
 
-`ai-usage-tui` reads OpenCode's local usage database, Claude Code's session
+Most usage tools answer "how many tokens did I spend". This one is built to answer
+"**was the expensive model worth it**" — cost per *delivered result* per agent and
+model, with retry, escalation and review-defect rates beside it, fed by a shipped
+Claude Code hook that turns real test runs into measured pass/fail events.
+
+It gets there by reading OpenCode's local usage database, Claude Code's session
 logs, Codex CLI's session logs, GitHub Copilot's CLI store and Gemini CLI's
-telemetry log, can journal completed Ollama responses, and presents the combined data in an interactive TUI
-or as JSON, CSV, or plain text. It tracks requests, input/output/reasoning/cache
-tokens, cost provenance, budgets, and opt-in model-routing events.
+telemetry log, and can journal completed Ollama responses — presenting the combined
+data in an interactive TUI or as JSON, CSV, or plain text. It tracks requests,
+input/output/reasoning/cache tokens, cost provenance, budgets, and model-routing
+events.
+
+Everything is read locally, in place. No account, no telemetry, and no invented
+numbers: a cost the tool cannot establish stays unknown rather than rendering as
+`$0.00`.
 
 ![Dashboard showing token totals, model activity, and cost provenance](docs/assets/dashboard.png)
 
@@ -42,13 +52,14 @@ real account, project, or spend appears in any image here.*
 
 ## What it shows
 
+- Routing aggregates: cost per passing test, with retries, escalations, and review defects per model
+- Derived escalations: which sessions reached for a pricier model, and what it cost afterwards
 - Usage grouped by provider and model, across OpenCode, Claude Code, Codex CLI, GitHub Copilot, Gemini CLI, and Ollama
 - Input, output, reasoning, cache-read, and cache-write tokens
 - Today (local calendar day), trailing 7-day, trailing 30-day, all-time, or custom-day ranges
 - `LOCAL`, `CLOUD`, `FREE`, `PAID`, and `UNKNOWN` classifications
 - Provider-reported, calculated, estimated, free, local, quota-billed, or unavailable cost
 - Daily and monthly budget status
-- Routing aggregates including retries, escalations, tests, and review defects
 
 Unknown cost is kept unknown rather than displayed as paid usage with a zero
 cost. Local and explicitly free usage is excluded from budget spend.
