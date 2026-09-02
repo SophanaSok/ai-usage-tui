@@ -351,6 +351,20 @@ pushing another commit to it will *not* get it re-reviewed — see the once-per-
    the one whose advice would break the ARM package. What is left is an AUR account with an SSH
    key, `makepkg --printsrcinfo > .SRCINFO`, and the push. That item also carries what to change
    in the README and `identity.sh --channels` once it lands.
+
+   **Blocked as of 2026-09-01, and not by us.** AUR account registration is paused — the register
+   page returns HTTP 503: "Registration on the AUR is paused while we deal with a wave of
+   automated account creation. This is a temporary measure and it is not specific to you or your
+   network." Without an account there is no SSH key to register and no repository to push to, so
+   everything above waits.
+
+   Two things follow. **Do not poll the register page** — its own notice says so, and asks that
+   reopening be tracked through the `aur-general` mailing list and the Arch news feed instead;
+   scripting retries against it is exactly the automated traffic that closed registration.
+   And **nothing of value is actually blocked**: the PKGBUILD renders and attaches to every
+   release already, so an Arch user installs today with `curl` plus `makepkg -si`, which is what
+   the README documents. What waits is the `yay -S ai-usage-tui-bin` convenience and the AUR's
+   search listing — reach, not function.
 2. **The statusline capture (P1 above).** One interactive session — `claude --settings` with a
    dump command, which writes to no file and never touches `~/.claude/settings.json`. The exact
    invocation is in that entry. It has to be interactive: print mode renders no status line, and
