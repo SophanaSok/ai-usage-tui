@@ -94,10 +94,27 @@ so the release path stays green whether or not these have been done.
      `pkgname`; it is the one comment in the file with a required position, and the test now
      asserts it is line 1.
 
-   **`namcap` is not installed on this machine, so the standard pre-submission lint has not been
-   run.** `sudo pacman -S namcap`, then `namcap PKGBUILD` and `namcap *.pkg.tar.zst` against a
-   built package before the first push. The three findings above are what a reading of the man
-   page caught; namcap checks a wider set.
+   **`namcap` 3.6.0 has been run**, against both the rendered PKGBUILD and a package built from
+   it. **No errors.** Three warnings, all understood, none acted on -- re-run it after any change
+   here (`namcap PKGBUILD` and `namcap *.pkg.tar.zst`) and compare against this list rather than
+   re-deriving it:
+
+   - **`Reference to x86_64 should be changed to $CARCH`** -- a false positive, and following it
+     breaks the ARM package. `$CARCH` is the *build host's* architecture, so inside
+     `source_aarch64` it expands to whatever machine ran makepkg. Substituting it and running
+     `makepkg --printsrcinfo` on an x86_64 box produced
+     `source_aarch64 = ...-aarch64.tar.gz::.../ai-usage-tui-v0.12.1-x86_64-linux.tar.gz`, and
+     `.SRCINFO` is generated once and pushed, so every aarch64 user would fetch the x86_64
+     tarball. It fails the checksum rather than installing the wrong binary, which is the safe
+     direction, but the package is simply broken on ARM. The arch-specific source arrays exist to
+     name an architecture that is *not* necessarily the builder's. `tests/docs.rs` asserts the
+     literals stay, so the warning cannot be silenced by taking its advice.
+   - **`Unused shared library '/usr/lib64/ld-linux-x86-64.so.2'`** -- the dynamic loader, which
+     `ldd` lists for every dynamically linked binary. Not actionable.
+   - **`Dependency included, but may not be needed ('gcc-libs')`** -- namcap sees libgcc as
+     implicitly satisfied through the dependency tree. Kept anyway: the binary links
+     `libgcc_s.so.1` directly, and declaring what you link is more robust than relying on another
+     package continuing to pull it in.
 
    **Two things it cost, both worth not relearning.** `pkgdesc` is single-quoted, and has to
    stay that way: a PKGBUILD is bash, the description contains the literal `$0.00`, and inside

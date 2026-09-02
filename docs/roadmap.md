@@ -344,12 +344,13 @@ pushing another commit to it will *not* get it re-reviewed — see the once-per-
 
 1. **Submit `ai-usage-tui-bin` to the AUR.** (PR #84 is merged; the guideline fixes followed in
    a second pull request.) Everything except the push to `aur.archlinux.org` can be done on this
-   box — `makepkg` and `updpkgsums` are installed and the package has been built here twice
-   against the published v0.12.1 tarball. It needs an AUR account with an SSH key. **Install
-   `namcap` first** (`sudo pacman -S namcap`) and run it against the PKGBUILD and a built
-   package: it is the standard pre-submission lint and it has never been run here. Commands, the
-   guideline audit, and what to change in the README and `identity.sh --channels` afterwards are
-   in `docs/release-process.md` item 3.
+   box — `makepkg`, `updpkgsums` and `namcap` are installed and the package has been built here
+   against the published v0.12.1 tarball. **The pre-submission checks are done**: `namcap` 3.6.0
+   reports no errors on either the PKGBUILD or a built package, and all three of its warnings are
+   recorded in `docs/release-process.md` item 3 with the reason each is not acted on — including
+   the one whose advice would break the ARM package. What is left is an AUR account with an SSH
+   key, `makepkg --printsrcinfo > .SRCINFO`, and the push. That item also carries what to change
+   in the README and `identity.sh --channels` once it lands.
 2. **The statusline capture (P1 above).** One interactive session — `claude --settings` with a
    dump command, which writes to no file and never touches `~/.claude/settings.json`. The exact
    invocation is in that entry. It has to be interactive: print mode renders no status line, and

@@ -581,6 +581,32 @@ fn aur_pkgdesc_is_one_line_and_derived() {
         pkgbuild.contains("depends=('gcc-libs' 'glibc')"),
         "packaging/aur/PKGBUILD must declare the libraries the binary links: gcc-libs and glibc"
     );
+
+    // namcap warns "Reference to x86_64 should be changed to $CARCH" against the source arrays,
+    // and taking that advice breaks the aarch64 package. $CARCH is the *build host's* arch, so
+    // inside `source_aarch64` it expands to whatever machine ran makepkg -- and .SRCINFO is
+    // generated once on one machine and pushed, so every ARM user would fetch the x86_64 tarball
+    // and fail its checksum. Verified by substituting it and reading `makepkg --printsrcinfo`.
+    // This is here so the warning cannot be silenced by "fixing" it.
+    for (array, literal) in [
+        ("source_x86_64", "-x86_64-linux.tar.gz"),
+        ("source_aarch64", "-aarch64-linux.tar.gz"),
+    ] {
+        let line = pkgbuild
+            .lines()
+            .find(|l| l.starts_with(array))
+            .unwrap_or_else(|| panic!("packaging/aur/PKGBUILD has no {array} line"));
+        assert!(
+            line.contains(literal),
+            "{array} must name its architecture literally ({literal}); namcap suggests $CARCH \
+             there and that resolves to the builder's arch, breaking the other one.\ngot: {line}"
+        );
+        assert!(
+            !line.contains("$CARCH"),
+            "{array} uses $CARCH, which expands to the build host's architecture and would make \
+             .SRCINFO point both arches at one tarball.\ngot: {line}"
+        );
+    }
 }
 
 /// The manifest states the description once.

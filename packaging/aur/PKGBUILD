@@ -48,6 +48,19 @@ provides=("$_pkgname=$pkgver")
 conflicts=("$_pkgname")
 options=('!strip' '!debug')
 
+# namcap warns "Reference to x86_64 should be changed to $CARCH" on the lines below. **Do not
+# take that advice**, and there is a test that stops it being taken. $CARCH is the *build host's*
+# architecture, not the array's, so inside `source_aarch64` it still expands to whatever machine
+# ran makepkg. Measured, not assumed -- substituting it and running `makepkg --printsrcinfo` on
+# this x86_64 box produced:
+#
+#   source_aarch64 = ...-0.12.1-aarch64.tar.gz::.../ai-usage-tui-v0.12.1-x86_64-linux.tar.gz
+#
+# and .SRCINFO is generated once on one machine and pushed to the AUR, so every aarch64 user would
+# fetch the x86_64 binary. It would fail against sha256sums_aarch64 rather than installing the
+# wrong thing, which is the safe direction, but the package would simply be broken on ARM. The
+# warning is a false positive for the arch-specific source arrays: their whole purpose is to name
+# an architecture that is not necessarily the builder's.
 source_x86_64=("$pkgname-$pkgver-x86_64.tar.gz::$url/releases/download/__TAG__/$_pkgname-__TAG__-x86_64-linux.tar.gz")
 source_aarch64=("$pkgname-$pkgver-aarch64.tar.gz::$url/releases/download/__TAG__/$_pkgname-__TAG__-aarch64-linux.tar.gz")
 sha256sums_x86_64=('__LINUX_SHA256__')

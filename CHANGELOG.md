@@ -54,9 +54,17 @@
   is line 1.
 
   Verified by rebuilding against the published v0.12.1 tarball: the package's `.PKGINFO` now
-  carries the one-line `pkgdesc` and both dependencies. `namcap` is not installed on this machine,
-  so the standard pre-submission lint still has to be run before the first AUR push --
-  `docs/release-process.md` says so and gives the commands.
+  carries the one-line `pkgdesc` and both dependencies. **`namcap` 3.6.0 then ran against both the
+  PKGBUILD and the built package and reported no errors.** Its three warnings are recorded in
+  `docs/release-process.md` with the reason each stands.
+
+  One of them is a trap worth naming here: namcap suggests replacing the literal `x86_64` in the
+  source arrays with `$CARCH`, and **that would break the ARM package**. `$CARCH` is the build
+  host's architecture, so inside `source_aarch64` it expands to whatever machine ran makepkg --
+  substituting it and running `makepkg --printsrcinfo` on x86_64 pointed `source_aarch64` at the
+  x86_64 tarball. `.SRCINFO` is generated once and pushed, so every aarch64 user would download
+  the wrong file and fail its checksum. `tests/docs.rs` now asserts both source lines keep their
+  literal architecture and contain no `$CARCH`, so the warning cannot be silenced by obeying it.
 
 ### Changed
 
