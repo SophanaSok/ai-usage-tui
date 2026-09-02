@@ -75,6 +75,30 @@ so the release path stays green whether or not these have been done.
    release, so `curl` + `makepkg -si` works today. It is an `-bin` package: it installs the
    published `x86_64-linux` and `aarch64-linux` tarballs and needs no build infrastructure.
 
+   **Checked against `man PKGBUILD` and `/usr/share/pacman/PKGBUILD.proto`, not from memory**
+   (the wiki is behind a bot filter and cannot be fetched; the man page ships with pacman and is
+   authoritative). Three things it got wrong, all fixed:
+
+   - **`pkgdesc` was the crate's full description, 302 characters.** The man page asks to "keep
+     the description to one line of text and to not use the package's name" -- that would have
+     been three lines in `pacman -Si` and in every AUR search result. It renders the clause
+     before the em dash now (90 characters), derived from the same single source of truth by one
+     rule rather than becoming a sixth hand-written wording. `release.yml` spells the rule as
+     `${DESCRIPTION%% — *}` and refuses a result over 100 characters;
+     `tests/docs.rs::aur_pkgdesc_is_one_line_and_derived` pins the properties.
+   - **`depends` was absent** while the binary dynamically links `libgcc_s`, `libc` and `libm`.
+     Read off the shipped binary with `ldd` rather than assumed: `depends=('gcc-libs' 'glibc')`,
+     and nothing more -- rustls means no OpenSSL and rusqlite is the bundled build, so there is
+     no system sqlite link. An undeclared dependency is a namcap error.
+   - **The `# Maintainer:` comment sat below the explanatory block.** The prototype puts it above
+     `pkgname`; it is the one comment in the file with a required position, and the test now
+     asserts it is line 1.
+
+   **`namcap` is not installed on this machine, so the standard pre-submission lint has not been
+   run.** `sudo pacman -S namcap`, then `namcap PKGBUILD` and `namcap *.pkg.tar.zst` against a
+   built package before the first push. The three findings above are what a reading of the man
+   page caught; namcap checks a wider set.
+
    **Two things it cost, both worth not relearning.** `pkgdesc` is single-quoted, and has to
    stay that way: a PKGBUILD is bash, the description contains the literal `$0.00`, and inside
    double quotes bash expanded it to the script's own path -- `makepkg --printsrcinfo` rendered

@@ -29,6 +29,35 @@
   Ubuntu. Rendering a second template from the same placeholders would be a hand-maintained copy
   of generated data. `docs/release-process.md` carries the commands.
 
+### Fixed
+
+- **The AUR package now follows Arch's packaging guidelines**, checked against `man PKGBUILD` and
+  `/usr/share/pacman/PKGBUILD.proto` rather than from memory. Three things were wrong, and all
+  three would have surfaced in an AUR review rather than in CI:
+
+  **`pkgdesc` was the crate's full 302-character description.** The man page asks to "keep the
+  description to one line of text and to not use the package's name"; that would have rendered as
+  three lines in `pacman -Si` and in every AUR search result. It takes the clause before the em
+  dash now -- 90 characters, no package name -- derived from the same single source of truth by
+  one rule rather than becoming a sixth hand-written wording. `release.yml` spells the rule as one
+  parameter expansion and refuses a result over 100 characters, and
+  `tests/docs.rs::aur_pkgdesc_is_one_line_and_derived` pins the properties, so a description edit
+  that breaks them fails the build instead.
+
+  **`depends` was absent** while the binary dynamically links `libgcc_s`, `libc` and `libm`. Read
+  off the shipped binary with `ldd` rather than assumed: `gcc-libs` and `glibc`, and nothing more
+  -- rustls means no OpenSSL, and rusqlite is the bundled build, so there is no system sqlite
+  link. An undeclared dependency is a namcap error.
+
+  **The `# Maintainer:` comment was below the explanatory block.** The prototype puts it above
+  `pkgname`; it is the one comment in that file with a required position, and the test asserts it
+  is line 1.
+
+  Verified by rebuilding against the published v0.12.1 tarball: the package's `.PKGINFO` now
+  carries the one-line `pkgdesc` and both dependencies. `namcap` is not installed on this machine,
+  so the standard pre-submission lint still has to be run before the first AUR push --
+  `docs/release-process.md` says so and gives the commands.
+
 ### Changed
 
 - **`--doctor`'s system-package label names the AUR too.** All three of the `.deb`, the `.rpm`

@@ -520,6 +520,69 @@ fn packaging_templates_render_the_description() {
     }
 }
 
+/// The AUR `pkgdesc` is one line, derived from the crate description rather than written twice.
+///
+/// `man PKGBUILD` on pkgdesc: "This should be a brief description of the package and its
+/// functionality. Try to keep the description to one line of text and to not use the package's
+/// name." The crate description is 300-odd characters because crates.io, GitHub's About box and
+/// Homebrew's `desc` all take it whole -- rendering that into `pkgdesc` would be three lines in
+/// `pacman -Si` and in every AUR search result.
+///
+/// The rule is "the clause before the em dash", and `release.yml` spells it as one parameter
+/// expansion. This pins the properties that rule has to keep producing, so a description edit
+/// that breaks them fails here rather than in an AUR review: if the em dash goes, the split
+/// yields the whole string and the length assertion catches it.
+#[test]
+fn aur_pkgdesc_is_one_line_and_derived() {
+    let short = DESCRIPTION
+        .split(" \u{2014} ")
+        .next()
+        .expect("splitting a non-empty string yields at least one part");
+    assert!(
+        !short.is_empty(),
+        "the description starts with the em dash separator, so the derived pkgdesc is empty"
+    );
+    assert!(
+        short.chars().count() <= 100,
+        "the pkgdesc derived from the description is {} characters; `man PKGBUILD` asks for one \
+         line of text.\nderived: {short}",
+        short.chars().count()
+    );
+    assert!(
+        !short.contains(env!("CARGO_PKG_NAME")),
+        "`man PKGBUILD` asks that pkgdesc not use the package's name, and the derived one does.\n\
+         derived: {short}"
+    );
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let pkgbuild = std::fs::read_to_string(root.join("packaging/aur/PKGBUILD"))
+        .expect("read packaging/aur/PKGBUILD");
+
+    // Single-quoted and taking the short token: both are load-bearing and both were wrong once.
+    assert!(
+        pkgbuild.contains("pkgdesc='__DESCRIPTION_SHORT__'"),
+        "packaging/aur/PKGBUILD must render the short description into a single-quoted pkgdesc; \
+         double quotes let bash expand the $0.00 in the description to the script's own path"
+    );
+
+    // The Maintainer comment is the one line in the file with a required position:
+    // /usr/share/pacman/PKGBUILD.proto puts it above `pkgname`, and it sat below the explanatory
+    // block here once.
+    let first = pkgbuild.lines().next().unwrap_or_default();
+    assert!(
+        first.starts_with("# Maintainer: "),
+        "packaging/aur/PKGBUILD's first line must be the Maintainer comment, as \
+         /usr/share/pacman/PKGBUILD.proto has it.\ngot: {first}"
+    );
+
+    // `ldd` on the shipped binary reports libgcc_s, libc and libm. namcap reports an undeclared
+    // dependency as an error, and an empty `depends` is what it looks for.
+    assert!(
+        pkgbuild.contains("depends=('gcc-libs' 'glibc')"),
+        "packaging/aur/PKGBUILD must declare the libraries the binary links: gcc-libs and glibc"
+    );
+}
+
 /// The manifest states the description once.
 ///
 /// `[package.metadata.generate-rpm]` carried its own `summary`, a second copy in the same file.

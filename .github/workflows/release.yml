@@ -295,8 +295,21 @@ jobs:
           TOPICS="$(python3 -c 'import tomllib;print(" ".join(tomllib.load(open("Cargo.toml","rb"))["package"]["metadata"]["identity"]["topics"]))')"
           [ -n "$DESCRIPTION" ] || { echo "::error::Cargo.toml has no package.description"; exit 1; }
           [ -n "$TOPICS" ] || { echo "::error::Cargo.toml has no package.metadata.identity.topics"; exit 1; }
+
+          # The one-line form, for `pkgdesc`. `man PKGBUILD`: "Try to keep the description to one
+          # line of text and to not use the package's name" -- and the full description is 300-odd
+          # characters, which would be three lines in `pacman -Si` and in every AUR search result.
+          # The rule is "the clause before the em dash", expressed here as one parameter expansion
+          # and asserted in tests/docs.rs, so this stays a derivation of the single source of truth
+          # rather than becoming a sixth hand-written wording. If the description ever loses its em
+          # dash this falls back to the whole string, which the length guard below then catches.
+          DESCRIPTION_SHORT="${DESCRIPTION%% — *}"
+          [ "${#DESCRIPTION_SHORT}" -le 100 ] \
+            || { echo "::error::the pkgdesc derived from package.description is ${#DESCRIPTION_SHORT} characters; man PKGBUILD asks for one line"; exit 1; }
+
           echo "--- identity ---"
           echo "description  $DESCRIPTION"
+          echo "pkgdesc      $DESCRIPTION_SHORT"
           echo "topics       $TOPICS"
 
           # Rendered under `rendered/` preserving each template's path below `packaging/`, so the
@@ -315,7 +328,12 @@ jobs:
             fi
             out="rendered/${f#packaging/}"
             mkdir -p "$(dirname "$out")"
+            # __DESCRIPTION_SHORT__ is substituted *before* __DESCRIPTION__. The two tokens
+            # cannot actually collide -- "__DESCRIPTION__" is not a substring of
+            # "__DESCRIPTION_SHORT__", because the underscore pair is broken by `_SHORT` -- but
+            # the ordering costs nothing and does not depend on anyone re-deriving that.
             sed -e "s|__TAG__|${TAG}|g" \
+                -e "s|__DESCRIPTION_SHORT__|${DESCRIPTION_SHORT}|g" \
                 -e "s|__DESCRIPTION__|${DESCRIPTION}|g" \
                 -e "s|__TOPICS__|${TOPICS}|g" \
                 -e "s|__VERSION__|${VERSION}|g" \
