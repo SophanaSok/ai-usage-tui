@@ -15,7 +15,10 @@ supervised: a collector that fails is reported, and one that panics is restarted
 
 `CollectorState` holds the merged `Vec<Usage>`, a `HashSet<UsageKey>` membership index that keeps
 merges linear rather than quadratic, the set of source labels, and per-collector health. Pricing is
-loaded once at spawn and applied after each merge, not re-parsed from disk on every poll.
+loaded once at spawn and applied to the rows each merge adds -- not re-parsed from disk on every
+poll, and not re-run over the whole history either. A pricing refresh (`zen_pricing`) is the one
+event that rebuilds the engine and re-prices everything, because the rows collected before it are
+exactly the ones whose price was missing.
 
 Collectors do **not** write to the journal database. The journal is a *source* — written by
 `--record-ollama` and `--record-routing`, read by the journal collector — not a sink. Only the

@@ -189,13 +189,18 @@ at. The "no issues found" comment was added because silence reads like a review 
 this path restores exactly that ambiguity, one layer up, and the check colour actively argues
 against noticing.
 
-Not fixed here, because the alternatives all cost something and the choice wants making
-deliberately: keying the skip on the head sha rather than on the comment's existence (re-reviews
-every push, and pays for it), replying in a thread instead of a new top-level comment, or leaving
-it and treating a second green check as meaningless — which is fine only while someone knows it
-is. Whoever picks this up should read the run above first; it is the cheapest example in the
-repository of the failure mode, and it cost seven cents rather than the eight runs the first one
-did.
+**Fixed after v0.13.0, by the first of the alternatives.** The choice was between keying the skip
+on the head sha rather than on the comment's existence (re-reviews every push, and pays for it),
+replying in a thread instead of a new top-level comment, or leaving it and treating a second green
+check as meaningless — which is fine only while someone knows it is. The sha won: the prompt is
+handed `github.event.pull_request.head.sha`, every review comment opens with `Reviewed <sha>`,
+and the skip rule is "a comment of mine already names *this* sha". A push gets its own review and
+the same commit never gets two; the cost is one review per push, which is the point. The same
+sha now feeds the permalinks, which used to come from `git rev-parse HEAD` on a checkout that
+sits on the pull request's *merge* commit. Run 33583870670 remains the cheapest example in the
+repository of the failure mode, at seven cents rather than the eight runs the first one cost.
+Remember that the action runs the workflow from `main`, so this change was only exercised by the
+pull request after the one that made it.
 
 **How this was found, and the methodology error to avoid repeating.** The denial was invisible
 until `show_full_output: true` (#72) printed
@@ -419,8 +424,9 @@ pushing another commit to it will *not* get it re-reviewed — see the once-per-
 3. **The demo and the write-up (P2 above).** Still the launch. A measurement — "was Opus worth
    5x Sonnet on this codebase", from this machine's own routing data — not a feature table.
 
-**Not started, and deliberately:** the `--doctor` AUR detection below, and the `claude-review`
-once-per-PR fix. Both are recorded with the evidence and the design question each one turns on.
+**Not started, and deliberately:** the `--doctor` AUR detection below, recorded with the
+evidence and the design question it turns on. (The `claude-review` once-per-PR fix that stood
+beside it here has since been made; see the `claude-review` section above.)
 
 ### P3 — `--doctor` cannot tell an AUR install from a .deb or .rpm
 
@@ -526,11 +532,15 @@ else -- only `zen_pricing` answers true -- and the loop rebuilds the engine and 
 collected rows. The rebuild happens *before* the write lock is taken, because parsing ~3,450 keys
 while holding it would block `snapshot()` on the render thread.
 
-**Still open, and now with a constraint attached:** `apply_pricing` re-prices all accumulated
-history inside the write lock on every poll. Narrowing it to newly merged rows is the obvious fix
-and is only correct if the reload path above keeps re-pricing *everything* -- the rows collected
-before a refresh are exactly the ones whose price was missing. Whoever does the incremental work
-has to leave `reload_pricing` whole.
+**Resolved after v0.13.0, under the constraint this entry attached.** `apply_pricing` used to
+re-price all accumulated history inside the write lock on every poll of every collector -- a walk
+that grew with the history and, because the engine is immutable between reloads and a priced row
+is skipped, never changed a result. `merge` now returns the index its new rows start at and the
+poll path prices from there (`price_from`); `reload_pricing` alone keeps the full pass, which is
+the condition that makes the narrowing correct: the rows collected *before* a refresh are exactly
+the ones whose price was missing, and that pass is the one that reaches them. A test holds both
+halves together -- a poll prices what it merged and leaves history alone; a reload then prices
+the row the poll left. Whoever touches either has to keep `reload_pricing` whole.
 
 ### P2 — Pricing depth
 

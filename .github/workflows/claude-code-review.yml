@@ -37,7 +37,10 @@ jobs:
           # This prompt reviews in-process on purpose; see the note below the prompt.
           prompt: |
             Review pull request #${{ github.event.pull_request.number }} in the repository
-            ${{ github.repository }}, and post the result as a single comment on it.
+            ${{ github.repository }}, and post the result as a single comment on it. The commit
+            under review is ${{ github.event.pull_request.head.sha }}; it is called HEAD_SHA
+            below, and it is what the pull request's branch points at, not the merge commit
+            this checkout may be sitting on.
 
             Do the whole review yourself, in this session. Do NOT spawn subagents, launch
             background tasks, or use the Task tool: this runs as a single non-interactive
@@ -47,8 +50,10 @@ jobs:
             Steps:
 
             1. Read the change with `gh pr diff` and `gh pr view`. Skip the review entirely --
-               post nothing and stop -- if the pull request is closed, is a draft, or already
-               carries a code review comment from you.
+               post nothing and stop -- if the pull request is closed or a draft, or if a
+               code review comment from you already names HEAD_SHA (`gh pr view --comments`).
+               A comment of yours naming an *earlier* commit does not count: every push gets
+               its own review, and no commit gets two.
             2. Read the root CLAUDE.md and any CLAUDE.md in the directories the diff touches,
                if they exist. They are guidance for writing code, so not every instruction
                applies to a review.
@@ -74,24 +79,29 @@ jobs:
 
             ### Code review
 
+            Reviewed HEAD_SHA.
+
             Found N issues:
 
             1. <brief description> (<why it was flagged -- quote the CLAUDE.md line, or name the
                file and code it contradicts>)
 
-            <permalink to the lines, using the full commit sha: https://github.com/OWNER/REPO/blob/FULLSHA/path/to/file#L10-L15>
+            <permalink to the lines, using HEAD_SHA in full: https://github.com/OWNER/REPO/blob/HEAD_SHA/path/to/file#L10-L15>
 
             ...and if you found nothing worth reporting, post this instead of staying silent:
 
             ### Code review
+
+            Reviewed HEAD_SHA.
 
             No issues found. Checked for bugs and CLAUDE.md compliance.
 
             Post the "no issues" comment rather than nothing. Silence is how a review that never
             ran looks, and telling the two apart cost this repository eight runs once already.
 
-            Permalinks need the full sha -- run `git rev-parse HEAD` and paste the value; a
-            command substitution inside the URL will not render. Give a line of context either
+            Write HEAD_SHA out in full in the "Reviewed" line and in every permalink: it is what
+            the next run looks for to decide whether this commit has already been reviewed, and
+            a command substitution inside a URL will not render. Give a line of context either
             side of the line you mean.
           # Reviewed in-process, not through `/code-review:code-review`. That plugin's command
           # fans out to a Haiku eligibility agent, five parallel Sonnet reviewers and a Haiku
@@ -105,6 +115,14 @@ jobs:
           # comment with `gh pr comment` and never creates inline comments, so the generated
           # workflow's `mcp__github_inline_comment__create_inline_comment` and the action's
           # buffered-comment step were always going to find an empty queue.
+          #
+          # The skip rule is keyed on the head sha, not on "a comment from me exists". Keyed on
+          # existence, the review ran once per pull request, ever: every push after the first
+          # was a green check over an unreviewed diff, and a fix made in response to a finding
+          # was the one change guaranteed never to be looked at (run 33583870670: two turns, no
+          # comment, success). Each review comment now names the commit it covered, so a push
+          # gets its own review and the same commit never gets two. The cost is one review per
+          # push, which is the point.
           #
           # `--allowedTools` REPLACES the default allowlist rather than extending it. That is
           # what denied the `Skill` tool when the prompt was a slash command (six turns, one
