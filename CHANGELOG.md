@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Two green checks that meant nothing now mean something.** Neither is in the binary; both are
+  in the release path a user's install depends on.
+
+  **`update-taps` verifies what it pushed.** The job that keeps the Homebrew tap and the Scoop
+  bucket current skipped with a warning when a clone failed, so an expired `TAP_TOKEN` let a
+  release succeed while `brew upgrade` and `scoop update` went on serving the previous version
+  indefinitely — the hazard `docs/release-process.md` had recorded and left. It still skips with a
+  notice when the secret is *unset*, since that is the documented pre-setup state; an expired
+  token now fails the clone and the job, and after the push each manifest is read back through
+  the API (not the raw CDN, which caches for minutes) and must name the tag.
+
+  **`claude-review` reviews every push.** Its skip rule was "a comment from me already exists",
+  so the review ran once per pull request, ever: every push after the first was a green check over
+  an unreviewed diff, and a fix made in response to a finding was the one change guaranteed never
+  to be looked at. The prompt is now handed the pull request's head sha, each review comment opens
+  with `Reviewed <sha>`, and the skip rule is "a comment of mine already names *this* sha" — so a
+  push gets its own review and the same commit never gets two. The same sha feeds the permalinks,
+  which used to come from `git rev-parse HEAD` on a checkout sitting on the merge commit.
+
 ## [0.13.0] - 2026-09-02
 
 ### Added

@@ -474,8 +474,10 @@ jobs:
         run: cargo publish --locked
 
   # `brew install sophanasok/tap/ai-usage-tui` and `scoop install ai-usage-tui` only work if the
-  # rendered manifests land in a tap and a bucket. Gated on TAP_TOKEN the same way, so this is
-  # inert until those repositories exist.
+  # rendered manifests land in a tap and a bucket. Skips with a notice only when TAP_TOKEN is
+  # unset. Everything else -- a token that has expired, a push that did not land, a manifest
+  # that does not name this tag when read back -- fails the job: a green check here has to mean
+  # that what a user installs from each channel is this release.
   update-taps:
     name: Update tap and bucket
     needs: [release]
@@ -500,12 +502,18 @@ jobs:
           fi
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          version="${TAG#v}"
 
           push_one() {
             repo="$1" src="$2" dest="$3"
+            # An error, not the warning-and-skip this used to be. Both repositories exist, so a
+            # clone that fails is a token that has expired or lost access -- and a token that
+            # expires quietly is the one failure this job must never turn green on: the release
+            # would succeed while `brew upgrade` and `scoop update` went on serving the previous
+            # version indefinitely, with nothing anywhere saying so.
             if ! git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/${repo}.git" work; then
-              echo "::warning::${repo} could not be cloned; skipping. Create it, or unset TAP_TOKEN."
-              return 0
+              echo "::error::${repo} could not be cloned: TAP_TOKEN has expired or lost access to it."
+              exit 1
             fi
             mkdir -p "work/$(dirname "$dest")"
             cp "$src" "work/$dest"
@@ -521,5 +529,28 @@ jobs:
             rm -rf work
           }
 
+          verify_one() {
+            repo="$1" dest="$2"
+            # Read back through the API rather than raw.githubusercontent.com: the raw CDN caches
+            # for minutes, and reading the previous version back would fail a push that landed.
+            if ! content="$(curl -fsS \
+                -H "Authorization: Bearer ${TAP_TOKEN}" \
+                -H "Accept: application/vnd.github.raw+json" \
+                "https://api.github.com/repos/${repo}/contents/${dest}")"; then
+              echo "::error::${repo}/${dest} could not be read back after the push."
+              exit 1
+            fi
+            if ! grep -Fq "${version}" <<<"${content}"; then
+              echo "::error::${repo}/${dest} does not name ${version} after the push; that channel is stale."
+              exit 1
+            fi
+            echo "::notice::${repo}/${dest} names ${version}."
+          }
+
           push_one "SophanaSok/homebrew-tap" "rendered/homebrew/ai-usage-tui.rb"  "Formula/ai-usage-tui.rb"
           push_one "SophanaSok/scoop-bucket" "rendered/scoop/ai-usage-tui.json"   "bucket/ai-usage-tui.json"
+
+          # What makes this job's green mean something: the manifest a user will install from
+          # each channel, as it is now, names this release.
+          verify_one "SophanaSok/homebrew-tap" "Formula/ai-usage-tui.rb"
+          verify_one "SophanaSok/scoop-bucket" "bucket/ai-usage-tui.json"
