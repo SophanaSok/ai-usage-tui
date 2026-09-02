@@ -60,6 +60,14 @@
   payload without an `agent_id`, or a build that lays subagents out differently, falls back to the
   path the payload names.
 
+  `event_id` gains a scope segment for this: `claude-code:{session}:{scope}:{tool_use_id}`, where
+  scope is `main` or `agent-<agent_id>`. Both halves have to be built from the same place — the
+  cursor is matched as a literal prefix of `event_id` in SQL, so a prefix that names the agent
+  while the id does not matches nothing, and every run re-attributes from the start of the
+  transcript. `main` and `agent-<id>` are also chosen so neither is a prefix of the other, which a
+  bare `{session}:` prefix was: it would have counted every subagent's requests against the
+  parent's cursor. Two tests now pin the coupling, because nothing else does.
+
   The usage collector was never affected: its walk is recursive, so it already read
   `subagents/*.jsonl`, and those requests carry their own `requestId`s — subagent tokens were
   counted exactly once in the dashboard throughout.

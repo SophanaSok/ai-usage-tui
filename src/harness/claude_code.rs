@@ -33,8 +33,10 @@
 //!   request is counted once, one run late: the request that issued a test command lands in the
 //!   attempt behind the *next* one. The model is the last request in the transcript — the model
 //!   in use — which right after a switch is the model before it.
-//! - **`event_id`**: `claude-code:{session_id}:{tool_use_id}`, so a re-delivered hook cannot
-//!   record the same run twice.
+//! - **`event_id`**: `claude-code:{session_id}:{scope}:{tool_use_id}`, so a re-delivered hook
+//!   cannot record the same run twice. `scope` is `main` for the session's own runs and
+//!   `agent-<agent_id>` for a subagent's; it is also the cursor's prefix, so the two must be
+//!   built from the same place and no party's prefix can be a prefix of another's.
 //! - **Nothing else.** No counter is sent. `retries`, `escalations` and `review_defects` stay
 //!   `null` — not reported — because a hook cannot count them.
 
@@ -253,7 +255,12 @@ pub fn event(observation: &Observation, attribution: &Attribution, created: i64)
     };
     let provider = "anthropic";
     json!({
-        "event_id": format!("{AGENT}:{}:{}", observation.session_id, observation.tool_use_id),
+        "event_id": format!(
+            "{AGENT}:{}:{}:{}",
+            observation.session_id,
+            scope(observation),
+            observation.tool_use_id
+        ),
         "agent": agent,
         "model": model,
         "provider": provider,
@@ -301,6 +308,20 @@ pub fn record_from_stdin(roots: &SourceRoots) -> Result<()> {
     Ok(())
 }
 
+/// The segment that separates one attributing party's events from another's, inside a session.
+///
+/// The parent and each of its subagents attribute from **different transcripts**, so each needs
+/// its own cursor — and `attributed_requests` matches a literal prefix of `event_id`. That only
+/// works if the same segment appears in both, and if no party's prefix is a prefix of another's:
+/// `main` and `agent-<id>` cannot collide, whereas a bare `{session}:` prefix would have swept up
+/// every subagent's events into the parent's count.
+fn scope(observation: &Observation) -> String {
+    match &observation.agent_id {
+        Some(agent_id) => format!("agent-{agent_id}"),
+        None => "main".to_string(),
+    }
+}
+
 /// The transcript a subagent's own turns are written to, when the payload came from one.
 ///
 /// Claude Code hands a subagent's hook the **parent's** `transcript_path` and the parent's
@@ -335,11 +356,14 @@ pub fn record(input: &str, roots: &SourceRoots) -> Result<Recorded> {
     };
 
     // A subagent's attempt is its own, and so is its cursor: keying both on the session alone
-    // made one counter serve the parent and every subagent under it.
-    let prefix = match &observation.agent_id {
-        Some(agent_id) => format!("{AGENT}:{}:{agent_id}:", observation.session_id),
-        None => format!("{AGENT}:{}:", observation.session_id),
-    };
+    // made one counter serve the parent and every subagent under it. The prefix has to be built
+    // from the same `scope` the `event_id` carries, or it matches nothing and every run
+    // re-attributes from the start of the transcript.
+    let prefix = format!(
+        "{AGENT}:{}:{}:",
+        observation.session_id,
+        scope(&observation)
+    );
     let skip = attributed_requests(&roots.journal, &prefix)?;
     let decision = roots.claude_decision();
     let engine = PricingEngine::load();
@@ -535,7 +559,7 @@ mod tests {
         let event = event(&observation, &attribution, 1_700_000_000);
         assert_eq!(
             event["event_id"],
-            "claude-code:6319b6c9-cad9-4969-a499-0086c596a220:toolu_01Jig6ud9ip8ehgTZQ1qgJvE"
+            "claude-code:6319b6c9-cad9-4969-a499-0086c596a220:main:toolu_01Jig6ud9ip8ehgTZQ1qgJvE"
         );
         assert_eq!(event["agent"], "claude-code");
         assert_eq!(event["model"], "claude-opus-5");
@@ -614,6 +638,64 @@ mod tests {
         );
         assert_eq!(attribution.requests, 1);
         assert_eq!(attribution.tokens, 13, "10 + 3, not the parent's 1430");
+    }
+
+    #[test]
+    fn the_cursor_prefix_is_a_prefix_of_the_event_id_it_has_to_match() {
+        // These two are built in different functions and read by a literal `substr` comparison in
+        // SQL, so nothing but a test couples them. When they drifted, `attributed_requests`
+        // matched nothing for a subagent, every one of its runs re-attributed from the start of
+        // its transcript, and the double-counting this whole change exists to stop came back --
+        // one subagent at a time instead of one session at a time.
+        for agent_id in [None, Some("a-1")] {
+            let mut payload = success("cargo test");
+            payload["session_id"] = json!("s");
+            if let Some(id) = agent_id {
+                payload["agent_id"] = json!(id);
+            }
+            let observation = observed(observe(&payload).unwrap());
+            let prefix = format!(
+                "{AGENT}:{}:{}:",
+                observation.session_id,
+                scope(&observation)
+            );
+            let event = event(&observation, &Attribution::default(), 0);
+            let event_id = event["event_id"].as_str().unwrap();
+            assert!(
+                event_id.starts_with(&prefix),
+                "cursor prefix {prefix:?} does not match event_id {event_id:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_parents_cursor_does_not_sweep_up_its_subagents_events() {
+        // `main` and `agent-<id>` are chosen so that neither is a prefix of the other. A bare
+        // `{session}:` prefix for the parent would have counted every subagent's requests as
+        // already attributed, and the parent's own attempts would have come out short.
+        let mut parent = success("cargo test");
+        parent["session_id"] = json!("s");
+        let parent = observed(observe(&parent).unwrap());
+
+        let mut child = success("cargo test");
+        child["session_id"] = json!("s");
+        child["agent_id"] = json!("a-1");
+        let child = observed(observe(&child).unwrap());
+
+        let parent_prefix = format!("{AGENT}:{}:{}:", parent.session_id, scope(&parent));
+        let child_prefix = format!("{AGENT}:{}:{}:", child.session_id, scope(&child));
+        assert_ne!(parent_prefix, child_prefix);
+        assert!(!child_prefix.starts_with(&parent_prefix));
+        assert!(!parent_prefix.starts_with(&child_prefix));
+
+        let child_event = event(&child, &Attribution::default(), 0);
+        assert!(
+            !child_event["event_id"]
+                .as_str()
+                .unwrap()
+                .starts_with(&parent_prefix),
+            "a subagent's event fell inside the parent's cursor"
+        );
     }
 
     #[test]
