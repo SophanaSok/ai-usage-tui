@@ -457,11 +457,10 @@ Remaining:
   had drifted -- phase-status still filed the whole of v0.5.0 under "Unreleased" -- while being
   linked from the README as current contributor documentation.
 
-  *One discrepancy is left for you, in your own config rather than this repo:* `ROUTING.md` lists
-  `reviewer` as `north-mini-code-free` while `opencode.json` defines it as
-  `opencode/deepseek-v4-flash-free`. Both are free-cloud, so cost is unaffected, but note that
-  `reviewer` and `reasoning` then share a model — which weakens rule 3 (prefer a reviewer on a
-  different provider from the agent that wrote the code) when `reasoning` did the writing.
+  *The discrepancy this entry used to leave open is gone:* `ROUTING.md` and `opencode.json` now
+  both give `reviewer` as `openrouter/z-ai/glm-5.2:free`, against `opencode/nemotron-3-ultra-free`
+  for `build`, `spec` and `reasoning` — so rule 3 (a reviewer on a different provider family from
+  the agent that wrote the code) holds whichever of them did the writing.
 
 ### P2 — The update story
 
