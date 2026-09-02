@@ -2,6 +2,56 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`--statusline`: Claude Code's rate limits, pushed.** Claude Code hands a statusline command
+  its official `rate_limits` block on every redraw and again when a window reaches its reset, and
+  nothing else in this tool is *pushed* at it — `~/.claude.json` and Omarchy's records are polled
+  on the dashboard's interval. `ai-usage-tui --statusline` reads that payload from stdin, prints
+  a one-line readout for the status bar (`5h 42% (resets 2h 10m) · 7d 63% (resets 3d 4h)`, in
+  red past 90%), and caches the windows under the data directory, where `limits::load` reads them
+  as a third producer beside the config cache and Omarchy. So the `l` panel and `--json` carry
+  them on any platform, and Claude Code gets an always-visible readout in the same change.
+  `contrib/claude-code/statusline-settings.json` is the one-line settings entry; it is a separate
+  file from the hooks entry so installing one does not install the other.
+
+  **Absence is meaning, four times over.** The block is absent on an API-billed account and in
+  every session before its first response: that is "no such thing here", not 0%, so the line is
+  empty, the exit is 0 and the cache is left as it was. Each window may be independently absent,
+  and the cache is rewritten with exactly what is present, so a window that has gone is cleared
+  from the panel rather than frozen at its last figure. Claude Code drops a window once its
+  `resets_at` has passed, so a window behind the clock is dropped at *read* time, whichever side
+  of the cache it is on — rendering the last-known percentage after the reset would show a full
+  bar on an empty window. And a percentage that is not a finite, non-negative number drops its
+  window rather than becoming one.
+
+  **What is read, and the guarantee around it.** From the payload only
+  `rate_limits.{five_hour,seven_day,spend_limit}.{used_percentage,resets_at}`; the session id,
+  transcript path, working directory, model and session cost beside them are never deserialised,
+  the three windows are struct fields rather than an iterated map, and a test plants a marker in
+  every one of those places and fails if it reaches the cache, the line or a `Debug` rendering.
+  `resets_at` here is epoch seconds as a number while `~/.claude.json` spells the same instant as
+  RFC 3339 text, and the two readers are kept separate so neither format is accepted where the
+  other is meant. The freshness rule is the two-sided one from v0.13.0. One subscription stays one
+  row: the statusline files under the same agent as the config cache and the fresher reading
+  wins, at the recorded cost that the statusline carries no per-model weekly window.
+
+  **The line is the product and the cache a by-product, and the exit code says so.** Claude Code
+  shows stdout only from a command that exited 0 and blanks the status line otherwise, with
+  stderr going to its debug log alone — read from the 2.1.258 bundle, not assumed. So a cache
+  that cannot be written is said on stderr and in the log and is never an exit code; the non-zero
+  exit is reserved for stdin that is not the document. The cache's temporary file is named per
+  process, because unlike every other cache this tool writes, this one has a writer per open
+  Claude Code session, and two sharing a name would race each other's rename.
+
+  `--doctor` gains a `LIMITS` section naming where each of the three sources was looked for and,
+  for the statusline cache, how many windows are live and when the payload arrived; with
+  `[collectors.claude_code] enabled = false` it says "disabled" for the two Claude Code rows
+  rather than "found" for a file the panel will never read. And the README screenshot renderer
+  now requires `XDG_DATA_HOME` to name a scratch directory, because the statusline cache has no
+  flag to pin it and would otherwise have put the author's own rate-limit window into every
+  image's header — the fourth such leak, caught before it happened rather than after.
+
 ### Changed
 
 - **Two green checks that meant nothing now mean something.** Neither is in the binary; both are

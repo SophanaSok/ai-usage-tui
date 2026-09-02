@@ -13,6 +13,7 @@ pub mod model;
 pub mod omarchy;
 pub mod pricing;
 pub mod routing;
+pub mod statusline;
 pub mod ui;
 pub mod update;
 pub mod utils;
@@ -118,6 +119,12 @@ mod integration_tests {
         assert!(result.is_err());
 
         let result = crate::cli::parse_cli(["--csv", "out.csv", "--refresh-pricing"]);
+        assert!(result.is_err());
+
+        let result = crate::cli::parse_cli(["--statusline", "--once"]);
+        assert!(result.is_err());
+
+        let result = crate::cli::parse_cli(["--statusline", "--claude-code-hook"]);
         assert!(result.is_err());
     }
 

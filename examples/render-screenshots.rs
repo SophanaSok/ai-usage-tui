@@ -97,6 +97,22 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
 
+    // Three more inputs have no flag at all, because nothing points them elsewhere: the
+    // statusline cache, the update cache and a refreshed pricing cache all resolve from the real
+    // `XDG_DATA_HOME` or `HOME`, and `App::new` reads every one of them. The update cache was the
+    // third leak into these images (cleared below); the statusline cache would have been the
+    // fourth -- the author's own rate-limit window in every header, from the day the statusline
+    // entry was installed. So the data root is pinned the way the sources are: required, never
+    // inferred. `scripts/render-readme-screenshots.sh` points it at a scratch directory.
+    if std::env::var_os("XDG_DATA_HOME").is_none_or(|value| value.is_empty()) {
+        eprintln!(
+            "XDG_DATA_HOME must name a scratch directory: unset, the statusline, update and \
+             pricing caches"
+        );
+        eprintln!("fall back to this machine's real data directory, which must never reach a README image");
+        return ExitCode::FAILURE;
+    }
+
     let budgets = match load_config(&cli) {
         Ok(config) => config
             .budgets

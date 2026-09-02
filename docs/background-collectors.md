@@ -283,6 +283,14 @@ never alarm. The same records feed the billing decision: the Claude Code and Cod
 take the record's `tierLabel` as a subscription signal after the explicit setting, the API-key
 environment variables, and `~/.claude.json`. `[omarchy] limits = false` turns both off.
 
+Two more producers feed the same `LimitsReport` through `src/limits::load`, on the same refresh:
+Claude Code's `~/.claude.json` cache (`cachedUsageUtilization`, stale after 30 minutes), and the
+`--statusline` cache — `statusline-limits.json` in the data directory, rewritten by Claude Code's
+status line on each redraw and read by `src/statusline::readout_at` under the same 30-minute
+rule. One subscription is one row: `limits::merge` keeps the fresher reading, then the newer, and
+only on a tie prefers the config cache. `[collectors.claude_code] enabled = false` removes both
+Claude Code readings; `[omarchy] limits = false` turns the whole panel off.
+
 ## TUI integration
 
 The dashboard calls `snapshot()` on its refresh interval (default 30s, `--refresh-interval`). That

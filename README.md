@@ -60,6 +60,9 @@ real account, project, or spend appears in any image here.*
 - `LOCAL`, `CLOUD`, `FREE`, `PAID`, and `UNKNOWN` classifications
 - Provider-reported, calculated, estimated, free, local, quota-billed, or unavailable cost
 - Daily and monthly budget status
+- Subscription rate-limit windows and their resets, from Claude Code's own cache, from its status
+  line (`--statusline`, which also gives Claude Code a one-line readout), and from Omarchy's
+  agents panel
 
 Unknown cost is kept unknown rather than displayed as paid usage with a zero
 cost. Local and explicitly free usage is excluded from budget spend.
@@ -574,7 +577,8 @@ project, and no per-token price, is shown as `quota` rather than as `$0.00`.
 ### Subscription limits
 
 The `l` panel shows each subscription's rate-limit windows — how much of the 5-hour and weekly
-allowances is gone, and when each resets. Two sources feed it, and neither needs configuring.
+allowances is gone, and when each resets. Three sources feed it: two need no configuring, and
+the third is one line of Claude Code settings.
 
 **Claude Code's own cache**, on every platform. Claude Code records its subscription utilisation
 in `~/.claude.json`, and this reads it: the session window, the weekly window, and any per-model
@@ -590,14 +594,31 @@ stamps the cache, so a reading older than 30 minutes is drawn dimmed and never r
 a stale number is labelled, never presented as current. `[collectors.claude_code] enabled = false`
 switches this off along with the rest of Claude Code's files.
 
+**Claude Code's status line**, on every platform, once it is told to feed this.
+[`contrib/claude-code/statusline-settings.json`](contrib/claude-code/statusline-settings.json)
+registers `ai-usage-tui --statusline` as Claude Code's statusline command. Claude Code then
+hands it the official `rate_limits` block on every redraw, and again when a window reaches its
+reset; the command prints a one-line readout for the status bar — `5h 42% (resets 2h 10m) ·
+7d 63% (resets 3d 4h)`, in red past 90% — and caches the windows under this tool's data
+directory for the panel. It is the only *pushed* source, and the only one that carries the spend
+limit on a gateway plan. From the payload only the three windows' `used_percentage` and
+`resets_at` are read; the session id, transcript path, working directory, model and session cost
+beside them are never deserialised. A payload without the block — an API-billed account, or a
+session before its first response — prints nothing and leaves the cache alone; a window missing
+from a payload is cleared from the panel rather than frozen at its last figure; a window whose
+reset has passed is dropped when read. See
+[`contrib/claude-code/README.md`](contrib/claude-code/README.md#status-line) to install it.
+
 **Omarchy's agents panel**, on [Omarchy](https://omarchy.org) — an Arch/Hyprland desktop whose bar
 meters every AI coding subscription on the machine. It covers agents beyond Claude Code, and
 `--omarchy-record` can publish this tool's own usage back into that panel. On any other machine
 this source is silently idle.
 
-Where both describe the same subscription they are merged into one row rather than two: fresh
+Where two describe the same subscription they are merged into one row rather than two: fresh
 beats stale, and between two fresh readings the newer wins. `[omarchy] limits = false` turns the
-whole panel off, both sources included.
+whole panel off, every source included, and `[collectors.claude_code] enabled = false` removes
+both Claude Code readings. `--doctor` has a `LIMITS` section naming where each source was looked
+for.
 
 See [`docs/omarchy.md`](docs/omarchy.md).
 
@@ -921,6 +942,7 @@ does not load it automatically.
 | `--webhook URL` | POST budget alerts to this URL (overrides `budgets.webhook`) |
 | `--record-routing` | Read one routing event from stdin and journal it |
 | `--claude-code-hook` | Read a Claude Code `PostToolUse`/`PostToolUseFailure` hook payload from stdin and journal a routing event when it observed a test run |
+| `--statusline` | Read Claude Code's statusline JSON from stdin, print a one-line rate-limit readout for its status bar, and cache the windows for the `l` panel |
 | `--routing-json` | Print aggregated routing analytics as JSON |
 | `--routing-csv PATH` | Write aggregated routing analytics as CSV |
 
@@ -956,11 +978,19 @@ On Windows, `USERPROFILE` (or `HOMEDRIVE` + `HOMEPATH`) stands in for `HOME`,
 - Claude Code session transcripts contain source code and secrets; only the
   `usage` block of each line is parsed. A test plants a fake credential in a
   transcript and fails if it reaches a usage record.
-- `~/.claude.json` is read to decide billing: only whether `oauthAccount` is
-  present and its `userRateLimitTier` / `organizationRateLimitTier` strings.
-  The file also holds the account's email, name, organisation, and per-project
-  prompt history; none of that is retained or logged, and the parsed document
-  is dropped at once. `.credentials.json` and `settings.json` are never read.
+- `~/.claude.json` is read to decide billing — only whether `oauthAccount` is
+  present and its `userRateLimitTier` / `organizationRateLimitTier` strings —
+  and for the cached rate-limit windows under `cachedUsageUtilization`, as the
+  [Subscription limits](#subscription-limits) section itemises. The file also
+  holds the account's email, name, organisation, and per-project prompt
+  history; none of that is retained or logged, and the parsed document is
+  dropped at once. `.credentials.json` and `settings.json` are never read.
+- `--statusline` reads Claude Code's statusline payload from stdin, and from it
+  only the three `rate_limits` windows' `used_percentage` and `resets_at`. The
+  session id, transcript path, working directory, model and session cost in the
+  same payload are never deserialised. It writes one file in the data
+  directory, `statusline-limits.json`, holding those figures and the time they
+  arrived, and nothing else.
   The environment is checked only for the presence of `ANTHROPIC_API_KEY`,
   `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, and
   `CLAUDE_CODE_USE_VERTEX`; their values are not read.
@@ -1017,7 +1047,8 @@ Default local storage paths (when the corresponding XDG variable is unset):
 | Data | Path |
 | --- | --- |
 | OpenCode usage, read-only | `~/.local/share/opencode/opencode.db` |
-| Claude Code config document, read-only (billing only) | `~/.claude.json` |
+| Claude Code config document, read-only (billing and cached rate-limit windows) | `~/.claude.json` |
+| Claude Code rate-limit windows, written only by `--statusline` | `~/.local/share/ai-usage-tui/statusline-limits.json` |
 | Codex session logs, read-only | `~/.codex/sessions`, `~/.codex/archived_sessions` |
 | Omarchy agents-panel records, read-only | `~/.local/state/omarchy/agents/usage` |
 | Omarchy agents-panel record, written only by `--omarchy-record` | `~/.local/state/omarchy/agents/usage/<id>.json` |

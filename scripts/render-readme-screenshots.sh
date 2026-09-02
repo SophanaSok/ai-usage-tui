@@ -89,6 +89,10 @@ record_routing '{"agent":"drafter","model":"claude-haiku-4-5","provider":"anthro
 record_routing '{"agent":"drafter","model":"claude-haiku-4-5","provider":"anthropic","task":"docstrings","phase":"polish","tokens":26000,"cost":0.03,"retries":0,"escalations":0,"test_result":true,"review_defects":0}'
 record_routing '{"agent":"reviewer","model":"claude-sonnet-5","provider":"anthropic","task":"api-review","phase":"verification","tokens":74000,"cost":0.22,"retries":0,"escalations":0,"test_result":true,"review_defects":0}'
 
+# The data root has no flag, and the statusline, update and pricing caches all resolve from it;
+# the renderer refuses to run unless it is pinned. A statusline cache left unpinned would put
+# the author's own rate-limit window into every header below.
+XDG_DATA_HOME="${WORK}/no-data-home" \
 cargo run --release --locked --quiet --manifest-path "${ROOT}/Cargo.toml" \
   --example render-screenshots -- \
   "${SVG_DIR}" --claude-dir "${CLAUDE_DIR}" --codex-dir "${CLAUDE_DIR}/no-codex-home" \

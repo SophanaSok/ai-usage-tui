@@ -245,20 +245,35 @@ pub fn read_claude_cache(
 /// Which of two readings of the same subscription to keep.
 ///
 /// Fresh beats stale, always. Between two fresh readings the newer one wins, and only if they
-/// are equally recent does the source rank break the tie — Claude Code's own cache first, because
-/// it carries the per-model weekly scoping Omarchy's record flattens away. Between two stale
-/// readings the newer wins. "Whichever was read last" and "whichever number is higher" are both
-/// one line away from here and both wrong.
-fn prefer<'a>(a: &'a LimitsSnapshot, b: &'a LimitsSnapshot, a_is_cache: bool) -> bool {
+/// are equally recent does the source rank break the tie, which the caller states as
+/// `a_wins_ties`: `load` ranks Claude Code's own config cache first, because it carries the
+/// per-model weekly scoping that Omarchy's record flattens away and the statusline never has.
+/// Between two stale readings the newer wins. "Whichever was read last" and "whichever number
+/// is higher" are both one line away from here and both wrong.
+fn prefer<'a>(a: &'a LimitsSnapshot, b: &'a LimitsSnapshot, a_wins_ties: bool) -> bool {
     match (a.stale, b.stale) {
         (false, true) => true,
         (true, false) => false,
         _ => match a.updated_at.cmp(&b.updated_at) {
             std::cmp::Ordering::Greater => true,
             std::cmp::Ordering::Less => false,
-            std::cmp::Ordering::Equal => a_is_cache,
+            std::cmp::Ordering::Equal => a_wins_ties,
         },
     }
+}
+
+/// Whether Claude Code's files may be read at all.
+///
+/// `[collectors.claude_code] enabled = false` is the existing switch that means "do not read
+/// Claude Code's files". `~/.claude.json` is one of them and the statusline cache holds Claude
+/// Code's figures, so both producers honour it rather than becoming a way into the same data that
+/// the switch does not cover. `--doctor` asks the same question, so its LIMITS section can say
+/// "disabled" where `load` would not have looked, instead of "found".
+pub fn claude_enabled(roots: &SourceRoots) -> bool {
+    crate::collector::registry::SOURCES
+        .iter()
+        .find(|spec| spec.id == crate::collector::claude_code::ID)
+        .is_none_or(|spec| roots.is_enabled(spec))
 }
 
 /// Every limit window this machine can report, from every source.
@@ -276,21 +291,26 @@ pub fn load(roots: &SourceRoots, now: i64) -> LimitsReport {
         None => LimitsReport::default(),
     };
 
-    // `[collectors.claude_code] enabled = false` is the existing switch that means "do not read
-    // Claude Code's files". `~/.claude.json` is one of them, so it is honoured here too rather
-    // than this becoming a second way into the same document that the switch does not cover.
-    let claude_enabled = crate::collector::registry::SOURCES
-        .iter()
-        .find(|spec| spec.id == crate::collector::claude_code::ID)
-        .is_none_or(|spec| roots.is_enabled(spec));
-
-    if claude_enabled {
+    if claude_enabled(roots) {
+        let tier = roots.omarchy_tier(crate::collector::claude_code::ID);
         if let Some(path) = roots.claude_json_path() {
-            let tier = roots.omarchy_tier(crate::collector::claude_code::ID);
-            let readout = read_claude_cache(&path, now, CACHE_STALE_AFTER_SECS, tier);
+            let readout = read_claude_cache(&path, now, CACHE_STALE_AFTER_SECS, tier.clone());
             report.problems.extend(readout.problems);
             if let Some(snapshot) = readout.snapshot {
-                merge(&mut report, snapshot);
+                merge(&mut report, snapshot, true);
+            }
+        }
+        // The third producer: what Claude Code last pushed to `--statusline`. It is this tool's
+        // own file, but it holds Claude Code's figures, so the same switch covers it -- a user
+        // who turned Claude Code off does not expect its subscription to keep appearing.
+        if let Some(path) = crate::statusline::cache_path() {
+            let (snapshot, problem) = crate::statusline::readout_at(&path, now, tier);
+            report.problems.extend(problem);
+            if let Some(snapshot) = snapshot {
+                // Loses a tie to whatever is already there. The config cache merged first and
+                // may carry a per-model weekly window; a statusline reading stamped the same
+                // second cannot, and must not replace it.
+                merge(&mut report, snapshot, false);
             }
         }
     }
@@ -306,7 +326,14 @@ pub fn load(roots: &SourceRoots, now: i64) -> LimitsReport {
 /// not control, and the two namespaces are already known to differ — that function exists because
 /// of it. Comparing raw strings would file one subscription as two agents the day a record spells
 /// itself `claude_code`.
-fn merge(report: &mut LimitsReport, incoming: LimitsSnapshot) {
+///
+/// `incoming_wins_ties` is the source rank for the equal-timestamp case, and it is the caller's
+/// to state because `merge` cannot tell the producers apart: the `~/.claude.json` reading passes
+/// `true`, the statusline reading `false`. This used to be a hardcoded `true`, which was right
+/// while the config cache was the only caller and wrong the moment a second one appeared -- a
+/// statusline reading stamped the same second would have evicted the snapshot carrying the
+/// per-model weekly window with one that cannot carry it.
+fn merge(report: &mut LimitsReport, incoming: LimitsSnapshot, incoming_wins_ties: bool) {
     let key = omarchy::record_id_for_agent(&incoming.agent).to_string();
     match report
         .snapshots
@@ -314,7 +341,7 @@ fn merge(report: &mut LimitsReport, incoming: LimitsSnapshot) {
         .find(|existing| omarchy::record_id_for_agent(&existing.agent) == key)
     {
         Some(existing) => {
-            if prefer(&incoming, existing, true) {
+            if prefer(&incoming, existing, incoming_wins_ties) {
                 // The tier is a display label, and the record that carries limits is not always
                 // the record that named the plan. Keep whichever side actually has one.
                 let tier = if incoming.tier.is_empty() {
@@ -532,7 +559,7 @@ mod tests {
             snapshots: vec![snapshot_at("claude_code", 100, true)],
             ..Default::default()
         };
-        merge(&mut report, snapshot_at(CLAUDE_AGENT_ID, 900, false));
+        merge(&mut report, snapshot_at(CLAUDE_AGENT_ID, 900, false), true);
         assert_eq!(report.snapshots.len(), 1, "one subscription, one row");
         assert!(!report.snapshots[0].stale, "the fresh reading won");
     }
@@ -543,8 +570,37 @@ mod tests {
             snapshots: vec![snapshot_at("codex", 100, false)],
             ..Default::default()
         };
-        merge(&mut report, snapshot_at(CLAUDE_AGENT_ID, 100, false));
+        merge(&mut report, snapshot_at(CLAUDE_AGENT_ID, 100, false), true);
         assert_eq!(report.snapshots.len(), 2);
+    }
+
+    /// The equal-timestamp case, caught in review of the change that added the statusline
+    /// producer: merged with the config cache's own "I win ties" rank, a statusline reading
+    /// stamped the same second replaced the snapshot carrying the per-model weekly window with
+    /// one that cannot carry it.
+    #[test]
+    fn a_statusline_reading_does_not_evict_the_config_cache_on_a_tie() {
+        let mut richer = snapshot_at(CLAUDE_AGENT_ID, 900, false);
+        richer.windows.push(LimitWindow {
+            label: "Weekly · Fixture Model 9".to_string(),
+            fraction: 0.5,
+            ..Default::default()
+        });
+        let mut report = LimitsReport {
+            snapshots: vec![richer],
+            ..Default::default()
+        };
+        merge(&mut report, snapshot_at(CLAUDE_AGENT_ID, 900, false), false);
+        assert_eq!(report.snapshots.len(), 1);
+        assert_eq!(
+            report.snapshots[0].windows.len(),
+            2,
+            "the per-model window survived the tie"
+        );
+
+        // Freshness still outranks richness: a materially newer statusline reading wins.
+        merge(&mut report, snapshot_at(CLAUDE_AGENT_ID, 901, false), false);
+        assert_eq!(report.snapshots[0].windows.len(), 1);
     }
 
     /// A tier is a display label, and the record carrying the limits is not always the one that
@@ -557,7 +613,7 @@ mod tests {
             snapshots: vec![existing],
             ..Default::default()
         };
-        merge(&mut report, snapshot_at(CLAUDE_AGENT_ID, 900, false));
+        merge(&mut report, snapshot_at(CLAUDE_AGENT_ID, 900, false), true);
         assert_eq!(report.snapshots[0].tier, "Max 20x");
     }
 }

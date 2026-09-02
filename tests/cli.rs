@@ -1518,3 +1518,221 @@ fn json_limits_come_from_claude_codes_own_cache_without_omarchy() {
         );
     }
 }
+
+/// `--statusline` is the fourth stdin action: Claude Code's statusline payload in, one line out,
+/// and the windows cached where `limits::load` -- so the `l` panel and `--json` -- will find them.
+#[test]
+fn a_statusline_payload_becomes_one_line_and_a_row_in_the_limits_export() {
+    use std::io::Write;
+    let dir = scratch("statusline");
+    let data_home = dir.join("data");
+    let cache = data_home
+        .join("ai-usage-tui")
+        .join("statusline-limits.json");
+
+    // The fixture is a capture, so its reset instants are whatever they were on the day. They
+    // are moved to an hour and a week from now so the windows are live against the real clock
+    // this process reads; nothing else in the payload is touched.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs() as i64;
+    let mut payload: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(format!(
+            "{}/tests/fixtures/claude_statusline.json",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .expect("fixture"),
+    )
+    .expect("the fixture is JSON");
+    payload["rate_limits"]["five_hour"]["resets_at"] = serde_json::json!(now + 3600);
+    payload["rate_limits"]["seven_day"]["resets_at"] = serde_json::json!(now + 7 * 86_400);
+    // The percentages are whatever the capture said; the assertions below are about the shape of
+    // the line and the row, so they take the figures from the fixture rather than repeating them.
+    let five = payload["rate_limits"]["five_hour"]["used_percentage"]
+        .as_f64()
+        .expect("the capture carries a five_hour percentage");
+    let seven = payload["rate_limits"]["seven_day"]["used_percentage"]
+        .as_f64()
+        .expect("the capture carries a seven_day percentage");
+
+    let statusline = |body: &str| -> std::process::Output {
+        let mut child = bin()
+            .arg("--statusline")
+            .env("XDG_DATA_HOME", &data_home)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(body.as_bytes())
+            .unwrap();
+        child.wait_with_output().expect("wait")
+    };
+    let limits_json = || -> serde_json::Value {
+        let output = hermetic(bin().arg("--json"))
+            // Overrides the pin `hermetic` sets: this test wants the cache read.
+            .env("XDG_DATA_HOME", &data_home)
+            .output()
+            .expect("run --json");
+        assert!(output.status.success());
+        let json: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("--json prints JSON");
+        json["limits"].clone()
+    };
+
+    let output = statusline(&payload.to_string());
+    assert!(
+        output.status.success(),
+        "--statusline exited {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert_eq!(
+        stdout.lines().count(),
+        1,
+        "one line, for the status bar: {stdout:?}"
+    );
+    assert!(
+        stdout.starts_with(&format!("5h {}% (resets ", five.round())),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("7d {}% (resets ", seven.round())),
+        "{stdout}"
+    );
+    assert!(cache.is_file(), "the windows are cached for the panel");
+    let leftovers: Vec<String> = std::fs::read_dir(cache.parent().unwrap())
+        .expect("read the data dir")
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".tmp"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "temporary-then-rename leaves nothing behind: {leftovers:?}"
+    );
+    let cached = std::fs::read_to_string(&cache).expect("read cache");
+    for forbidden in ["FIXTURE_SECRET", "total_cost_usd", "transcript_path"] {
+        assert!(
+            !stdout.contains(forbidden),
+            "{forbidden} reached stdout: {stdout}"
+        );
+        assert!(
+            !cached.contains(forbidden),
+            "{forbidden} reached the cache: {cached}"
+        );
+    }
+
+    // The panel's source, through the one function it and `--json` share.
+    let limits = limits_json();
+    let claude = limits
+        .as_array()
+        .expect("limits is an array")
+        .iter()
+        .find(|snapshot| snapshot["agent"] == "claude")
+        .expect("the subscription is a row")
+        .clone();
+    assert_eq!(claude["stale"], false, "{claude}");
+    let labels: Vec<&str> = claude["windows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|window| window["label"].as_str().unwrap())
+        .collect();
+    assert_eq!(labels, vec!["Session (5-hour)", "Weekly (all models)"]);
+    let percent = claude["windows"][0]["percent_used"]
+        .as_f64()
+        .expect("percent_used is a number");
+    assert!((percent - five).abs() < 1e-6, "{percent} vs {five}");
+
+    // `--doctor` names the cache, so an empty panel is a question with an answer.
+    let output = hermetic(bin().arg("--doctor"))
+        .env("XDG_DATA_HOME", &data_home)
+        .output()
+        .expect("run --doctor");
+    assert!(output.status.success());
+    let doctor = String::from_utf8(output.stdout).expect("utf8");
+    assert!(
+        doctor.contains("statusline") && doctor.contains("2 windows"),
+        "{doctor}"
+    );
+    assert!(doctor.contains(&cache.display().to_string()), "{doctor}");
+
+    // No block at all -- an API-billed account, or the moment before the first response. That is
+    // "no such thing", not 0%: nothing printed, exit 0, and the cache is left as it was.
+    let output = statusline(r#"{"model":{"id":"x"},"cwd":"/tmp"}"#);
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty(), "{:?}", output.stdout);
+    assert_eq!(std::fs::read_to_string(&cache).expect("read"), cached);
+
+    // A window gone from the payload is gone from the panel, not frozen at its last figure.
+    payload["rate_limits"]
+        .as_object_mut()
+        .unwrap()
+        .remove("seven_day");
+    let output = statusline(&payload.to_string());
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(
+        stdout.starts_with(&format!("5h {}%", five.round())) && !stdout.contains("7d"),
+        "{stdout}"
+    );
+    let limits = limits_json();
+    assert_eq!(
+        limits[0]["windows"].as_array().map(Vec::len),
+        Some(1),
+        "{limits}"
+    );
+
+    // A cache that cannot be written is not an exit code. Claude Code shows stdout only from a
+    // command that exited 0, so a non-zero exit here would blank the status line for a failure
+    // that has nothing to do with the readout; the failure is said on stderr instead.
+    let not_a_dir = dir.join("not-a-dir");
+    std::fs::write(&not_a_dir, "a file where the data root should be").expect("plant a file");
+    let mut child = bin()
+        .arg("--statusline")
+        .env("XDG_DATA_HOME", &not_a_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().expect("wait");
+    assert!(
+        output.status.success(),
+        "an unwritable cache must not blank the status line: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).starts_with("5h "),
+        "the readout is still the product"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("not cached"),
+        "the failure is said: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Not the document at all: a settings entry pointing at the wrong command must not look like
+    // an API-billed account.
+    let output = statusline("not json");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("--statusline expects"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

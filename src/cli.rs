@@ -62,6 +62,9 @@ pub struct Cli {
     pub record_routing: bool,
     /// Read a Claude Code hook payload from stdin and journal the test run it observed.
     pub claude_code_hook: bool,
+    /// Read Claude Code's statusline payload from stdin, print the rate-limit readout, and cache
+    /// the windows for the `l` panel.
+    pub statusline: bool,
     pub routing_json: bool,
     pub routing_csv_path: Option<PathBuf>,
 }
@@ -110,6 +113,7 @@ impl Default for Cli {
             webhook_url: None,
             record_routing: false,
             claude_code_hook: false,
+            statusline: false,
             routing_json: false,
             routing_csv_path: None,
         }
@@ -273,6 +277,9 @@ struct Args {
     /// Read a Claude Code PostToolUse/PostToolUseFailure hook payload from stdin and journal a routing event if it observed a test run
     #[arg(long, group = "action")]
     claude_code_hook: bool,
+    /// Read Claude Code's statusline JSON from stdin, print a one-line rate-limit readout, and cache the windows for the limits panel
+    #[arg(long, group = "action")]
+    statusline: bool,
     /// Refresh the cached OpenCode Zen model catalog
     #[arg(long, group = "action")]
     refresh_zen: bool,
@@ -294,6 +301,7 @@ const COLLECTION_ACTIONS: &[&str] = &[
     "check_budgets",
     "record_routing",
     "claude_code_hook",
+    "statusline",
     "omarchy_record",
     "doctor",
 ];
@@ -415,6 +423,7 @@ impl Cli {
             webhook_url: args.webhook,
             record_routing: args.record_routing,
             claude_code_hook: args.claude_code_hook,
+            statusline: args.statusline,
             routing_json: args.routing_json,
             routing_csv_path: args.routing_csv,
             source_enabled: Default::default(),
