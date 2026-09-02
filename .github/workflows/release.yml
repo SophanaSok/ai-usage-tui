@@ -307,7 +307,8 @@ jobs:
           for f in packaging/homebrew/ai-usage-tui.rb \
                    packaging/scoop/ai-usage-tui.json \
                    packaging/chocolatey/ai-usage-tui.nuspec \
-                   packaging/chocolatey/tools/chocolateyinstall.ps1; do
+                   packaging/chocolatey/tools/chocolateyinstall.ps1 \
+                   packaging/aur/PKGBUILD; do
             if [ ! -f "$f" ]; then
               echo "::error::packaging template $f is missing from the checkout"
               exit 1
@@ -331,6 +332,16 @@ jobs:
           test -f rendered/chocolatey/ai-usage-tui.nuspec \
             && test -f rendered/chocolatey/tools/chocolateyinstall.ps1 \
             || { echo "::error::chocolatey render layout is wrong; the nuspec's tools/** glob will match nothing"; exit 1; }
+
+          # A PKGBUILD's checksums are the only thing standing between an AUR user and an
+          # unverified download, and an empty substitution renders as `sha256sums_x86_64=('')`,
+          # which the placeholder grep below cannot see -- it looks for tokens that are still
+          # there, not for values that went missing. makepkg treats an empty array entry as a
+          # hard failure rather than skipping verification, so this is defence in depth, but the
+          # failure belongs here where it names itself rather than in a user's build.
+          aur_sums="$(grep -cE "^sha256sums_(x86_64|aarch64)=\('[0-9a-f]{64}'\)$" rendered/aur/PKGBUILD || true)"
+          [ "$aur_sums" = "2" ] \
+            || { echo "::error::rendered/aur/PKGBUILD has $aur_sums of 2 valid sha256 lines"; exit 1; }
 
           # Written as an explicit if rather than `! grep ... || { ... }`: the negation form
           # made a failure anywhere in this step exit with no output at all, which is how the
@@ -392,6 +403,7 @@ jobs:
             rendered/scoop/ai-usage-tui.json
             rendered/chocolatey/ai-usage-tui.nuspec
             rendered/chocolatey/tools/chocolateyinstall.ps1
+            rendered/aur/PKGBUILD
 
       - name: Upload rendered manifests for the tap job
         uses: actions/upload-artifact@v7

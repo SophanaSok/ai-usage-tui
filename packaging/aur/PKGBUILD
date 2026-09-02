@@ -1,0 +1,56 @@
+# Rendered by .github/workflows/release.yml; placeholders are substituted at release time.
+# Do not hand-edit the version or checksums -- the Homebrew formula drifted from the published
+# artifact names once (the tarball is tagged v0.2.0 but the file asked for 0.2.0) and every URL
+# 404'd. The same sed loop renders this file from the same values, so it cannot repeat that.
+#
+# This is the -bin package: it installs the published x86_64 and aarch64 release tarballs rather
+# than building from source. A from-source `ai-usage-tui` package would need `cargo` in
+# makedepends and a full compile on every user's machine for a binary the release matrix has
+# already built and checksummed.
+#
+# .SRCINFO is deliberately not rendered alongside it. It is derived from this file, and the one
+# tool that derives it correctly is `makepkg --printsrcinfo`, which needs an Arch host -- the
+# release runner is Ubuntu. Rendering a second template from the same placeholders would be a
+# hand-maintained copy of generated data, which is the class of drift this directory exists to
+# avoid. `docs/release-process.md` carries the two commands that publish it from an Arch box.
+#
+# Maintainer: Sophana Sok <sokdevelopment@gmail.com>
+pkgname=ai-usage-tui-bin
+_pkgname=ai-usage-tui
+pkgver=__VERSION__
+pkgrel=1
+# Single-quoted, and it has to stay that way. A PKGBUILD is bash, the description contains the
+# literal `$0.00`, and inside double quotes bash expanded that to the script's own path: the
+# rendered pkgdesc read "instead of rendering as /usr/bin/makepkg.00". Single quotes are the only
+# form that leaves it alone, so `crate_description_fits_every_registry` bans a single quote in the
+# description -- there is no escaping that works inside them.
+pkgdesc='__DESCRIPTION__'
+arch=('x86_64' 'aarch64')
+url="https://github.com/SophanaSok/ai-usage-tui"
+license=('MIT')
+provides=("$_pkgname=$pkgver")
+conflicts=("$_pkgname")
+options=('!strip' '!debug')
+
+source_x86_64=("$pkgname-$pkgver-x86_64.tar.gz::$url/releases/download/__TAG__/$_pkgname-__TAG__-x86_64-linux.tar.gz")
+source_aarch64=("$pkgname-$pkgver-aarch64.tar.gz::$url/releases/download/__TAG__/$_pkgname-__TAG__-aarch64-linux.tar.gz")
+sha256sums_x86_64=('__LINUX_SHA256__')
+sha256sums_aarch64=('__LINUX_ARM_SHA256__')
+
+package() {
+  # The tarball is flat: the binary, README.md, LICENSE, the man page and a completions/
+  # directory, all at the top level. Extraction is into $srcdir directly, not a versioned
+  # subdirectory, so there is no `cd` here.
+  install -Dm755 "$srcdir/$_pkgname"                        "$pkgdir/usr/bin/$_pkgname"
+  install -Dm644 "$srcdir/$_pkgname.1"                      "$pkgdir/usr/share/man/man1/$_pkgname.1"
+  install -Dm644 "$srcdir/LICENSE"                          "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$srcdir/README.md"                        "$pkgdir/usr/share/doc/$pkgname/README.md"
+
+  # Completion filenames are the shells' own conventions, not ours: bash wants the command name,
+  # zsh wants `_command`, fish wants `command.fish`. The release job already writes them under
+  # those names, so these are copies rather than renames -- but the destination directories
+  # differ per shell, which is why this is three lines and not a loop.
+  install -Dm644 "$srcdir/completions/$_pkgname.bash"       "$pkgdir/usr/share/bash-completion/completions/$_pkgname"
+  install -Dm644 "$srcdir/completions/_$_pkgname"           "$pkgdir/usr/share/zsh/site-functions/_$_pkgname"
+  install -Dm644 "$srcdir/completions/$_pkgname.fish"       "$pkgdir/usr/share/fish/vendor_completions.d/$_pkgname.fish"
+}

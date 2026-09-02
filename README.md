@@ -252,6 +252,18 @@ scoop bucket add sophanasok https://github.com/SophanaSok/scoop-bucket
 scoop install ai-usage-tui                      # Windows
 ```
 
+On Arch, an `ai-usage-tui-bin` `PKGBUILD` in AUR format is rendered at release
+time and attached to each release; like the Chocolatey package below it is not
+submitted to the AUR, so install it from the release rather than with an AUR
+helper. It installs the published Linux tarball for x86_64 or aarch64 rather
+than compiling, and places the binary, the man page, the licence and all three
+shell completions where pacman expects them:
+
+```sh
+curl -fLO https://github.com/SophanaSok/ai-usage-tui/releases/latest/download/PKGBUILD
+makepkg -si                                     # Arch, x86_64 and aarch64
+```
+
 A Chocolatey package is rendered at release time too and attached to each
 release, but it is not pushed to the Chocolatey gallery; `choco pack` the
 attached `ai-usage-tui.nuspec` and its `tools/` directory to install from it.

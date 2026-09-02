@@ -324,10 +324,34 @@ claude --settings '{"statusLine":{"type":"command","command":"/tmp/sl.sh"}}'
 # tests/fixtures/. It must be an interactive session -- print mode renders no status line.
 ```
 
+### P3 — `--doctor` cannot tell an AUR install from a .deb or .rpm
+
+Filed while shipping `packaging/aur/PKGBUILD`. All three install to `/usr/bin`, so
+`detect_channel` returns `Channel::SystemPackage` for every one of them. The label now reads
+"a system package (.deb/.rpm/AUR)" -- which is exactly what is known and no more -- and the
+upgrade line falls through to the releases page.
+
+That under-claims rather than misleads, which is the safe direction and why this is P3 and not
+higher: the AUR is the one of the three where an upgrade command genuinely exists, but it is the
+user's AUR helper's, and there is no single spelling (yay, paru, pikaur, `makepkg -si` in a
+clone). Naming one would be the guess `Channel::Unknown` exists to refuse.
+
+Telling them apart needs the owning package manager's database -- pacman's
+`/var/lib/pacman/local/`, dpkg's file lists -- and `detect_channel` is deliberately **pure**: it
+takes the path and the home directory and touches no filesystem, which is what lets the tests
+cover every platform's layout from any platform. Whoever does this has to decide where the
+impurity lives (a second function that consults the DB and falls back to `detect_channel`, most
+likely) rather than reaching for the filesystem inside the pure one.
+
 ### P2 — Nothing to look at, and nowhere to arrive from
 
-- **No AUR package**, on the platform the tool is designed around. `docs/release-process.md`
-  puts it at about twenty lines. Highest reach per hour on this list.
+- **Resolved.** `packaging/aur/PKGBUILD` renders with the other manifests and attaches to each
+  release; `curl` + `makepkg -si` works today. Verified end to end against the published v0.12.1
+  x86_64 tarball -- `makepkg -f` built the package and it carries the binary, the gzipped man
+  page, the licence, the README and all three completions in their shell-specific directories.
+  Submitting it to the AUR is still manual and needs an account plus an Arch host for `.SRCINFO`;
+  `docs/release-process.md` carries the commands and what has to change in the README and in
+  `identity.sh --channels` when it lands.
 - **No GIF, no asciinema, no site** — seven static PNGs against a README that reads as a design
   document. The routing panel is the thing worth showing and the only thing no competitor can
   screenshot.

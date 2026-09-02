@@ -36,7 +36,14 @@ pub enum Channel {
     Homebrew,
     Scoop,
     Chocolatey,
-    /// The `.deb` or `.rpm`, which install to a system prefix the user does not own.
+    /// The `.deb`, the `.rpm`, or the AUR package -- all of which install to a system prefix the
+    /// user does not own.
+    ///
+    /// Which of the three cannot be told from the path: all of them land the binary in
+    /// `/usr/bin`. Naming one would be a guess, and the label names all three instead, which is
+    /// exactly what is known. Distinguishing them needs the owning package manager's database
+    /// (pacman's `local/`, dpkg's file list), which `detect_channel` cannot read without giving
+    /// up its purity -- see the finding in `docs/roadmap.md`.
     SystemPackage,
     /// `scripts/install.sh`, which installs to `~/.local/bin`.
     InstallScript,
@@ -57,6 +64,13 @@ impl Channel {
             // Not `apt install` or `dnf upgrade`: the .deb and .rpm are attached to a GitHub
             // release, not served from a repository, so there is nothing for a package manager
             // to upgrade *from*. Downloading the new one is the actual answer.
+            //
+            // The AUR package shares this arm and is the one case where an upgrade command does
+            // exist -- but it is the user's AUR helper's, and there is no single spelling of it
+            // (yay, paru, pikaur, or `makepkg -si` in a clone). Since the path cannot say which
+            // of the three installed this copy anyway, naming any of them would be the guess
+            // `Channel::Unknown` exists to refuse. Falling through to the releases page
+            // under-claims, which is the safe direction.
             Channel::SystemPackage => None,
             Channel::InstallScript => {
                 Some("curl -fsSL https://raw.githubusercontent.com/SophanaSok/ai-usage-tui/main/scripts/install.sh | sh")
@@ -72,7 +86,7 @@ impl Channel {
             Channel::Homebrew => "Homebrew",
             Channel::Scoop => "Scoop",
             Channel::Chocolatey => "Chocolatey",
-            Channel::SystemPackage => "a system package (.deb/.rpm)",
+            Channel::SystemPackage => "a system package (.deb/.rpm/AUR)",
             Channel::InstallScript => "scripts/install.sh",
             Channel::Unknown => "an unrecognised location",
         }

@@ -2,7 +2,41 @@
 
 ## [Unreleased]
 
+### Added
+
+- **An AUR package.** `packaging/aur/PKGBUILD` builds `ai-usage-tui-bin`, renders with the other
+  manifests from the same `sed` loop and the same checksums, and attaches to each release, so
+  `curl` the PKGBUILD and `makepkg -si` installs on Arch. It is a `-bin` package: it takes the
+  published `x86_64-linux` or `aarch64-linux` tarball rather than compiling, and installs the
+  binary, the man page, the licence, the README and all three shell completions where pacman
+  expects each of them. Verified end to end against the published v0.12.1 tarball rather than
+  reasoned about -- `makepkg -f` built it and the package contents were listed.
+
+  **Rendering it found a bug the template would have shipped.** A PKGBUILD is bash, and the crate
+  description contains the literal `$0.00`. Inside a double-quoted `pkgdesc` bash expanded that
+  to the script's own path: `makepkg --printsrcinfo` produced "instead of rendering as
+  /usr/bin/makepkg.00", and every Arch user would have read it. `pkgdesc` is single-quoted now,
+  and because nothing escapes a single quote inside single quotes,
+  `tests/docs.rs::crate_description_fits_every_registry` bans one in the description alongside
+  the characters that would corrupt the `sed` substitution.
+
+  The render step also asserts two well-formed `sha256sums_*` lines. An empty substitution
+  renders as `sha256sums_x86_64=('')`, which the unrendered-placeholder grep cannot catch --
+  it looks for tokens that are still there, not for values that went missing.
+
+  Submitting it to the AUR stays manual: it needs an account with an SSH key, and a `.SRCINFO`
+  derived by `makepkg --printsrcinfo`, which needs an Arch host while the release runner is
+  Ubuntu. Rendering a second template from the same placeholders would be a hand-maintained copy
+  of generated data. `docs/release-process.md` carries the commands.
+
 ### Changed
+
+- **`--doctor`'s system-package label names the AUR too.** All three of the `.deb`, the `.rpm`
+  and the AUR package install to `/usr/bin`, and `detect_channel` is pure -- it reads the path
+  and nothing else -- so it cannot tell them apart. The label reads
+  "a system package (.deb/.rpm/AUR)", which is exactly what is known, and the upgrade line still
+  falls through to the releases page rather than guessing at an AUR helper. Filed as P3 in
+  `docs/roadmap.md`.
 
 - **The pitch leads with the thing no competitor has.** The crate description, the README
   tagline and the README opening described "a btop-inspired terminal dashboard for token usage,
