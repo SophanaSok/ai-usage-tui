@@ -468,21 +468,19 @@ fn record(journal: &std::path::Path, input: &str, flag: &str) {
 
 /// The journal's rows, as `--json` reports them with every other source switched off.
 fn journal_rows(journal: &std::path::Path) -> Vec<serde_json::Value> {
-    let output = bin()
-        .arg("--json")
-        .arg("--all")
-        .arg("--journal")
-        .arg(journal)
-        .arg("--db")
-        .arg("/nonexistent/opencode.db")
-        .arg("--claude-dir")
-        .arg("/nonexistent")
-        .arg("--codex-dir")
-        .arg("/nonexistent")
-        .arg("--omarchy-dir")
-        .arg("/nonexistent")
-        .output()
-        .expect("run --json");
+    // Through `hermetic_with` rather than its own hand-written list of dirs, which is what let
+    // this one drift: it pinned Claude Code, Codex and Omarchy and nothing else, so a developer
+    // with a real `~/.copilot` store or Gemini telemetry switched on saw their own rows in a
+    // journal-only assertion. The same gap `hermetic_with` closed for `--gemini-dir`, in the one
+    // helper that was not using it.
+    let mut command = bin();
+    command.arg("--json");
+    hermetic_with(
+        &mut command,
+        std::path::Path::new("/nonexistent/opencode.db"),
+        journal,
+    );
+    let output = command.output().expect("run --json");
     assert!(
         output.status.success(),
         "--json exited {}: {}",
@@ -738,6 +736,8 @@ fn derived_escalations_are_exported() {
         .arg("/nonexistent/opencode.db")
         .arg("--codex-dir")
         .arg("/nonexistent")
+        .arg("--copilot-dir")
+        .arg("/nonexistent")
         .arg("--gemini-dir")
         .arg("/nonexistent")
         .arg("--omarchy-dir")
@@ -815,6 +815,8 @@ fn escalations_follow_the_same_filter_as_the_rows() {
             .arg("/nonexistent/opencode.db")
             .arg("--codex-dir")
             .arg("/nonexistent")
+            .arg("--copilot-dir")
+            .arg("/nonexistent")
             .arg("--gemini-dir")
             .arg("/nonexistent")
             .arg("--omarchy-dir")
@@ -879,6 +881,10 @@ fn claude_billing_decides_whether_transcript_rows_carry_dollars() {
             .arg(&projects)
             .arg("--codex-dir")
             .arg(temp.join("no-codex-home"))
+            .arg("--copilot-dir")
+            .arg(temp.join("no-copilot-home"))
+            .arg("--gemini-dir")
+            .arg(temp.join("no-gemini-home"))
             .arg("--omarchy-dir")
             .arg(temp.join("no-omarchy"))
             .args(extra);
@@ -927,6 +933,83 @@ fn claude_billing_decides_whether_transcript_rows_carry_dollars() {
     let _ = std::fs::remove_dir_all(&temp);
 }
 
+/// The fixture is a redacted capture of a real Copilot store: the shipping schema, including
+/// the autoincrement `id`, the `sessions` table that actually carries `cwd`/`repository`, and
+/// `created_at` as RFC 3339 text. Two of its three usage rows share `turn_index` 0 in one
+/// session, which is the shape that made a turn-keyed identity lose a request.
+#[test]
+fn copilot_requests_are_exported_one_row_per_request_with_no_content() {
+    let copilot_home = format!("{}/tests/fixtures/copilot_home", env!("CARGO_MANIFEST_DIR"));
+    let mut command = bin();
+    command
+        .arg("--json")
+        .arg("--all")
+        .arg("--db")
+        .arg(fixture_db())
+        .arg("--journal")
+        .arg(std::env::temp_dir().join(format!("ai-usage-copilot-{}.db", std::process::id())))
+        .arg("--copilot-dir")
+        .arg(&copilot_home);
+    for name in ["claude", "codex", "gemini", "omarchy"] {
+        command.arg(format!("--{name}-dir")).arg(format!(
+            "{}/tests/fixtures/no-such-{name}-dir",
+            env!("CARGO_MANIFEST_DIR")
+        ));
+    }
+    command.env_remove("COPILOT_HOME");
+    let output = command.output().expect("run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("FIXTURE_SECRET"),
+        "prompt or summary content reached the export:\n{stdout}"
+    );
+
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let rows: Vec<_> = json["usage"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["provider"] == "github-copilot")
+        .collect();
+    assert_eq!(
+        rows.len(),
+        3,
+        "one row per request, not per turn: {rows:#?}"
+    );
+
+    let same_turn: Vec<_> = rows
+        .iter()
+        .filter(|row| row["session_id"] == "11111111-1111-4111-8111-111111111111")
+        .collect();
+    assert_eq!(
+        same_turn.len(),
+        2,
+        "both requests of one turn survive: {same_turn:#?}"
+    );
+    // 13873 - 13440 and 14027 - 13824: the cache buckets come back out of `input_tokens`.
+    let mut inputs: Vec<i64> = same_turn
+        .iter()
+        .map(|row| row["input_tokens"].as_i64().unwrap())
+        .collect();
+    inputs.sort_unstable();
+    assert_eq!(inputs, vec![203, 433]);
+    // `cwd` lives on `sessions`, not on the usage table.
+    assert_eq!(same_turn[0]["project"], "/home/dev/app");
+
+    for row in &rows {
+        assert!(
+            row["cost"].is_null(),
+            "a seat bills premium requests, not tokens: {row}"
+        );
+        assert_eq!(row["cost_status"], "quota", "{row}");
+    }
+}
+
 #[test]
 fn codex_rollouts_are_exported_with_split_buckets_and_no_content() {
     let codex_home = format!("{}/tests/fixtures/codex_home", env!("CARGO_MANIFEST_DIR"));
@@ -945,6 +1028,16 @@ fn codex_rollouts_are_exported_with_split_buckets_and_no_content() {
         ))
         .arg("--codex-dir")
         .arg(&codex_home)
+        .arg("--copilot-dir")
+        .arg(format!(
+            "{}/tests/fixtures/no-such-copilot-home",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .arg("--gemini-dir")
+        .arg(format!(
+            "{}/tests/fixtures/no-such-gemini-home",
+            env!("CARGO_MANIFEST_DIR")
+        ))
         .arg("--omarchy-dir")
         .arg(format!(
             "{}/tests/fixtures/no-such-omarchy-dir",

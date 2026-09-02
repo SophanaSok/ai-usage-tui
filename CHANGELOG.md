@@ -1,5 +1,66 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **The Copilot collector, validated against a real account, lost requests.** It shipped without
+  a Copilot install to test against; driving Copilot CLI 1.0.82 non-interactively produced one.
+  The schema probe held — an absent column degraded to `NULL` as designed and nothing produced a
+  wrong number — but three assumptions did not.
+
+  **A turn is not a request.** `event_id` was `copilot:{session}:{turn_index}`, and a tool-using
+  prompt writes several rows sharing one turn: the capture has a `user` row and an `agent` row
+  both at `turn_index` 0, and the shipping build writes `0` on every row of every session. Against
+  the real store the collector reported **2 rows where Copilot recorded 3**, discarding the extra
+  rows' tokens with them. Identity is now `assistant_usage_events.id`, the table's own
+  autoincrement key; a build without it falls back to the session, turn, timestamp and counts,
+  which is still content-derived. This is the Gemini `prompt_id` defect in a different spelling.
+
+  **`cwd` and `repository` are on `sessions`, not on the usage table.** The probe found neither,
+  selected both as `NULL`, and every Copilot row came out with no project. The select list now
+  looks on `sessions` as well and joins when it must, still preferring the usage table so a build
+  that moves them onto it needs no join.
+
+  **`created_at` is declared `TEXT` and written as RFC 3339**, while the incremental read bound an
+  `i64`. SQLite orders every integer before every string, so `created_at >= <integer>` was always
+  true and the cursor filtered nothing — every poll re-read the whole table. The cursor now also
+  keeps the store's own spelling and compares text with text.
+
+- **Four more hermeticity gaps, found by having real Copilot data for the first time.** The
+  capture is the first `~/.copilot` store this repository has ever seen, and it immediately turned
+  three tests red and put real session data through a fourth. `journal_rows` had its own
+  hand-written list of collector dirs — Claude Code, Codex and Omarchy, and nothing else — so a
+  developer with a Copilot store or Gemini telemetry switched on saw their own rows in a
+  journal-only assertion; it now goes through `hermetic_with` like everything else.
+  `derived_escalations_are_exported`, `escalations_follow_the_same_filter_as_the_rows`,
+  `claude_billing_decides_whether_transcript_rows_carry_dollars` and the Codex export test pin
+  the missing dirs directly. This is the same drift v0.12.0 fixed for `--gemini-dir`: a source
+  joins the registry and the hand-written lists do not hear about it.
+
+  `tests/fixtures/copilot_home/session-store.db` is the redacted capture, and an integration test
+  reads it end to end. What the capture *confirmed* is in `docs/roadmap.md`: `session-store.db` is
+  the real filename, the inclusive-token convention holds in the bytes (so the v0.12.0 cache
+  double-count fix was right), and `requests.cost` is a premium-request count rather than dollars
+  — so `cost: null` with `cost_status: quota` stays, and nothing here reaches a budget.
+
+### Changed
+
+- **The pull-request review workflow reviews in-process.** It had never posted a review, for three
+  independent reasons, each of which produced a green check. `--allowedTools` replaces the default
+  allowlist rather than extending it, so naming only the inline-comment tool denied `Skill` — the
+  tool a slash-command prompt is invoked through. With that fixed the review started and still
+  posted nothing: the plugin fans out to background agents, and the parent ended its turn at six
+  of an uncapped budget waiting for a completion notification a `-p` invocation never delivers.
+  And the plugin posts one summary comment with `gh pr comment`, never an inline comment, so the
+  action's buffered-comment step was waiting on something nothing produced. The workflow now
+  carries a direct prompt that does the review itself, an allowlist naming exactly the tools that
+  prompt uses, and posts a "No issues found" comment rather than staying silent — silence is
+  indistinguishable from a review that never ran. Also recorded, because it hides all of the
+  above: `claude-code-action` skips entirely when the workflow file differs from the default
+  branch, and reports success while doing it, so a workflow change can never be tested on the pull
+  request that makes it.
+
 ## 0.12.0 - 2026-09-01
 
 ### Added

@@ -30,23 +30,57 @@ The two things worth defending, and the reason to prefer depth over breadth belo
 - **Routing analytics.** Retries / escalations / test pass-fail / review defects per model —
   "is Opus actually worth 5× Sonnet on my codebase?" Nobody else answers that.
 
-### Open — the Copilot schema is not validated against a real account
+### Resolved — the Copilot schema is validated against a real account
 
-The Copilot collector shipped without a Copilot install to test against. The store's filename,
-the `assistant_usage_events` column set, and the unit of `modelMetrics.<model>.requests.cost` are
-all derived from Copilot's published behaviour and from other readers of the same files, not from
-a live account.
+The collector shipped in v0.12.0 without a Copilot install to test against: the store's
+filename, the `assistant_usage_events` column set and the unit of
+`modelMetrics.<model>.requests.cost` were all derived from Copilot's published behaviour and
+from other readers of the same files. It is now checked against bytes the CLI actually wrote —
+Copilot CLI 1.0.82, driven non-interactively twice, once with a tool-using prompt.
 
-Every read is behind a schema probe — the store is chosen by whether it *has* the table, optional
-columns are selected as `NULL` after a `pragma_table_info` check — so an unexpected shape degrades
-to "absent" with a status line rather than to wrong numbers. That is the mitigation, not a
-substitute for a capture.
+**The schema probe did its job**: nothing produced a wrong number, and an absent column
+degraded to `NULL` exactly as designed. But three assumptions were wrong, and two of them cost
+data:
 
-What would close it: a `--doctor` run and a redacted `assistant_usage_events` sample from a
-Copilot user, checked into `tests/fixtures/copilot_home/`. `requests.cost` is deliberately unread
-until its unit can be checked against a known invoice; if it turns out to be dollars, Copilot rows
-could carry `reported` cost instead of `quota`, which would be a better answer than the list-rate
-counterfactual they carry now.
+- **A turn is not a request.** `event_id` was `copilot:{session}:{turn_index}`, and the capture
+  has a `user` row and an `agent` row sharing `turn_index` 0 inside one session — a tool-using
+  prompt produces several requests per turn, and `turn_index` was `0` on every row of every
+  session captured. Against the real store the collector reported **2 rows where Copilot
+  recorded 3**, discarding the extra rows' tokens with them. Identity is now the table's own
+  autoincrement `id`. This is the same defect the Gemini validation found, in a different
+  spelling: there it was keying six `api_response` records on a shared `prompt_id`.
+- **`cwd` and `repository` are not columns of `assistant_usage_events`.** They are on
+  `sessions`. The probe found neither, selected both as `NULL`, and every Copilot row came out
+  with no project at all. The select list now looks on `sessions` too and joins when it must,
+  still preferring the usage table so a build that moves them onto it needs no join.
+- **`created_at` is declared `TEXT` and written as RFC 3339**, while the incremental read bound
+  an `i64`. SQLite orders every integer before every string, so `created_at >= <integer>` was
+  *always true* and the cursor filtered nothing — every poll re-read the whole table. The cursor
+  now also keeps the store's own spelling and compares text with text.
+
+**`requests.cost` is a premium-request count, not dollars, so the billing decision stands.** The
+capture settles the question the previous entry left open: a `session.shutdown` reporting
+`"totalPremiumRequests": 1` carries `modelMetrics.<model>.requests = {"count": 1, "cost": 1}`,
+and the request table spells the same thing as `request_multiplier` (`1.0`). The real money
+figure is `total_nano_aiu` — `231429600` nano AI Units for the run the CLI summarised as
+"AI Credits 0.23" — which is a Copilot billing unit and not a dollar amount. So `cost: None`
+with `CostStatus::Unavailable` is right and stays right, and nothing here reaches a budget.
+
+**What the capture confirmed.** `session-store.db` is the real filename (the first candidate
+tried). The inclusive-token convention holds in the bytes: a shutdown reporting
+`usage.inputTokens: 13864` alongside `cacheReadTokens: 1152` also reports
+`tokenDetails.input.tokenCount: 12712`, which is the subtraction this collector does — the
+v0.12.0 cache double-count fix was right. The legacy `session.shutdown` shape parses as written,
+including the empty-`modelMetrics` case a session that made no model call produces. The store is
+in WAL mode and the read-only open handles it.
+
+`tests/fixtures/copilot_home/session-store.db` is the redacted capture — the real DDL, with
+identifiers and paths replaced and a `FIXTURE_SECRET` planted in `turns.user_message` and
+`sessions.summary` so the content-leak assertion has something to catch.
+
+Left open, and needing a Copilot user rather than this machine: whether a store that has been
+through several CLI upgrades still matches, and whether a seat on a **paid** plan spells
+`request_multiplier` as something other than `1.0` — every model reachable here multiplies to 1.
 
 ### Open — `claude-review` starts its review but ends before the subagents finish
 
