@@ -485,6 +485,16 @@ fn crate_description_fits_every_registry() {
             "{bad:?} in the description would corrupt release.yml's sed substitution"
         );
     }
+    // A PKGBUILD is bash, and `packaging/aur/PKGBUILD` renders the description into a
+    // single-quoted `pkgdesc`. Double quotes are not an option there: the description contains
+    // the literal `$0.00`, and bash expanded that to the script's own path, so the rendered
+    // pkgdesc read "instead of rendering as /usr/bin/makepkg.00". Nothing escapes a single quote
+    // inside single quotes -- the string simply ends -- so the character has to be absent.
+    assert!(
+        !DESCRIPTION.contains('\''),
+        "a single quote in the description would end packaging/aur/PKGBUILD's pkgdesc string; \
+         bash has no escape for one inside single quotes, and double quotes expand the $0.00"
+    );
 }
 
 /// The packaging templates carry the placeholder, not a copy of the description.

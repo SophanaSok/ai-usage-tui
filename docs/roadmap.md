@@ -324,10 +324,68 @@ claude --settings '{"statusLine":{"type":"command","command":"/tmp/sl.sh"}}'
 # tests/fixtures/. It must be an interactive session -- print mode renders no status line.
 ```
 
+### Where this left off — 2026-09-01
+
+Live state at the end of the session that wrote this section, so the next one does not have to
+reconstruct it from `git log` and the PR list.
+
+**On `main` (merged).** PR #83 — the pitch rewrite, the corrected provenance claim, this
+`Positioning` section, and the note that `claude-review` runs once per pull request. GitHub's
+About box was applied by hand with `scripts/identity.sh --apply`, so `identity.yml` is green for
+the first time in four runs. It still has no `REPO_METADATA_TOKEN`, so it can detect the next
+drift and not fix it.
+
+**Open and unmerged.** PR #84, branch `feat/aur-packaging`, commit `848a613`. All eight checks
+green; `claude-review` posted "No issues found". Nothing is blocking it but the merge. Note that
+pushing another commit to it will *not* get it re-reviewed — see the once-per-PR entry under the
+`claude-review` section above.
+
+**The three things to pick up, in the order they are worth doing:**
+
+1. **Merge PR #84**, then submit `ai-usage-tui-bin` to the AUR. Everything except the push to
+   `aur.archlinux.org` can be done on this box — `makepkg` and `updpkgsums` are installed and the
+   package was already built here against the published v0.12.1 tarball. It needs an AUR account
+   with an SSH key. Commands, and what to change in the README and `identity.sh --channels`
+   afterwards, are in `docs/release-process.md` item 3.
+2. **The statusline capture (P1 above).** One interactive session — `claude --settings` with a
+   dump command, which writes to no file and never touches `~/.claude/settings.json`. The exact
+   invocation is in that entry. It has to be interactive: print mode renders no status line, and
+   `rate_limits` only appears after the first API response. Everything else about that work is
+   already specified; the fixture is the only missing input.
+3. **The demo and the write-up (P2 above).** Still the launch. A measurement — "was Opus worth
+   5x Sonnet on this codebase", from this machine's own routing data — not a feature table.
+
+**Not started, and deliberately:** the `--doctor` AUR detection below, and the `claude-review`
+once-per-PR fix. Both are recorded with the evidence and the design question each one turns on.
+
+### P3 — `--doctor` cannot tell an AUR install from a .deb or .rpm
+
+Filed while shipping `packaging/aur/PKGBUILD`. All three install to `/usr/bin`, so
+`detect_channel` returns `Channel::SystemPackage` for every one of them. The label now reads
+"a system package (.deb/.rpm/AUR)" -- which is exactly what is known and no more -- and the
+upgrade line falls through to the releases page.
+
+That under-claims rather than misleads, which is the safe direction and why this is P3 and not
+higher: the AUR is the one of the three where an upgrade command genuinely exists, but it is the
+user's AUR helper's, and there is no single spelling (yay, paru, pikaur, `makepkg -si` in a
+clone). Naming one would be the guess `Channel::Unknown` exists to refuse.
+
+Telling them apart needs the owning package manager's database -- pacman's
+`/var/lib/pacman/local/`, dpkg's file lists -- and `detect_channel` is deliberately **pure**: it
+takes the path and the home directory and touches no filesystem, which is what lets the tests
+cover every platform's layout from any platform. Whoever does this has to decide where the
+impurity lives (a second function that consults the DB and falls back to `detect_channel`, most
+likely) rather than reaching for the filesystem inside the pure one.
+
 ### P2 — Nothing to look at, and nowhere to arrive from
 
-- **No AUR package**, on the platform the tool is designed around. `docs/release-process.md`
-  puts it at about twenty lines. Highest reach per hour on this list.
+- **Resolved.** `packaging/aur/PKGBUILD` renders with the other manifests and attaches to each
+  release; `curl` + `makepkg -si` works today. Verified end to end against the published v0.12.1
+  x86_64 tarball -- `makepkg -f` built the package and it carries the binary, the gzipped man
+  page, the licence, the README and all three completions in their shell-specific directories.
+  Submitting it to the AUR is still manual and needs an account plus an Arch host for `.SRCINFO`;
+  `docs/release-process.md` carries the commands and what has to change in the README and in
+  `identity.sh --channels` when it lands.
 - **No GIF, no asciinema, no site** — seven static PNGs against a README that reads as a design
   document. The routing panel is the thing worth showing and the only thing no competitor can
   screenshot.

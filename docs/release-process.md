@@ -70,10 +70,40 @@ so the release path stays green whether or not these have been done.
    `tests/docs.rs::no_stale_publication_notes` now bans the phrase, and `identity.yml` checks each
    release channel the README names actually exists. See *Repository metadata* below.
 
-3. **AUR (optional).** The Omarchy integration makes Arch the project's showcase platform, and it
-   currently has no native install path. An `ai-usage-tui-bin` PKGBUILD pointing at the published
-   `x86_64-linux` and `aarch64-linux` tarballs is about twenty lines and needs no build
-   infrastructure.
+3. **AUR.** The Omarchy integration makes Arch the project's showcase platform. `packaging/aur/
+   PKGBUILD` is rendered by the same `sed` loop as the other manifests and attached to each
+   release, so `curl` + `makepkg -si` works today. It is an `-bin` package: it installs the
+   published `x86_64-linux` and `aarch64-linux` tarballs and needs no build infrastructure.
+
+   **Two things it cost, both worth not relearning.** `pkgdesc` is single-quoted, and has to
+   stay that way: a PKGBUILD is bash, the description contains the literal `$0.00`, and inside
+   double quotes bash expanded it to the script's own path -- `makepkg --printsrcinfo` rendered
+   "instead of rendering as /usr/bin/makepkg.00". Nothing escapes a single quote inside single
+   quotes, so `tests/docs.rs::crate_description_fits_every_registry` bans one in the description
+   alongside the characters that would corrupt the `sed` substitution. And the render step
+   asserts two well-formed `sha256sums_*` lines, because an empty substitution renders as
+   `sha256sums_x86_64=('')`, which the unrendered-placeholder grep cannot see -- it looks for
+   tokens still present, not for values that went missing.
+
+   **Submitting it to the AUR is still a manual step**, and deliberately so. It needs an AUR
+   account with an SSH key, and `.SRCINFO` -- which is derived from the PKGBUILD by
+   `makepkg --printsrcinfo`, a tool that needs an Arch host, while the release runner is Ubuntu.
+   Rendering a second template from the same placeholders would be a hand-maintained copy of
+   generated data, which is the drift `packaging/` exists to avoid. From an Arch box, against the
+   PKGBUILD attached to the release being published:
+
+   ```sh
+   git clone ssh://aur@aur.archlinux.org/ai-usage-tui-bin.git
+   cp <rendered PKGBUILD> ai-usage-tui-bin/PKGBUILD
+   cd ai-usage-tui-bin
+   makepkg --printsrcinfo > .SRCINFO
+   makepkg -f                     # build it before pushing it; this is the only real check
+   git commit -am "ai-usage-tui-bin <version>" && git push
+   ```
+
+   When it is submitted, `scripts/identity.sh --channels` needs a fourth check for it and the
+   README's "not submitted to the AUR" sentence has to go -- that sentence is the exact shape of
+   the claim that stayed false for three releases before `no_stale_publication_notes` existed.
 
 Chocolatey is rendered and attached to each release but is not pushed anywhere; packing and
 pushing it needs a Chocolatey account. The rendered files keep the layout `choco pack` expects
