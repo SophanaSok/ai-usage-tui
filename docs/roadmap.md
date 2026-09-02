@@ -324,6 +324,40 @@ claude --settings '{"statusLine":{"type":"command","command":"/tmp/sl.sh"}}'
 # tests/fixtures/. It must be an interactive session -- print mode renders no status line.
 ```
 
+### Where this left off — 2026-09-01
+
+Live state at the end of the session that wrote this section, so the next one does not have to
+reconstruct it from `git log` and the PR list.
+
+**On `main` (merged).** PR #83 — the pitch rewrite, the corrected provenance claim, this
+`Positioning` section, and the note that `claude-review` runs once per pull request. GitHub's
+About box was applied by hand with `scripts/identity.sh --apply`, so `identity.yml` is green for
+the first time in four runs. It still has no `REPO_METADATA_TOKEN`, so it can detect the next
+drift and not fix it.
+
+**Open and unmerged.** PR #84, branch `feat/aur-packaging`, commit `848a613`. All eight checks
+green; `claude-review` posted "No issues found". Nothing is blocking it but the merge. Note that
+pushing another commit to it will *not* get it re-reviewed — see the once-per-PR entry under the
+`claude-review` section above.
+
+**The three things to pick up, in the order they are worth doing:**
+
+1. **Merge PR #84**, then submit `ai-usage-tui-bin` to the AUR. Everything except the push to
+   `aur.archlinux.org` can be done on this box — `makepkg` and `updpkgsums` are installed and the
+   package was already built here against the published v0.12.1 tarball. It needs an AUR account
+   with an SSH key. Commands, and what to change in the README and `identity.sh --channels`
+   afterwards, are in `docs/release-process.md` item 3.
+2. **The statusline capture (P1 above).** One interactive session — `claude --settings` with a
+   dump command, which writes to no file and never touches `~/.claude/settings.json`. The exact
+   invocation is in that entry. It has to be interactive: print mode renders no status line, and
+   `rate_limits` only appears after the first API response. Everything else about that work is
+   already specified; the fixture is the only missing input.
+3. **The demo and the write-up (P2 above).** Still the launch. A measurement — "was Opus worth
+   5x Sonnet on this codebase", from this machine's own routing data — not a feature table.
+
+**Not started, and deliberately:** the `--doctor` AUR detection below, and the `claude-review`
+once-per-PR fix. Both are recorded with the evidence and the design question each one turns on.
+
 ### P3 — `--doctor` cannot tell an AUR install from a .deb or .rpm
 
 Filed while shipping `packaging/aur/PKGBUILD`. All three install to `/usr/bin`, so
