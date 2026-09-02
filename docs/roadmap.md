@@ -397,11 +397,16 @@ pushing another commit to it will *not* get it re-reviewed — see the once-per-
    release already, so an Arch user installs today with `curl` plus `makepkg -si`, which is what
    the README documents. What waits is the `yay -S ai-usage-tui-bin` convenience and the AUR's
    search listing — reach, not function.
-2. **The statusline capture (P1 above).** One interactive session — `claude --settings` with a
-   dump command, which writes to no file and never touches `~/.claude/settings.json`. The exact
-   invocation is in that entry. It has to be interactive: print mode renders no status line, and
-   `rate_limits` only appears after the first API response. Everything else about that work is
-   already specified; the fixture is the only missing input.
+2. **Review and merge PR #86** — the limits work, which is done and green locally but unmerged.
+   It closed the P1 gap by reading `~/.claude.json`'s `cachedUsageUtilization` rather than by the
+   statusline route this file originally planned; the superseded entry above records why the
+   statusline could not be automated, and keeps its schema for whoever adds that *push* surface
+   later as a smaller additive change.
+
+   **Read the disclosure section of `src/limits.rs`'s module doc before touching that reader.**
+   The document belongs to Claude Code, not to us, and this repository is public: `limits` is
+   indexed as a self-describing array specifically so `utilization`'s sibling keys are never
+   iterated, and the fixture is hand-authored so no byte of a real config is ever committed.
 3. **The demo and the write-up (P2 above).** Still the launch. A measurement — "was Opus worth
    5x Sonnet on this codebase", from this machine's own routing data — not a feature table.
 
