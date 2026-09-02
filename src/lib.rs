@@ -7,6 +7,7 @@ pub mod escalation;
 pub mod export;
 pub mod harness;
 pub mod helpers;
+pub mod limits;
 pub mod logging;
 pub mod model;
 pub mod omarchy;

@@ -1,0 +1,81 @@
+{
+  "_comment": "Hand-authored, not a capture. Every value here was invented for this fixture: no byte of it came from a real ~/.claude.json, because that document carries an account identifier, project history, and sibling per-window keys this project has no business publishing. The percentages are 11/22/88 precisely so they cannot be mistaken for a reading, and the reset instants sit 3 hours and 4 days after the NOW the tests pass in (1787479800), so the windows are live rather than already rolled over.",
+  "accountUuid": "00000000-0000-0000-0000-000000000000",
+  "oauthAccount": {
+    "organizationRateLimitTier": "default_claude_max_5x"
+  },
+  "projects": {
+    "/home/fixture/work": {
+      "history": [
+        {
+          "display": "FIXTURE_SECRET should never reach a limit window"
+        }
+      ]
+    }
+  },
+  "cachedUsageUtilization": {
+    "fetchedAtMs": 1787479200000,
+    "accountUuid": "00000000-0000-0000-0000-000000000000",
+    "utilization": {
+      "five_hour": {
+        "utilization": 11,
+        "resets_at": "2026-08-23T13:10:00+00:00"
+      },
+      "seven_day": {
+        "utilization": 22,
+        "resets_at": "2026-08-27T10:10:00+00:00"
+      },
+      "extra_usage": {
+        "is_enabled": false,
+        "monthly_limit": null
+      },
+      "spend": null,
+      "member_dashboard_available": false,
+      "futureField": "a key this reader has never heard of",
+      "limits": [
+        {
+          "kind": "session",
+          "group": "session",
+          "percent": 11,
+          "severity": "normal",
+          "resets_at": "2026-08-23T13:10:00+00:00",
+          "scope": null,
+          "is_active": false
+        },
+        {
+          "kind": "weekly_all",
+          "group": "weekly",
+          "percent": 22,
+          "severity": "normal",
+          "resets_at": "2026-08-27T10:10:00+00:00",
+          "scope": null,
+          "is_active": false
+        },
+        {
+          "kind": "weekly_scoped",
+          "group": "weekly",
+          "percent": 88,
+          "severity": "warning",
+          "resets_at": "2026-08-27T10:10:00+00:00",
+          "scope": {
+            "model": {
+              "id": null,
+              "display_name": "Fixture Model 9"
+            },
+            "surface": null
+          },
+          "is_active": true
+        },
+        {
+          "kind": "a_kind_this_reader_does_not_know",
+          "group": "weekly",
+          "percent": 99,
+          "severity": "critical",
+          "resets_at": "2026-08-27T10:10:00+00:00",
+          "scope": null,
+          "is_active": true
+        }
+      ]
+    }
+  }
+}

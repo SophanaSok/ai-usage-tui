@@ -1,4 +1,7 @@
-//! Subscription rate-limit windows, read from Omarchy's agents panel.
+//! Subscription rate-limit windows, from every source that reports them.
+//!
+//! The rows come from `crate::limits::load`, which merges Omarchy's agents panel with the
+//! utilisation Claude Code caches in its own config. This module only draws them.
 //!
 //! Adding a panel: create a sibling module here, add a `Panel` variant in `app.rs`, a key
 //! binding in `mod.rs`, and a match arm in `draw`.
@@ -28,22 +31,27 @@ pub fn draw_limits(frame: &mut Frame, area: Rect, app: &App) {
             "Limits disabled in config ([omarchy] limits = false).",
             muted,
         )));
-    } else if !report.present {
-        // Distinct from "no windows": there is nothing here to read, and that is the normal
-        // state on any machine that is not running Omarchy.
-        lines.push(Line::from(Span::styled(
-            format!("No Omarchy usage records at {}.", report.dir.display()),
-            muted,
-        )));
-        lines.push(Line::from(Span::styled(
-            "Omarchy's Agents panel writes them; nothing to read on this machine.",
-            muted,
-        )));
     } else if report.snapshots.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "Records found, but none carry rate-limit windows.",
-            muted,
-        )));
+        // Gated on having no rows, not on Omarchy's directory being absent. It used to be the
+        // latter, which meant that once a second source existed its windows were unreachable on
+        // exactly the machines it was added for: every non-Omarchy machine short-circuited here
+        // before the rows were ever considered.
+        if report.present {
+            lines.push(Line::from(Span::styled(
+                "Records found, but none carry rate-limit windows.",
+                muted,
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                format!("No rate-limit windows to show at {}.", report.dir.display()),
+                muted,
+            )));
+            lines.push(Line::from(Span::styled(
+                "Omarchy's Agents panel writes them, and Claude Code caches its own in \
+                 ~/.claude.json once it has run.",
+                muted,
+            )));
+        }
     } else {
         lines.push(Line::from(Span::styled(
             format!(

@@ -571,12 +571,33 @@ project, and no per-token price, is shown as `quota` rather than as `$0.00`.
 
 </details>
 
-### Subscription limits and publishing (Omarchy)
+### Subscription limits
 
-On [Omarchy](https://omarchy.org) — an Arch/Hyprland desktop whose bar meters every AI coding
-subscription on the machine — the `l` panel shows each subscription's rate-limit windows, and
-`--omarchy-record` can publish this tool's own usage back into that panel. Both directions are
-opt-in, and on any other machine they are silently idle.
+The `l` panel shows each subscription's rate-limit windows — how much of the 5-hour and weekly
+allowances is gone, and when each resets. Two sources feed it, and neither needs configuring.
+
+**Claude Code's own cache**, on every platform. Claude Code records its subscription utilisation
+in `~/.claude.json`, and this reads it: the session window, the weekly window, and any per-model
+weekly window, with the plan label beside them. Nothing is fetched and no credential is touched —
+the figures are the ones Claude Code already had.
+
+Exactly two keys are read: `cachedUsageUtilization.fetchedAtMs`, and the entries of
+`cachedUsageUtilization.utilization.limits`. From each entry, only `kind`, `percent`, `resets_at`
+and the scoped model's display name. The document also holds an account identifier, your project
+history and sibling per-window objects; none of it is deserialised, and a test plants a credential
+in a fixture and fails if anything from the document reaches a record or stdout. `fetchedAtMs`
+stamps the cache, so a reading older than 30 minutes is drawn dimmed and never raises an alarm —
+a stale number is labelled, never presented as current. `[collectors.claude_code] enabled = false`
+switches this off along with the rest of Claude Code's files.
+
+**Omarchy's agents panel**, on [Omarchy](https://omarchy.org) — an Arch/Hyprland desktop whose bar
+meters every AI coding subscription on the machine. It covers agents beyond Claude Code, and
+`--omarchy-record` can publish this tool's own usage back into that panel. On any other machine
+this source is silently idle.
+
+Where both describe the same subscription they are merged into one row rather than two: fresh
+beats stale, and between two fresh readings the newer wins. `[omarchy] limits = false` turns the
+whole panel off, both sources included.
 
 See [`docs/omarchy.md`](docs/omarchy.md).
 

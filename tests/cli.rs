@@ -34,6 +34,15 @@ fn hermetic(command: &mut Command) -> &mut Command {
 fn hermetic_with<'a>(command: &'a mut Command, db: &Path, journal: &Path) -> &'a mut Command {
     let nowhere = |name: &str| format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
     command
+        // `--claude-dir` does NOT pin the config document: `config_json_path` checks
+        // `CLAUDE_CONFIG_DIR` *before* it derives one from the session-log root, and
+        // `CLAUDE_PROJECTS_DIR` stands in for the flag when it is absent. So on a developer's
+        // machine with either exported, a fixture-only run resolved their real `~/.claude.json`.
+        // That was survivable while the only reader was billing detection -- it cost a tier
+        // label. It is not survivable now that the limits reader consumes the same document:
+        // the developer's actual subscription percentages would appear in `--json`.
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("CLAUDE_PROJECTS_DIR")
         // Neither the config file nor the pricing cache is a flag every test passes, so both
         // are pinned through the environment: a developer's `config.toml` or a refreshed
         // `zen-pricing.toml` must not change what a fixture-only run prints.
@@ -1441,4 +1450,71 @@ fn doctor_reports_a_cached_update_answer_it_did_not_fetch() {
     );
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The limits panel and `--json` work on a machine with no Omarchy at all.
+///
+/// This is the gap the feature closes: `limits[]` came only from Omarchy's agents panel, so
+/// everywhere else the `l` panel was permanently empty and `--json` carried nothing. Claude Code
+/// caches its own subscription utilisation, so there is something to read on every platform.
+///
+/// The assertions double as the end-to-end privacy sweep. `~/.claude.json` carries an account
+/// identifier, project history and sibling keys beside the ones this tool reads; none of it may
+/// reach stdout. The fixture plants a credential and a placeholder account id precisely so this
+/// can discriminate -- an implementation that dumped the block wholesale would fail here.
+#[test]
+fn json_limits_come_from_claude_codes_own_cache_without_omarchy() {
+    let claude_dir = format!(
+        "{}/tests/fixtures/claude_home/.claude/projects",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut command = bin();
+    let output = hermetic(&mut command)
+        .arg("--json")
+        .arg("--claude-dir")
+        .arg(&claude_dir)
+        .output()
+        .expect("run --json");
+    assert!(output.status.success(), "--json exited {}", output.status);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is JSON");
+
+    let limits = value["limits"].as_array().expect("limits is an array");
+    let claude = limits
+        .iter()
+        .find(|entry| entry["agent"] == "claude")
+        .unwrap_or_else(|| panic!("no claude limits row in {stdout}"));
+    let windows = claude["windows"].as_array().expect("windows");
+    let labels: Vec<&str> = windows
+        .iter()
+        .map(|w| w["label"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        labels,
+        vec![
+            "Session (5-hour)",
+            "Weekly (all models)",
+            "Weekly · Fixture Model 9"
+        ],
+        "{stdout}"
+    );
+    assert_eq!(windows[0]["percent_used"], 11.0, "{stdout}");
+    assert_eq!(windows[2]["percent_used"], 88.0, "{stdout}");
+
+    for forbidden in [
+        "FIXTURE_SECRET",
+        "00000000-0000-0000-0000-000000000000",
+        "futureField",
+        "a key this reader has never heard of",
+        "extra_usage",
+        "member_dashboard_available",
+        "oauthAccount",
+        "/home/fixture/work",
+        "a_kind_this_reader_does_not_know",
+    ] {
+        assert!(
+            !stdout.contains(forbidden),
+            "{forbidden:?} reached stdout: {stdout}"
+        );
+    }
 }
