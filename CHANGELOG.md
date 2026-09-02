@@ -36,8 +36,21 @@
   row: the statusline files under the same agent as the config cache and the fresher reading
   wins, at the recorded cost that the statusline carries no per-model weekly window.
 
+  **The line is the product and the cache a by-product, and the exit code says so.** Claude Code
+  shows stdout only from a command that exited 0 and blanks the status line otherwise, with
+  stderr going to its debug log alone — read from the 2.1.258 bundle, not assumed. So a cache
+  that cannot be written is said on stderr and in the log and is never an exit code; the non-zero
+  exit is reserved for stdin that is not the document. The cache's temporary file is named per
+  process, because unlike every other cache this tool writes, this one has a writer per open
+  Claude Code session, and two sharing a name would race each other's rename.
+
   `--doctor` gains a `LIMITS` section naming where each of the three sources was looked for and,
-  for the statusline cache, how many windows are live and when the payload arrived.
+  for the statusline cache, how many windows are live and when the payload arrived; with
+  `[collectors.claude_code] enabled = false` it says "disabled" for the two Claude Code rows
+  rather than "found" for a file the panel will never read. And the README screenshot renderer
+  now requires `XDG_DATA_HOME` to name a scratch directory, because the statusline cache has no
+  flag to pin it and would otherwise have put the author's own rate-limit window into every
+  image's header — the fourth such leak, caught before it happened rather than after.
 
 ## [0.13.0] - 2026-09-02
 

@@ -217,17 +217,27 @@ pub fn cache_path() -> Option<PathBuf> {
     Some(crate::utils::data_dir()?.join(CACHE_FILE))
 }
 
-/// Write the windows where `limits::load` will find them. Temporary-then-rename, as the update
-/// and pricing caches are written, so the dashboard's read never sees half a file.
+/// Write the windows where `limits::load` will find them.
+///
+/// Temporary-then-rename, as the update and pricing caches are written, so the dashboard's read
+/// never sees half a file -- but with the temporary named per process, which those caches do not
+/// need and this one does. They have one writer, the dashboard. This has one writer per open
+/// Claude Code session, each fired on every redraw, and two sharing a temporary name race: the
+/// first rename moves the second's half-written file into place, and the second rename finds
+/// nothing to move. `omarchy::record::write_record` records the same rule for the same reason.
+/// A temporary that could not be renamed is removed, so a failure leaves nothing behind either.
 pub fn write_cache_at(path: &Path, cached: &CachedLimits) -> anyhow::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("statusline cache path has no parent directory"))?;
     std::fs::create_dir_all(parent)?;
-    let temporary = path.with_extension("json.tmp");
-    std::fs::write(&temporary, serde_json::to_vec_pretty(cached)?)?;
-    std::fs::rename(temporary, path)?;
-    Ok(())
+    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
+    let written = std::fs::write(&temporary, serde_json::to_vec_pretty(cached)?)
+        .and_then(|()| std::fs::rename(&temporary, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    Ok(written?)
 }
 
 /// Read the cache. `Ok(None)` when there is none, which is the normal state for anyone who has
@@ -304,14 +314,23 @@ pub fn run_from_stdin(now: i64) -> anyhow::Result<()> {
     if !line.is_empty() {
         crate::helpers::print_line(&line)?;
     }
-    // After the line, so a cache that cannot be written still leaves the readout on screen. The
-    // failure is then the exit code and stderr rather than a blank status line with no reason.
-    match cache_path() {
+    // The line is the product and the cache a by-product, and the exit code has to say so.
+    // Claude Code (2.1.258, read from its bundle) shows stdout only from a command that exited
+    // 0 and blanks the status line otherwise, with stderr reaching its debug log alone -- so a
+    // cache that cannot be written must not become an exit code, or the readout vanishes for a
+    // failure that has nothing to do with it. It is said on stderr and in the log instead. The
+    // non-zero exit stays reserved for stdin that is not the document, where there is nothing to
+    // show anyway.
+    let written = match cache_path() {
         Some(path) => write_cache_at(&path, &cached),
-        None => anyhow::bail!(
-            "could not determine a data directory; the windows were not cached for the panel"
-        ),
+        None => Err(anyhow::anyhow!("could not determine a data directory")),
+    };
+    if let Err(error) = written {
+        let message = format!("the windows were not cached for the panel: {error}");
+        crate::logging::warn("statusline", &message);
+        eprintln!("ai-usage-tui --statusline: {message}");
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -390,10 +409,17 @@ mod tests {
         );
         for forbidden in [
             "FIXTURE_SECRET",
+            "00000000-0000-0000-0000-000000000000",
+            "11111111-1111-1111-1111-111111111111",
             "session_id",
             "transcript_path",
             "cwd",
+            "scratchpad_dir",
+            "prompt_id",
+            "workspace",
             "total_cost_usd",
+            "context_window",
+            "prompt_cache",
             "display_name",
         ] {
             assert!(
@@ -610,6 +636,35 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect();
         assert_eq!(leftovers, vec![std::ffi::OsString::from(CACHE_FILE)]);
+    }
+
+    /// Two sessions redrawing at once must not share a temporary, and a write that fails must
+    /// not leave one behind. The rename here fails because the destination is a directory.
+    #[test]
+    fn the_temporary_is_per_process_and_removed_on_failure() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(CACHE_FILE);
+        std::fs::create_dir(&path).expect("a directory where the cache should go");
+        let cached = CachedLimits {
+            received: 1,
+            windows: vec![window(WindowKind::FiveHour, 1.0, None)],
+        };
+        assert!(write_cache_at(&path, &cached).is_err());
+        let leftovers: Vec<String> = std::fs::read_dir(dir.path())
+            .expect("read dir")
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".tmp"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "temporaries left behind: {leftovers:?}"
+        );
+        assert!(
+            path.with_extension(format!("{}.tmp", std::process::id()))
+                .to_string_lossy()
+                .contains(&std::process::id().to_string()),
+            "the temporary name carries the process id"
+        );
     }
 
     #[test]

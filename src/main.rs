@@ -588,20 +588,37 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
             "",
             named(&omarchy)
         );
-        let claude = ai_usage_tui::limits::claude_cache_path(&roots);
-        let _ = writeln!(
-            out,
-            "  {:<12} {} {:<12} {}",
-            "claude_code",
-            mark(claude.as_deref().is_some_and(|p| p.is_file())),
-            "",
-            named(&claude)
-        );
-        let cache = ai_usage_tui::statusline::cache_path();
+        // The same switch `limits::load` honours, answered the same way, so these two rows say
+        // "disabled" where `load` would not have looked -- not "found" for a file the panel and
+        // `--json` will never read.
+        if !ai_usage_tui::limits::claude_enabled(&roots) {
+            for row in ["claude_code", "statusline"] {
+                let _ = writeln!(
+                    out,
+                    "  {:<12} disabled ([collectors.claude_code] enabled = false)",
+                    row
+                );
+            }
+        }
+        let claude = ai_usage_tui::limits::claude_cache_path(&roots)
+            .filter(|_| ai_usage_tui::limits::claude_enabled(&roots));
+        if claude.is_some() {
+            let _ = writeln!(
+                out,
+                "  {:<12} {} {:<12} {}",
+                "claude_code",
+                mark(claude.as_deref().is_some_and(|p| p.is_file())),
+                "",
+                named(&claude)
+            );
+        }
+        let cache = ai_usage_tui::statusline::cache_path()
+            .filter(|_| ai_usage_tui::limits::claude_enabled(&roots));
         match cache
             .as_deref()
             .map(ai_usage_tui::statusline::read_cache_at)
         {
+            None if !ai_usage_tui::limits::claude_enabled(&roots) => {}
             Some(Ok(Some(cached))) => {
                 let now = ai_usage_tui::utils::now();
                 let live = ai_usage_tui::statusline::live(&cached.windows, now).len();

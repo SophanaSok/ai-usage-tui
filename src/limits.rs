@@ -262,6 +262,20 @@ fn prefer<'a>(a: &'a LimitsSnapshot, b: &'a LimitsSnapshot, a_wins_ties: bool) -
     }
 }
 
+/// Whether Claude Code's files may be read at all.
+///
+/// `[collectors.claude_code] enabled = false` is the existing switch that means "do not read
+/// Claude Code's files". `~/.claude.json` is one of them and the statusline cache holds Claude
+/// Code's figures, so both producers honour it rather than becoming a way into the same data that
+/// the switch does not cover. `--doctor` asks the same question, so its LIMITS section can say
+/// "disabled" where `load` would not have looked, instead of "found".
+pub fn claude_enabled(roots: &SourceRoots) -> bool {
+    crate::collector::registry::SOURCES
+        .iter()
+        .find(|spec| spec.id == crate::collector::claude_code::ID)
+        .is_none_or(|spec| roots.is_enabled(spec))
+}
+
 /// Every limit window this machine can report, from every source.
 ///
 /// Pure over `now` so tests never touch the wall clock, and the single entry point for both the
@@ -277,15 +291,7 @@ pub fn load(roots: &SourceRoots, now: i64) -> LimitsReport {
         None => LimitsReport::default(),
     };
 
-    // `[collectors.claude_code] enabled = false` is the existing switch that means "do not read
-    // Claude Code's files". `~/.claude.json` is one of them, so it is honoured here too rather
-    // than this becoming a second way into the same document that the switch does not cover.
-    let claude_enabled = crate::collector::registry::SOURCES
-        .iter()
-        .find(|spec| spec.id == crate::collector::claude_code::ID)
-        .is_none_or(|spec| roots.is_enabled(spec));
-
-    if claude_enabled {
+    if claude_enabled(roots) {
         let tier = roots.omarchy_tier(crate::collector::claude_code::ID);
         if let Some(path) = roots.claude_json_path() {
             let readout = read_claude_cache(&path, now, CACHE_STALE_AFTER_SECS, tier.clone());

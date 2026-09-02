@@ -1,36 +1,81 @@
 {
-  "_comment": "PROVISIONAL, hand-authored from the documented schema so the tests have something to read while the real payload is captured. It must be replaced by a redacted interactive capture (docs/roadmap.md, the statusline recipe) before this ships: the docs have been wrong about a payload twice. The redaction keeps every sibling key and plants FIXTURE_SECRET in the places the payload names the machine.",
-  "hook_event_name": "Status",
+  "_comment": "A real Claude Code statusline payload (Claude Code 2.1.258, interactive session, captured 2026-09-02 with the recipe in docs/roadmap.md), redacted by hand: the session and prompt ids, every path, the repository owner and name, and the model's display name are placeholders, with FIXTURE_SECRET planted where the payload named the machine so the disclosure test has something to catch. Every sibling key is kept as captured, because the point of the test is that none of them is read. rate_limits is byte-for-byte the capture: integers, and resets_at in epoch seconds.",
   "session_id": "00000000-0000-0000-0000-000000000000",
-  "transcript_path": "/home/fixture/FIXTURE_SECRET/.claude/projects/-home-fixture-work/00000000-0000-0000-0000-000000000000.jsonl",
-  "cwd": "/home/fixture/FIXTURE_SECRET/work",
+  "transcript_path": "/home/fixture/.claude/projects/-home-fixture-FIXTURE_SECRET/00000000-0000-0000-0000-000000000000.jsonl",
+  "cwd": "/home/fixture/FIXTURE_SECRET",
+  "scratchpad_dir": "/tmp/fixture/-home-fixture-FIXTURE_SECRET/00000000-0000-0000-0000-000000000000/scratchpad",
+  "prompt_id": "11111111-1111-1111-1111-111111111111",
+  "effort": {
+    "level": "high"
+  },
   "model": {
-    "id": "claude-fixture-model",
+    "id": "claude-fable-5-1",
     "display_name": "Fixture Model FIXTURE_SECRET"
   },
   "workspace": {
-    "current_dir": "/home/fixture/FIXTURE_SECRET/work",
-    "project_dir": "/home/fixture/FIXTURE_SECRET/work"
+    "current_dir": "/home/fixture/FIXTURE_SECRET",
+    "project_dir": "/home/fixture/FIXTURE_SECRET",
+    "added_dirs": [],
+    "repo": {
+      "host": "github.com",
+      "owner": "FIXTURE_SECRET",
+      "name": "fixture-repo"
+    }
   },
-  "version": "0.0.0",
+  "version": "2.1.258",
   "output_style": {
     "name": "default"
   },
   "cost": {
-    "total_cost_usd": 0.0123,
-    "total_duration_ms": 45000,
-    "total_api_duration_ms": 2300,
-    "total_lines_added": 3,
-    "total_lines_removed": 1
+    "total_cost_usd": 0.34813774999999997,
+    "total_duration_ms": 56915,
+    "total_api_duration_ms": 10662,
+    "total_lines_added": 0,
+    "total_lines_removed": 0
+  },
+  "context_window": {
+    "total_input_tokens": 42792,
+    "total_output_tokens": 255,
+    "context_window_size": 1000000,
+    "current_usage": {
+      "input_tokens": 2,
+      "output_tokens": 255,
+      "cache_creation_input_tokens": 16439,
+      "cache_read_input_tokens": 26351
+    },
+    "used_percentage": 4,
+    "remaining_percentage": 96
+  },
+  "exceeds_200k_tokens": false,
+  "prompt_cache": {
+    "warm": true,
+    "caching_observed": true,
+    "ttl": "1h",
+    "expires_at": 1788368781,
+    "requests": 1,
+    "misses": 0,
+    "expected_rebuilds": 0,
+    "hit_ratio": 0.6157926715273883,
+    "cache_write_tokens": 16439,
+    "miss_recache_tokens": 0,
+    "last_miss_at": null,
+    "recache_tokens_if_cold": 42792
+  },
+  "fast_mode": false,
+  "thinking": {
+    "enabled": true
   },
   "rate_limits": {
     "five_hour": {
-      "used_percentage": 11,
-      "resets_at": 1787490000
+      "used_percentage": 30,
+      "resets_at": 1788376800
     },
     "seven_day": {
-      "used_percentage": 22,
-      "resets_at": 1787830800
+      "used_percentage": 11,
+      "resets_at": 1788739200
     }
+  },
+  "vim": {
+    "mode": "INSERT"
   }
 }

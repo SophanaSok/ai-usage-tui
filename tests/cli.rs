@@ -1547,6 +1547,14 @@ fn a_statusline_payload_becomes_one_line_and_a_row_in_the_limits_export() {
     .expect("the fixture is JSON");
     payload["rate_limits"]["five_hour"]["resets_at"] = serde_json::json!(now + 3600);
     payload["rate_limits"]["seven_day"]["resets_at"] = serde_json::json!(now + 7 * 86_400);
+    // The percentages are whatever the capture said; the assertions below are about the shape of
+    // the line and the row, so they take the figures from the fixture rather than repeating them.
+    let five = payload["rate_limits"]["five_hour"]["used_percentage"]
+        .as_f64()
+        .expect("the capture carries a five_hour percentage");
+    let seven = payload["rate_limits"]["seven_day"]["used_percentage"]
+        .as_f64()
+        .expect("the capture carries a seven_day percentage");
 
     let statusline = |body: &str| -> std::process::Output {
         let mut child = bin()
@@ -1590,12 +1598,23 @@ fn a_statusline_payload_becomes_one_line_and_a_row_in_the_limits_export() {
         1,
         "one line, for the status bar: {stdout:?}"
     );
-    assert!(stdout.starts_with("5h 11% (resets "), "{stdout}");
-    assert!(stdout.contains("7d 22% (resets "), "{stdout}");
-    assert!(cache.is_file(), "the windows are cached for the panel");
     assert!(
-        !cache.with_extension("json.tmp").exists(),
-        "temporary-then-rename leaves nothing behind"
+        stdout.starts_with(&format!("5h {}% (resets ", five.round())),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("7d {}% (resets ", seven.round())),
+        "{stdout}"
+    );
+    assert!(cache.is_file(), "the windows are cached for the panel");
+    let leftovers: Vec<String> = std::fs::read_dir(cache.parent().unwrap())
+        .expect("read the data dir")
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".tmp"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "temporary-then-rename leaves nothing behind: {leftovers:?}"
     );
     let cached = std::fs::read_to_string(&cache).expect("read cache");
     for forbidden in ["FIXTURE_SECRET", "total_cost_usd", "transcript_path"] {
@@ -1626,7 +1645,10 @@ fn a_statusline_payload_becomes_one_line_and_a_row_in_the_limits_export() {
         .map(|window| window["label"].as_str().unwrap())
         .collect();
     assert_eq!(labels, vec!["Session (5-hour)", "Weekly (all models)"]);
-    assert_eq!(claude["windows"][0]["percent_used"], 11.0);
+    let percent = claude["windows"][0]["percent_used"]
+        .as_f64()
+        .expect("percent_used is a number");
+    assert!((percent - five).abs() < 1e-6, "{percent} vs {five}");
 
     // `--doctor` names the cache, so an empty panel is a question with an answer.
     let output = hermetic(bin().arg("--doctor"))
@@ -1657,7 +1679,7 @@ fn a_statusline_payload_becomes_one_line_and_a_row_in_the_limits_export() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8");
     assert!(
-        stdout.starts_with("5h 11%") && !stdout.contains("7d"),
+        stdout.starts_with(&format!("5h {}%", five.round())) && !stdout.contains("7d"),
         "{stdout}"
     );
     let limits = limits_json();
@@ -1665,6 +1687,41 @@ fn a_statusline_payload_becomes_one_line_and_a_row_in_the_limits_export() {
         limits[0]["windows"].as_array().map(Vec::len),
         Some(1),
         "{limits}"
+    );
+
+    // A cache that cannot be written is not an exit code. Claude Code shows stdout only from a
+    // command that exited 0, so a non-zero exit here would blank the status line for a failure
+    // that has nothing to do with the readout; the failure is said on stderr instead.
+    let not_a_dir = dir.join("not-a-dir");
+    std::fs::write(&not_a_dir, "a file where the data root should be").expect("plant a file");
+    let mut child = bin()
+        .arg("--statusline")
+        .env("XDG_DATA_HOME", &not_a_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().expect("wait");
+    assert!(
+        output.status.success(),
+        "an unwritable cache must not blank the status line: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).starts_with("5h "),
+        "the readout is still the product"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("not cached"),
+        "the failure is said: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 
     // Not the document at all: a settings entry pointing at the wrong command must not look like

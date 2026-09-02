@@ -295,12 +295,14 @@ one-line readout Claude Code shows, and caches the windows under the data direct
 `limits::load` reads them as the third producer — the smaller, additive change this paragraph
 once predicted, exactly because the vocabulary and the merge already existed. It is the only
 *push* signal this tool has: Claude Code re-runs the command when a window reaches its
-`resets_at`, where everything else here is polled. The schema below held. Its fixture,
-`tests/fixtures/claude_statusline.json`, must be a redacted interactive capture made with the
-recipe below (provisional and hand-authored until that capture lands — its `_comment` says so),
+`resets_at`, where everything else here is polled. The schema below held, byte for byte, against
+Claude Code 2.1.258: integers, and `resets_at` in epoch seconds. Its fixture,
+`tests/fixtures/claude_statusline.json`, is that capture, redacted by hand with the recipe below,
 and the capture was the one step of the change an agent could not make: the classifier refuses to
 drive an interactive Claude Code session from a tool call, as it refused the settings-file write
-before it.
+before it. The payload turned out to carry far more beside the block than the reference lists —
+the context window, the prompt cache, the workspace's repository owner — which is why the fixture
+keeps every sibling key and the disclosure test names them.
 
 ### P1 (superseded) — the statusline route, kept for its schema
 
@@ -776,7 +778,10 @@ Remaining:
   It was also the third thing to leak this machine into the README images: `render-screenshots`
   builds a real `App`, so a cached answer put `↑ vX.Y.Z` in all seven headers. Cleared in the
   renderer. Anything `App::new` reads from a real path is a candidate for the same mistake — the
-  first two were the OpenCode database and Omarchy's records.
+  first two were the OpenCode database and Omarchy's records. The fourth was caught in review
+  before it happened: the `--statusline` cache lives under the same data directory and has no
+  flag, so the renderer now refuses to run unless `XDG_DATA_HOME` names a scratch directory, and
+  `scripts/render-readme-screenshots.sh` sets one.
 - **Resolved. `scripts/install.sh` detects an existing install.** It names the version it is
   replacing (or says the version could not be read), says "reinstalling" when the tag matches,
   and — the case that actually bites — warns after installing when `command -v` still resolves
