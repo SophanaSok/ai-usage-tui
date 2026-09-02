@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-02
+
 ### Added
 
 - **A demo you can watch, rendered from data that was never real.** The README opens on
