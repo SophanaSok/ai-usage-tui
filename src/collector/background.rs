@@ -183,7 +183,16 @@ impl CollectorState {
             .or_insert_with(|| Health::new(Duration::from_secs(30)))
     }
 
-    fn merge(&mut self, name: &str, usages: Vec<Usage>, source: String, warning: Option<String>) {
+    /// Fold a poll's rows in, keeping the ones not seen before. Returns the index the new rows
+    /// start at, so the caller can price exactly those rather than everything ever collected.
+    fn merge(
+        &mut self,
+        name: &str,
+        usages: Vec<Usage>,
+        source: String,
+        warning: Option<String>,
+    ) -> usize {
+        let start = self.usages.len();
         for u in usages {
             if self.seen.insert(usage_key(&u)) {
                 self.usages.push(u);
@@ -198,6 +207,7 @@ impl CollectorState {
         health.last_error = None;
         health.warning = warning;
         health.consecutive_failures = 0;
+        start
     }
 
     fn record_error(&mut self, name: &str, error: String) {
@@ -215,17 +225,33 @@ impl CollectorState {
         health.restarts
     }
 
+    /// Price everything, with the engine as it is. The full pass, and reached from exactly one
+    /// place in production: `reload_pricing`.
     fn apply_pricing(&mut self) {
+        self.price_from(0);
+    }
+
+    /// Price the rows from `start` on -- the ones a `merge` just added.
+    ///
+    /// This is what an ordinary poll does, and it is enough: the engine is immutable between
+    /// reloads, and `apply_estimated_pricing` leaves a row alone once its status is anything but
+    /// `Unavailable`, so running it again over rows an earlier poll already priced can only
+    /// repeat the answer. Running it over all of history anyway meant every poll of every
+    /// collector re-walked every row ever collected *inside the write lock*, which is the lock
+    /// `snapshot()` needs on the render thread -- a cost that grew with the history for no
+    /// change in the result.
+    fn price_from(&mut self, start: usize) {
         let pricing = Arc::clone(&self.pricing);
-        apply_estimated_pricing(&mut self.usages, &pricing);
+        apply_estimated_pricing(&mut self.usages[start..], &pricing);
     }
 
     /// Rebuild the engine from disk and re-price everything already collected.
     ///
     /// Only reached after a collector that `refreshes_pricing` polls successfully, so the reload
     /// cost is paid once per refresh rather than once per poll. Re-pricing the whole list is the
-    /// point: the rows that were collected *before* the refresh are exactly the ones whose price
-    /// was missing.
+    /// point, and it is the condition that makes `price_from` correct: the rows that were
+    /// collected *before* the refresh are exactly the ones whose price was missing, and this is
+    /// the one pass that reaches them.
     fn reload_pricing(&mut self, pricing: Arc<PricingEngine>) {
         self.pricing = pricing;
         self.apply_pricing();
@@ -312,10 +338,10 @@ impl CollectorHandle {
                             let reloaded =
                                 refreshes_pricing.then(|| Arc::new(PricingEngine::load()));
                             let mut s = write_state(&state);
-                            s.merge(&name, usages, source, warning);
+                            let start = s.merge(&name, usages, source, warning);
                             match reloaded {
                                 Some(pricing) => s.reload_pricing(pricing),
-                                None => s.apply_pricing(),
+                                None => s.price_from(start),
                             }
                             drop(s);
                             if refreshes_pricing {
@@ -868,6 +894,44 @@ mod pricing_reload_tests {
             state.usages[0]
         );
         assert_ne!(state.usages[0].cost_status, CostStatus::Unavailable);
+    }
+
+    /// A poll prices the rows it merged and touches nothing before them; a reload reaches the
+    /// rest. The two halves are one guarantee: narrowing the per-poll pass is only correct while
+    /// the refresh path keeps the full one, because a row collected before a refresh is exactly
+    /// the row that pass exists for.
+    #[test]
+    fn a_poll_prices_only_what_it_merged_and_a_reload_prices_the_rest() {
+        let mut state = CollectorState::for_test();
+        // Collected before the rate existed: unpriced, and deliberately pushed past `merge` so
+        // the row is in the history with no poll having priced it.
+        let mut earlier = unpriced_row("claude-sonnet-4-5");
+        earlier.event_id = Some("earlier".into());
+        state.usages.push(earlier);
+
+        let mut later = unpriced_row("claude-sonnet-4-5");
+        later.event_id = Some("later".into());
+        let start = state.merge("test", vec![later], "test: ok".into(), None);
+        assert_eq!(start, 1, "merge reports where the new rows begin");
+        state.price_from(start);
+
+        assert!(
+            state.usages[1].cost.is_some(),
+            "the row this poll merged is priced: {:?}",
+            state.usages[1]
+        );
+        assert!(
+            state.usages[0].cost.is_none(),
+            "the poll did not walk history: {:?}",
+            state.usages[0]
+        );
+
+        state.reload_pricing(Arc::new(PricingEngine::bundled()));
+        assert!(
+            state.usages[0].cost.is_some(),
+            "a reload is the pass that reaches a row collected before the rate: {:?}",
+            state.usages[0]
+        );
     }
 
     /// Only the pricing collector claims to refresh pricing.
