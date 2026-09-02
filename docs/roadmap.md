@@ -471,7 +471,12 @@ likely) rather than reaching for the filesystem inside the pure one.
   is a recording of the author's machine. No site, still.
 - **The launch is a measurement, not a comparison table.** A write-up answering "was Opus worth
   5x Sonnet on this codebase" with this machine's own numbers is the story; a feature matrix
-  against ccusage is a fight on their axis, and loses.
+  against ccusage is a fight on their axis, and loses. **First piece written:**
+  `docs/what-a-max-subscription-bought.md` — what the transcripts support today (API-equivalent
+  by model, project and day; escalations; the repository's commits and releases beside them),
+  with the two holes stated. The Opus-versus-Sonnet piece is gated on hook data: the
+  `--claude-code-hook` has to be installed on the measuring machine and Sonnet has to have done
+  some of the work, and neither was true here when the first piece was written.
 - **Name collision:** `aiusage` on PyPI is already "AI Usage TUI" (Michael Kennedy, 2025-10-24,
   Cursor/Copilot credits) and outranks this repository on that exact phrase.
 - macOS binaries are unsigned, so a first run needs `xattr -d com.apple.quarantine`. Chocolatey

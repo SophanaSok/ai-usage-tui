@@ -66,6 +66,14 @@
   flag to pin it and would otherwise have put the author's own rate-limit window into every
   image's header — the fourth such leak, caught before it happened rather than after.
 
+- **The first launch write-up.** `docs/what-a-max-subscription-bought.md`: nineteen days of the
+  author's own Claude Code use at API-equivalent rates — by model, project and day — beside what
+  this repository shipped in the same period, with the derived escalation rate and the two holes
+  the method has (sessions with no local transcript; a day of the newest model unpriced). It
+  says in its first paragraph why the routing panel's own measure, tests passed per dollar per
+  model, is not in it: the hook was never installed on the measuring machine, and on a Max plan
+  every attempt is `quota` by this tool's own rule. Linked from the README under *Write-ups*.
+
 ### Changed
 
 - **The pricing snapshot is current again.** `pricing/litellm.tsv` was nine days old and did not
