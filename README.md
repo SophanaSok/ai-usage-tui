@@ -1136,6 +1136,12 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution guidelines.
 
 ## More documentation
 
+**Write-ups**
+
+- [`docs/what-a-max-subscription-bought.md`](docs/what-a-max-subscription-bought.md) — nineteen
+  days of one machine's Claude Code use, at API-equivalent rates, against what the repository
+  shipped; and why the routing panel's own measure is not in it yet
+
 **User guides**
 
 - [`docs/provider-support.md`](docs/provider-support.md) — provider support matrix
