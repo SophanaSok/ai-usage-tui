@@ -127,7 +127,7 @@ channel each copy came from.
 If you would rather not pipe a script into your shell:
 
 ```sh
-VERSION=v0.12.1
+VERSION=v0.13.0
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64)  SLUG=x86_64-linux   ;;
   Linux-aarch64) SLUG=aarch64-linux  ;;
@@ -191,7 +191,7 @@ Checksums are published with each release.
 macOS example (Apple Silicon — use `x86_64-macos` on an Intel Mac):
 
 ```sh
-VERSION=v0.12.1
+VERSION=v0.13.0
 TMP="$(mktemp -d)"
 curl -fsSL "https://github.com/SophanaSok/ai-usage-tui/releases/download/${VERSION}/ai-usage-tui-${VERSION}-aarch64-macos.tar.gz" \
   | tar xz -C "$TMP"
@@ -217,8 +217,8 @@ step.
 Linux package example:
 
 ```sh
-sudo dpkg -i ai-usage-tui-v0.12.1-amd64.deb      # Debian/Ubuntu
-sudo rpm -i ai-usage-tui-v0.12.1-amd64.rpm       # Fedora/RHEL
+sudo dpkg -i ai-usage-tui-v0.13.0-amd64.deb      # Debian/Ubuntu
+sudo rpm -i ai-usage-tui-v0.13.0-amd64.rpm       # Fedora/RHEL
 ```
 
 On Windows, extract the zip and add the directory containing

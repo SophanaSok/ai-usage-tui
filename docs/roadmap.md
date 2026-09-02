@@ -1,6 +1,6 @@
 # Roadmap and Outstanding Findings
 
-Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.12.1.
+Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.13.0.
 Shipped items are in the versioned sections of `CHANGELOG.md` (new work goes under
 `[Unreleased]`); this file is the *remaining* work, with enough evidence attached that each item
 can be picked up cold.
@@ -397,11 +397,11 @@ pushing another commit to it will *not* get it re-reviewed — see the once-per-
    release already, so an Arch user installs today with `curl` plus `makepkg -si`, which is what
    the README documents. What waits is the `yay -S ai-usage-tui-bin` convenience and the AUR's
    search listing — reach, not function.
-2. **Review and merge PR #86** — the limits work, which is done and green locally but unmerged.
-   It closed the P1 gap by reading `~/.claude.json`'s `cachedUsageUtilization` rather than by the
-   statusline route this file originally planned; the superseded entry above records why the
-   statusline could not be automated, and keeps its schema for whoever adds that *push* surface
-   later as a smaller additive change.
+2. **Done — PR #86 merged 2026-09-02, shipped in v0.13.0.** The limits work closed the P1 gap
+   by reading `~/.claude.json`'s `cachedUsageUtilization` rather than by the statusline route
+   this file originally planned; the superseded entry above records why the statusline could not
+   be automated, and keeps its schema for whoever adds that *push* surface later as a smaller
+   additive change.
 
    **Read the disclosure section of `src/limits.rs`'s module doc before touching that reader.**
    The document belongs to Claude Code, not to us, and this repository is public: `limits` is

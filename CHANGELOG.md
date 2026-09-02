@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-02
+
 ### Added
 
 - **Subscription rate limits on every machine, not just Omarchy.** The `l` panel, the header's
