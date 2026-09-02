@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **A poll prices the rows it merged, not the whole history.** Every poll of every collector
+  re-ran the pricing pass over every row ever collected, inside the write lock that `snapshot()`
+  needs on the render thread — a walk that grew with the history and never changed a result,
+  since the engine is immutable between reloads and a row is skipped once its status is anything
+  but unavailable. `merge` now reports where its new rows begin and the poll prices from there.
+  The refresh path is deliberately untouched: a pricing refresh still re-prices everything,
+  because the rows collected *before* it are exactly the ones whose price was missing, and that
+  pass is the one that reaches them. A test holds the two halves together, and the roadmap entry
+  that recorded the constraint is closed under it.
+
 ## [0.13.0] - 2026-09-02
 
 ### Added

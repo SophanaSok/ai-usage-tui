@@ -517,11 +517,15 @@ else -- only `zen_pricing` answers true -- and the loop rebuilds the engine and 
 collected rows. The rebuild happens *before* the write lock is taken, because parsing ~3,450 keys
 while holding it would block `snapshot()` on the render thread.
 
-**Still open, and now with a constraint attached:** `apply_pricing` re-prices all accumulated
-history inside the write lock on every poll. Narrowing it to newly merged rows is the obvious fix
-and is only correct if the reload path above keeps re-pricing *everything* -- the rows collected
-before a refresh are exactly the ones whose price was missing. Whoever does the incremental work
-has to leave `reload_pricing` whole.
+**Resolved after v0.13.0, under the constraint this entry attached.** `apply_pricing` used to
+re-price all accumulated history inside the write lock on every poll of every collector -- a walk
+that grew with the history and, because the engine is immutable between reloads and a priced row
+is skipped, never changed a result. `merge` now returns the index its new rows start at and the
+poll path prices from there (`price_from`); `reload_pricing` alone keeps the full pass, which is
+the condition that makes the narrowing correct: the rows collected *before* a refresh are exactly
+the ones whose price was missing, and that pass is the one that reaches them. A test holds both
+halves together -- a poll prices what it merged and leaves history alone; a reload then prices
+the row the poll left. Whoever touches either has to keep `reload_pricing` whole.
 
 ### P2 — Pricing depth
 
