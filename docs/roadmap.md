@@ -82,7 +82,7 @@ Left open, and needing a Copilot user rather than this machine: whether a store 
 through several CLI upgrades still matches, and whether a seat on a **paid** plan spells
 `request_multiplier` as something other than `1.0` — every model reachable here multiplies to 1.
 
-### Open — `claude-review` reviewed nothing, twice over
+### Resolved — `claude-review` reviewed nothing, three ways over
 
 Two independent faults, both now understood, both fixed; what is left is to *verify* the fix
 against a pull request carrying real defects.
@@ -144,6 +144,14 @@ measurement loop is: merge the workflow change to `main` first, *then* open a se
 request that does not touch `.github/` and read the run on that. `show_full_output` has to be on
 in `main` for the measuring run and taken back off afterwards, which is what #72 followed by #76
 was doing.
+
+**It works, and the first thing it reviewed it caught.** On PR #81 the in-process review posted
+a finding within a minute: the new per-agent journal cursor was built as
+`claude-code:{session}:{agent_id}:` while `event_id` was still written as
+`claude-code:{session}:{tool_use_id}`, so the prefix matched nothing in SQL and every subagent run
+re-attributed from the start of its transcript. Real, ours, and not caught by `fmt`, `clippy`, the
+suite or the author. Fixed in the same pull request, with the reply posted back on the thread.
+`show_full_output` is off again.
 
 **How this was found, and the methodology error to avoid repeating.** The denial was invisible
 until `show_full_output: true` (#72) printed

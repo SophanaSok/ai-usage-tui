@@ -34,9 +34,6 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # TEMPORARY, for the verification runs only -- removed before merge. This
-          # repository and its action logs are public.
-          show_full_output: true
           # This prompt reviews in-process on purpose; see the note below the prompt.
           prompt: |
             Review pull request #${{ github.event.pull_request.number }} in the repository
