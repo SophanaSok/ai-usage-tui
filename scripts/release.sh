@@ -72,7 +72,7 @@ if ! grep -qF "VERSION=v${VERSION}" README.md; then
 fi
 
 # 10. Check CHANGELOG.md has the version
-if ! grep -q "## $VERSION" CHANGELOG.md 2>/dev/null; then
+if ! grep -qF "## [$VERSION]" CHANGELOG.md 2>/dev/null; then
   echo "WARNING: CHANGELOG.md may not have a '$VERSION' section"
 fi
 
