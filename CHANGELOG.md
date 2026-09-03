@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-03
+
 ### Added
 
 - **`--check-update`, and a timer to run it.** The release check used to be reachable only

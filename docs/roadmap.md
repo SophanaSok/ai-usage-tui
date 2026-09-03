@@ -1,8 +1,8 @@
 # Roadmap and Outstanding Findings
 
-Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.14.0, which
-shipped the three pull requests merged after v0.13.0 (#87 `--statusline`, #88 `ci/trust`, #89
-incremental pricing) together with the demo and the first launch write-up (#90, #91).
+Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.15.0, which
+shipped the two pull requests merged after v0.14.0 (#92 the library export tests pinned to every
+source root, #93 `--check-update` and its daily user timer).
 Shipped items are in the versioned sections of `CHANGELOG.md` (new work goes under
 `[Unreleased]`); this file is the *remaining* work, with enough evidence attached that each item
 can be picked up cold.

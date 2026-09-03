@@ -1,6 +1,6 @@
 [package]
 name = "ai-usage-tui"
-version = "0.14.0"
+version = "0.15.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Terminal dashboard that measures what each AI coding model actually costs per passing test — routing, escalation and budget analytics across Claude Code, Codex CLI, GitHub Copilot, Gemini CLI, OpenCode and Ollama, where an unknown cost stays unknown instead of rendering as $0.00. Live TUI or JSON/CSV."
