@@ -433,6 +433,17 @@ guideline fixes followed in a second pull request the same day.
    release history — the first piece is that, stated with the provenance rules; the
    Opus-versus-Sonnet piece waits on hook data.
 
+   **2026-09-03 — the write-up has a home, and the launch is now the submissions.** The site
+   renders `docs/what-a-max-subscription-bought.md` at
+   <https://sophanasok.github.io/ai-usage-tui-site/what-a-max-subscription-bought/>, dated by
+   its own opening line, with a feed item and a header entry. Nothing here had to change: the
+   file is unchanged since v0.14.0 and the site builds from the latest release tag. What remains
+   is telling people, and it is two links, not one — a Show HN points at the site's home page
+   (the tool), the write-up goes as its own submission — to Hacker News, lobste.rs, r/rust,
+   r/ClaudeAI, This Week in Rust, and the Omarchy community, where the meter integration is the
+   hook. Deliberately not done, both release-bound: `Cargo.toml`'s `homepage` still names GitHub,
+   and the README does not link the site.
+
 **Not started, and deliberately:** the `--doctor` AUR detection below, recorded with the
 evidence and the design question it turns on. (The `claude-review` once-per-PR fix that stood
 beside it here has since been made; see the `claude-review` section above.)
@@ -469,7 +480,9 @@ likely) rather than reaching for the filesystem inside the pure one.
   a project drill-down, the limits panel, the key reference — rendered off-screen from the
   invented fixture by the same path as the stills (`examples/render-screenshots.rs --script`),
   so no real path or spend can appear in it. Not an asciinema: a recording of a real terminal
-  is a recording of the author's machine. No site, still.
+  is a recording of the author's machine. **The site followed on 2026-09-03:**
+  <https://sophanasok.github.io/ai-usage-tui-site/>, built from this repository's own docs at
+  the latest release tag, daily; its rules live in `SophanaSok/ai-usage-tui-site`.
 - **The launch is a measurement, not a comparison table.** A write-up answering "was Opus worth
   5x Sonnet on this codebase" with this machine's own numbers is the story; a feature matrix
   against ccusage is a fight on their axis, and loses. **First piece written:**
