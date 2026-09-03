@@ -801,7 +801,7 @@ Remaining:
   needs a periodic writer: a collector on the `zen_pricing` shape, or the `contrib/` timer.
   Deliberately not added here — it would turn an explicit "ask when I run `--doctor`" opt-in
   into a recurring background request, which is a different consent than the one given. (Since
-  resolved, next entry but one.)
+  resolved, next entry.)
 
   It was also the third thing to leak this machine into the README images: `render-screenshots`
   builds a real `App`, so a cached answer put `↑ vX.Y.Z` in all seven headers. Cleared in the
