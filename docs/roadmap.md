@@ -800,7 +800,8 @@ Remaining:
   `--doctor` writes the cache**, so a user who never runs it still never learns. Closing that
   needs a periodic writer: a collector on the `zen_pricing` shape, or the `contrib/` timer.
   Deliberately not added here — it would turn an explicit "ask when I run `--doctor`" opt-in
-  into a recurring background request, which is a different consent than the one given.
+  into a recurring background request, which is a different consent than the one given. (Since
+  resolved, next entry but one.)
 
   It was also the third thing to leak this machine into the README images: `render-screenshots`
   builds a real `App`, so a cached answer put `↑ vX.Y.Z` in all seven headers. Cleared in the
@@ -809,6 +810,21 @@ Remaining:
   before it happened: the `--statusline` cache lives under the same data directory and has no
   flag, so the renderer now refuses to run unless `XDG_DATA_HOME` names a scratch directory, and
   `scripts/render-readme-screenshots.sh` sets one.
+- **Resolved. The cache has a periodic writer, and the dashboard is not it.** The paragraph
+  above named two shapes -- a collector like `zen_pricing`, or a `contrib/` timer -- and the
+  timer won, for three reasons worth keeping. A registry collector is by construction a *data
+  source*: `tests/docs.rs` demands a README section per label and it takes a slot in the
+  header's status line, which is the wrong shape for a notice. The header reads the cache once
+  at startup by design, so an in-process check could not have reached the screen before a
+  restart without new plumbing on the refresh path. And the consent question that stalled this
+  answers itself once the request leaves the dashboard: `--check-update` is a one-shot command
+  in the `--refresh-pricing` family, the command is the consent exactly as it is for those, and
+  a user who wants it recurring installs `contrib/systemd/user/ai-usage-update.timer` (daily)
+  or any scheduler's equivalent. The dashboard process never makes the request, whatever the
+  config says, so the privacy sentence stays a sentence. `update::check_and_cache` is the one
+  implementation both `--doctor` and the command call, so the two cannot drift; the command
+  fails non-zero when it cannot ask or cannot cache, so a scheduled run that achieved nothing
+  shows as one in the journal. `[update] check` keeps exactly the meaning it had.
 - **Resolved. `scripts/install.sh` detects an existing install.** It names the version it is
   replacing (or says the version could not be read), says "reinstalling" when the tag matches,
   and — the case that actually bites — warns after installing when `command -v` still resolves

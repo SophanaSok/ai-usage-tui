@@ -1432,6 +1432,12 @@ fn doctor_reports_a_cached_update_answer_it_did_not_fetch() {
         text.contains("not checked"),
         "the check should still be off:\n{text}"
     );
+    // Both ways of asking are named, not just the config key: the explicit command is what a
+    // scheduled check runs, and a user reading this line is the one deciding how to opt in.
+    assert!(
+        text.contains("--check-update"),
+        "the hint does not name the explicit command:\n{text}"
+    );
     assert!(
         text.contains("v99.0.0") && text.contains("earlier check"),
         "the cached answer is not reported:\n{text}"
