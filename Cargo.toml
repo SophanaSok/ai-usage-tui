@@ -7,7 +7,7 @@ description = "Terminal dashboard that measures what each AI coding model actual
 license = "MIT"
 authors = ["Sophana Sok <sokdevelopment@gmail.com>"]
 repository = "https://github.com/SophanaSok/ai-usage-tui"
-homepage = "https://github.com/SophanaSok/ai-usage-tui"
+homepage = "https://sophanasok.github.io/ai-usage-tui-site/"
 # crates.io allows five, at most 20 characters each. Deliberately generic: the source names
 # live in [package.metadata.identity] topics, where there is room for all of them, and a test
 # requires every keyword to also be a topic. Spending a keyword slot on one source is the
@@ -37,9 +37,11 @@ topics = [
     "ai-agents", "terminal",
 ]
 # GitHub's "About" homepage slot. Deliberately not the repository URL -- a visitor is already on
-# that page. The install page is the one link the About box can give them that the page cannot,
-# and it is the literal statement that GitHub and crates.io are the same project.
-github_homepage = "https://crates.io/crates/ai-usage-tui"
+# that page. The site is the one thing the About box can give them that the page cannot: the
+# dashboard, the write-up and an install page, rendered from this repository's own docs at the
+# latest release tag. Until 2026-09-03 this was the crates.io page; the site's /install/ still
+# names it, so GitHub and crates.io remain visibly the same project.
+github_homepage = "https://sophanasok.github.io/ai-usage-tui-site/"
 
 # The release binary was built with cargo's stock release profile: no LTO, 16 codegen units and
 # symbols left in. CI strips on Unix as a separate step and not on Windows, so the Windows archive
