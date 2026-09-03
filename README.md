@@ -7,7 +7,7 @@
 [![crates.io](https://img.shields.io/crates/v/ai-usage-tui.svg)](https://crates.io/crates/ai-usage-tui)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-[Quick start](#quick-start) · [Install](#installation) · [Configuration](#configuration) · [Docs](#more-documentation) · [Contributing](CONTRIBUTING.md)
+[Website](https://sophanasok.github.io/ai-usage-tui-site/) · [Quick start](#quick-start) · [Install](#installation) · [Configuration](#configuration) · [Docs](#more-documentation) · [Contributing](CONTRIBUTING.md)
 
 Most usage tools answer "how many tokens did I spend". This one is built to answer
 "**was the expensive model worth it**" — cost per *delivered result* per agent and
@@ -1151,11 +1151,16 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution guidelines.
 
 ## More documentation
 
+**The site** — <https://sophanasok.github.io/ai-usage-tui-site/> renders the documents below
+from this repository at its latest release tag, with the dashboard, an install page and a feed
+of releases and writing.
+
 **Write-ups**
 
 - [`docs/what-a-max-subscription-bought.md`](docs/what-a-max-subscription-bought.md) — nineteen
   days of one machine's Claude Code use, at API-equivalent rates, against what the repository
-  shipped; and why the routing panel's own measure is not in it yet
+  shipped; and why the routing panel's own measure is not in it yet. On the site at
+  <https://sophanasok.github.io/ai-usage-tui-site/what-a-max-subscription-bought/>.
 
 **User guides**
 

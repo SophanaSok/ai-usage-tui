@@ -444,6 +444,12 @@ guideline fixes followed in a second pull request the same day.
    hook. Deliberately not done, both release-bound: `Cargo.toml`'s `homepage` still names GitHub,
    and the README does not link the site.
 
+   **2026-09-03, later — linked.** Only one of those was release-bound. GitHub's About box has no
+   manifest, so `github_homepage` now names the site and `identity.sh --apply` pushed it the same
+   day; the README links the site from its nav line and from More documentation, which is live on
+   GitHub at merge. `Cargo.toml`'s `homepage` is set to the site too, but crates.io reads it only
+   at publish, so that one shows with v0.16.0.
+
 **Not started, and deliberately:** the `--doctor` AUR detection below, recorded with the
 evidence and the design question it turns on. (The `claude-review` once-per-PR fix that stood
 beside it here has since been made; see the `claude-review` section above.)
