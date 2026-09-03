@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The library's export tests read the developer's own Copilot store and journal.** Their
+  `Cli` pinned Claude Code, Codex and Omarchy to paths under a temp directory and left the
+  rest at the defaults, so on a machine with `~/.copilot/session-store.db` the JSON export test
+  printed that machine's real rows and both export tests opened the real routing journal. This
+  is the gap PR #78 closed in `tests/cli.rs` with `hermetic_with`; the in-process tests never
+  went through the binary and were missed. They now build on a `pinned_cli` that names every
+  source root, and assert that only the fixtures' providers reach the export, so a root added
+  later without a pin fails the test instead of leaking silently.
+
 ## [0.14.0] - 2026-09-02
 
 ### Added
