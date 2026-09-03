@@ -174,34 +174,49 @@ mod integration_tests {
         assert_eq!(usages[1].cost, None);
     }
 
+    /// A `Cli` whose every source root names a path under `temp` that does not exist, so
+    /// `print_once` reads nothing of the developer's. Every root has to be named: the export
+    /// tests once pinned Claude Code and Codex only, and on a machine with a Copilot store
+    /// `--json` printed that machine's own rows -- the same gap `tests/cli.rs` closed with
+    /// `hermetic_with`, unclosed here because these tests never went through the binary.
+    /// The pricing cache is resolved from the environment and stays unpinned: the process is
+    /// shared with every other test, so an in-process test cannot set `XDG_DATA_HOME` safely,
+    /// and a refreshed cache changes only rates, never which rows exist.
+    fn pinned_cli(temp: &std::path::Path) -> Cli {
+        Cli {
+            once: true,
+            db_path: Some(setup_test_db()),
+            journal_path: Some(temp.join("no-journal.db")),
+            claude_dir: Some(temp.join("no-claude-logs")),
+            codex_dir: Some(temp.join("no-codex-home")),
+            copilot_dir: Some(temp.join("no-copilot-home")),
+            gemini_dir: Some(temp.join("no-gemini-home")),
+            omarchy_dir: Some(temp.join("no-omarchy")),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn test_export_json_format() {
         let temp_dir = TempDir::new().unwrap();
-        let db_path = setup_test_db();
         let journal_path = build_test_journal(temp_dir.path());
-
-        let roots = SourceRoots {
-            db_path: Some(db_path.clone()),
-            journal: journal_path,
-            claude_dir: Some(temp_dir.path().join("no-claude-logs")),
-            codex_dir: Some(temp_dir.path().join("no-codex-home")),
-            omarchy_dir: Some(temp_dir.path().join("no-omarchy")),
-            ..Default::default()
-        };
-        let (usages, _source) = load_usage(&roots).unwrap();
-        let engine = PricingEngine::load();
-        let mut usages = usages;
-        apply_estimated_pricing(&mut usages, &engine);
 
         let cli = Cli {
             json: true,
-            once: true,
-            db_path: Some(db_path),
-            claude_dir: Some(temp_dir.path().join("no-claude-logs")),
-            codex_dir: Some(temp_dir.path().join("no-codex-home")),
-            omarchy_dir: Some(temp_dir.path().join("no-omarchy")),
-            ..Default::default()
+            journal_path: Some(journal_path.clone()),
+            ..pinned_cli(temp_dir.path())
         };
+        let (usages, _source) = load_usage(&SourceRoots::from_cli(&cli, journal_path)).unwrap();
+        let engine = PricingEngine::load();
+        let mut usages = usages;
+        apply_estimated_pricing(&mut usages, &engine);
+        assert!(
+            usages
+                .iter()
+                .all(|u| u.provider == "opencode" || u.provider == "ollama"),
+            "a row from outside the fixtures reached the export: {:?}",
+            usages.iter().map(|u| &u.provider).collect::<Vec<_>>()
+        );
 
         print_once(&cli).unwrap();
     }
@@ -211,22 +226,21 @@ mod integration_tests {
         let temp_dir = TempDir::new().unwrap();
         let csv_path = temp_dir.path().join("export.csv");
 
-        let db_path = setup_test_db();
-
         let cli = Cli {
             csv_path: Some(csv_path.clone()),
-            once: true,
-            db_path: Some(db_path),
-            claude_dir: Some(temp_dir.path().join("no-claude-logs")),
-            codex_dir: Some(temp_dir.path().join("no-codex-home")),
-            omarchy_dir: Some(temp_dir.path().join("no-omarchy")),
-            ..Default::default()
+            ..pinned_cli(temp_dir.path())
         };
 
         print_once(&cli).unwrap();
 
         let content = fs::read_to_string(&csv_path).unwrap();
         assert!(content.contains("provider,model,category,cost_status"));
+        for line in content.lines().skip(1) {
+            assert!(
+                line.starts_with("opencode,"),
+                "a row from outside the fixture reached the export: {line}"
+            );
+        }
     }
 
     #[test]
@@ -244,14 +258,10 @@ mod integration_tests {
         let csv_path = temp_dir.path().join("export.csv");
         let cli = Cli {
             csv_path: Some(csv_path.clone()),
-            once: true,
             range: Range::All,
-            db_path: Some(setup_test_db()),
-            journal_path: Some(temp_dir.path().join("journal.db")),
             claude_dir: Some(temp_dir.path().join(".claude").join("projects")),
-            codex_dir: Some(temp_dir.path().join("no-codex-home")),
             claude_billing: crate::collector::billing::BillingSetting::Subscription,
-            ..Default::default()
+            ..pinned_cli(temp_dir.path())
         };
         print_once(&cli).unwrap();
 
