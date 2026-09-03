@@ -121,6 +121,12 @@ mod integration_tests {
         let result = crate::cli::parse_cli(["--csv", "out.csv", "--refresh-pricing"]);
         assert!(result.is_err());
 
+        let result = crate::cli::parse_cli(["--once", "--check-update"]);
+        assert!(result.is_err());
+
+        let result = crate::cli::parse_cli(["--check-update", "--refresh-pricing"]);
+        assert!(result.is_err());
+
         let result = crate::cli::parse_cli(["--statusline", "--once"]);
         assert!(result.is_err());
 

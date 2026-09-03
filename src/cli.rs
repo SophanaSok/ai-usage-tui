@@ -55,6 +55,8 @@ pub struct Cli {
     pub record_ollama: bool,
     pub refresh_zen: bool,
     pub refresh_pricing: bool,
+    /// Ask GitHub for the latest release tag, cache it for the dashboard header, and exit.
+    pub check_update: bool,
     pub refresh_interval: Duration,
     pub refresh_interval_set: bool,
     pub check_budgets: bool,
@@ -107,6 +109,7 @@ impl Default for Cli {
             record_ollama: false,
             refresh_zen: false,
             refresh_pricing: false,
+            check_update: false,
             refresh_interval: Duration::from_secs(30),
             refresh_interval_set: false,
             check_budgets: false,
@@ -286,6 +289,9 @@ struct Args {
     /// Refresh the Zen pricing table from the docs page
     #[arg(long, group = "action")]
     refresh_pricing: bool,
+    /// Ask GitHub for the latest release tag, cache the answer for the dashboard header, and exit
+    #[arg(long, group = "action")]
+    check_update: bool,
     /// Write usage and budgets as a record for Omarchy's agents panel
     #[arg(long, group = "action")]
     omarchy_record: bool,
@@ -298,6 +304,7 @@ struct Args {
 const COLLECTION_ACTIONS: &[&str] = &[
     "record_ollama",
     "refresh_zen",
+    "check_update",
     "check_budgets",
     "record_routing",
     "claude_code_hook",
@@ -417,6 +424,7 @@ impl Cli {
             record_ollama: args.record_ollama,
             refresh_zen: args.refresh_zen,
             refresh_pricing: args.refresh_pricing,
+            check_update: args.check_update,
             refresh_interval: Duration::from_secs(args.refresh_interval.unwrap_or(30)),
             refresh_interval_set: args.refresh_interval.is_some(),
             check_budgets: args.check_budgets,
@@ -654,6 +662,7 @@ mod tests {
         for action in [
             "--record-ollama",
             "--refresh-zen",
+            "--check-update",
             "--check-budgets",
             "--record-routing",
             "--claude-code-hook",

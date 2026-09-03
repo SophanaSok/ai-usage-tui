@@ -1,0 +1,13 @@
+# Enable with: systemctl --user enable --now ai-usage-update.timer
+# Daily is plenty: releases are not that frequent, and the header only ever names the tag.
+[Unit]
+Description=Daily ai-usage-tui release check
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1d
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -20,6 +20,17 @@
 //! its header. That indirection is the point: the header redraws several times a second and must
 //! never acquire a network call or a clock read (convention 5), so the check stays where it
 //! always was and only its answer travels.
+//!
+//! Two things write that cache, and nothing else does: an opted-in `--doctor`, and
+//! `--check-update`, a one-shot command in the family of `--refresh-pricing` whose only job is
+//! to ask and cache. The second exists so the answer can be kept current *without* the
+//! dashboard ever making the request: a user who wants to learn about releases without running
+//! anything by hand schedules `--check-update` (`contrib/systemd/user/` carries a daily user
+//! timer), and the consent is the schedule they installed. The alternative -- a background
+//! collector polling from inside the dashboard -- was rejected on purpose: it would make the
+//! dashboard process itself phone home on an interval, which turns "reads usage metadata,
+//! transmits nothing" into a sentence with a footnote, and the header reads the cache once at
+//! startup anyway, so an in-process check could not have reached the screen before a restart.
 
 use std::path::{Path, PathBuf};
 
@@ -192,9 +203,9 @@ pub fn is_newer(current: &str, latest: &str) -> bool {
 
 /// Ask GitHub for the tag of the latest release.
 ///
-/// The only network call in this module, reached only from `--doctor` and only when
-/// `[update] check = true`. Short timeout and no retries: this is a convenience, and a slow or
-/// unreachable network must not make a diagnostic command hang.
+/// The only network call in this module, reached from `--doctor` when `[update] check = true`
+/// and from `--check-update`, and from nowhere else. Short timeout and no retries: this is a
+/// convenience, and a slow or unreachable network must not make a diagnostic command hang.
 ///
 /// Sends no usage data, no identifiers and no query parameters -- it is a plain GET of a public
 /// endpoint. The User-Agent is required by GitHub's API and names the tool and nothing else.
@@ -253,6 +264,37 @@ pub fn write_check_cache(cached: &CachedCheck) -> anyhow::Result<PathBuf> {
     })?;
     write_check_cache_at(&path, cached)?;
     Ok(path)
+}
+
+/// What one check found, and where its answer went.
+#[derive(Debug)]
+pub struct CheckOutcome {
+    /// The release tag GitHub reported.
+    pub latest: String,
+    /// Whether it is newer than the running binary, by [`is_newer`].
+    pub newer: bool,
+    /// Where the answer was cached, or why it could not be. Kept as a result rather than
+    /// propagated: the check itself succeeded, and `--doctor` reports the two separately.
+    pub cache: anyhow::Result<PathBuf>,
+}
+
+/// Ask, compare against the running binary, and cache the answer -- the whole of what an
+/// opted-in `--doctor` and `--check-update` do, so the two cannot drift.
+///
+/// Cached either way, not only when newer: an "up to date" answer is what stops a stale cache
+/// from going on claiming an update after the upgrade that satisfied it.
+pub fn check_and_cache() -> anyhow::Result<CheckOutcome> {
+    let latest = latest_release_tag()?;
+    let newer = is_newer(env!("CARGO_PKG_VERSION"), &latest);
+    let cache = write_check_cache(&CachedCheck {
+        latest: latest.clone(),
+        checked: crate::utils::now(),
+    });
+    Ok(CheckOutcome {
+        latest,
+        newer,
+        cache,
+    })
 }
 
 /// Read the cached answer, or `None` when there is not one to read.

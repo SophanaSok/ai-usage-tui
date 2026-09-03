@@ -76,6 +76,25 @@ fn dispatch() -> Result<()> {
         ))?;
         return Ok(());
     }
+    // The explicit form of the release check: no config key gates it, because the command is
+    // the consent, exactly as it is for the two refreshes above. Fails non-zero when it cannot
+    // ask or cannot cache, so a scheduled run that achieved nothing shows as one in the journal
+    // rather than as a quiet success.
+    if cli.check_update {
+        let outcome = ai_usage_tui::update::check_and_cache()?;
+        let path = outcome.cache?;
+        print_line(&format!(
+            "Latest release {} — {}; cached at {}",
+            outcome.latest,
+            if outcome.newer {
+                "newer than this build"
+            } else {
+                "up to date"
+            },
+            path.display()
+        ))?;
+        return Ok(());
+    }
     if let Some(path) = ai_usage_tui::logging::log_path() {
         ai_usage_tui::logging::info(
             "main",
@@ -694,25 +713,26 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
     }
 
     // The only part that needs the network, and the only part that is opt-in. Off by default,
-    // exactly as `zen_pricing` is, and never reached by any command but this one.
+    // exactly as `zen_pricing` is, and reached from here only when the config says so; the
+    // explicit `--check-update` is the other caller, and there is no third.
     let check = config.update.as_ref().is_some_and(|u| u.check);
     if check {
-        match ai_usage_tui::update::latest_release_tag() {
-            Ok(tag) => {
-                if ai_usage_tui::update::is_newer(env!("CARGO_PKG_VERSION"), &tag) {
-                    let _ = writeln!(out, "  latest       {tag} — newer than this build");
-                } else {
-                    let _ = writeln!(out, "  latest       {tag} — up to date");
-                }
+        match ai_usage_tui::update::check_and_cache() {
+            Ok(outcome) => {
+                let _ = writeln!(
+                    out,
+                    "  latest       {} — {}",
+                    outcome.latest,
+                    if outcome.newer {
+                        "newer than this build"
+                    } else {
+                        "up to date"
+                    }
+                );
                 // The answer outlives this command: the dashboard reads it at startup and puts
                 // a newer release in its header. Without this the check was printed once and
                 // forgotten, so a user who never ran --doctor never learned a release existed.
-                // Cached either way -- an "up to date" answer is what stops a stale cache from
-                // going on claiming an update after the upgrade that satisfied it.
-                match ai_usage_tui::update::write_check_cache(&ai_usage_tui::update::CachedCheck {
-                    latest: tag,
-                    checked: ai_usage_tui::utils::now(),
-                }) {
+                match outcome.cache {
                     Ok(path) => {
                         let _ = writeln!(out, "  cached       {}", path.display());
                     }
@@ -730,7 +750,8 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
     } else {
         let _ = writeln!(
             out,
-            "  latest       not checked (set [update] check = true to look; needs the network)"
+            "  latest       not checked (set [update] check = true, or run --check-update; \
+             either needs the network)"
         );
         // What the dashboard is showing, which is not nothing just because the check is off: an
         // answer cached by an earlier opted-in run stays in the header until the upgrade that

@@ -1,0 +1,19 @@
+# Ask GitHub for the latest ai-usage-tui release tag and cache it for the dashboard header.
+#
+# This is the one recurring network request in the tool's vicinity, and it is made by this
+# unit, not by the dashboard: installing the timer is the consent. A plain GET of a public
+# endpoint -- no usage data, no identifiers, no query parameters. ExecStart needs an absolute
+# path: a user-session unit does not see ~/.cargo/bin. Adjust it if the binary is installed
+# elsewhere (`command -v ai-usage-tui`).
+[Unit]
+Description=Cache the latest ai-usage-tui release tag for the dashboard header
+# Wait for the network rather than fail on the first tick after a resume.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.cargo/bin/ai-usage-tui --check-update
+Nice=19
+IOSchedulingClass=idle
+CPUWeight=20

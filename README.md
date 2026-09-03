@@ -458,10 +458,18 @@ ai-usage-tui --refresh-pricing
 
 # Cache the OpenCode Zen model catalog
 ai-usage-tui --refresh-zen
+
+# Ask GitHub for the latest release tag and cache it for the dashboard header
+ai-usage-tui --check-update
 ```
 
 The model catalog is informational. Refreshing it does not create usage data.
 Automatic pricing refresh is disabled unless enabled in the collector config.
+The release check is never automatic: the dashboard only reads what an earlier
+`--check-update` or opted-in `--doctor` cached. To keep that current without
+running anything by hand, schedule the command — `contrib/systemd/user/` has a
+daily user timer — so the request is made by the schedule you installed, never
+by the dashboard process.
 
 ## Why there is no Cursor collector
 
@@ -734,7 +742,8 @@ days = 7
 # copilot_dir = "/home/user/.copilot"
 
 # Off by default: this is the only setting that would let the tool reach the network
-# outside an explicit --refresh-* command. See "Privacy and network behavior".
+# outside an explicit --refresh-* or --check-update command. See "Privacy and network
+# behavior".
 [update]
 check = false
 
@@ -947,6 +956,7 @@ does not load it automatically.
 | `--record-ollama` | Read an Ollama response from stdin and journal it |
 | `--refresh-zen` | Refresh the cached Zen model catalog and exit |
 | `--refresh-pricing` | Refresh the Zen pricing cache and exit |
+| `--check-update` | Ask GitHub for the latest release tag, cache it for the dashboard header, and exit (needs the network; the command is the consent) |
 | `--check-budgets` | Print actionable budget alerts as JSON |
 | `--webhook URL` | POST budget alerts to this URL (overrides `budgets.webhook`) |
 | `--record-routing` | Read one routing event from stdin and journal it |
@@ -1036,17 +1046,22 @@ On Windows, `USERPROFILE` (or `HOMEDRIVE` + `HOMEPATH`) stands in for `HOME`,
   `--omarchy-record` is run.
 - `--refresh-pricing`, `--refresh-zen`, and an enabled `zen_pricing`
   background collector make outbound requests to OpenCode/Zen endpoints.
-- `[update] check = true` lets `--doctor` — and only `--doctor` — ask GitHub for
-  the latest release tag. **Off by default**, never automatic, and never on the
+- Two commands ask GitHub for the latest release tag, and nothing else does:
+  `--check-update`, whose only job is to ask and cache, and `--doctor` when
+  `[update] check = true`. **Off by default**, never automatic, and never on the
   dashboard's refresh path. It is a plain GET of a public endpoint: no usage
   data, no identifiers, no query parameters. The User-Agent names the tool and
   its version because GitHub's API requires one.
 - That answer is cached in the tool's own data directory, and the dashboard
   reads it **once at startup** to show a newer release in its header. The cache
   is what keeps the header offline: it redraws several times a second and never
-  makes a request or reads a clock. Nothing else writes it, so with the check
-  off the header stays silent — except for an answer an earlier opted-in run
+  makes a request or reads a clock. Only those two commands write it, so with
+  neither run the header stays silent — except for an answer an earlier run
   already left, which `--doctor` discloses.
+- A *recurring* check is yours to schedule, not the dashboard's to make:
+  `contrib/systemd/user/ai-usage-update.timer` runs `--check-update` daily, and
+  any other scheduler can run the same command. The dashboard process itself
+  never makes the request, whatever the config says.
 - Reporting **how this copy was installed and how to upgrade it** needs no
   network at all. `--doctor` reads it off the running binary's own path, so it
   is always on and works offline.
@@ -1064,7 +1079,7 @@ Default local storage paths (when the corresponding XDG variable is unset):
 | Ollama and routing journal | `~/.local/share/ai-usage-tui/usage.db` |
 | Zen pricing cache | `~/.local/share/ai-usage-tui/zen-pricing.toml` |
 | Zen model catalog | `~/.local/share/ai-usage-tui/zen-models.json` |
-| Latest-release answer, written only by an opted-in `--doctor` | `~/.local/share/ai-usage-tui/update-check.json` |
+| Latest-release answer, written only by `--check-update` or an opted-in `--doctor` | `~/.local/share/ai-usage-tui/update-check.json` |
 | Configuration | `~/.config/ai-usage-tui/config.toml` |
 
 ## Troubleshooting

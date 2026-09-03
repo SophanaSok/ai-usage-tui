@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`--check-update`, and a timer to run it.** The release check used to be reachable only
+  from an opted-in `--doctor`, so a user who never ran that never learned a release existed.
+  `--check-update` is the check on its own: a one-shot command in the `--refresh-pricing`
+  family that asks GitHub for the latest tag, caches it where the dashboard header reads it,
+  says whether it is newer than the running build, and exits non-zero when it could neither ask
+  nor cache. No config key gates it -- the command is the consent, as it is for the refreshes.
+  `contrib/systemd/user/ai-usage-update.{service,timer}` run it daily for anyone who wants the
+  header kept current without running anything by hand. The dashboard process itself still
+  never makes the request: the periodic writer lives in the schedule the user installed, not in
+  a background collector, which is why this was deferred and how it is resolved.
+  `--doctor` and the command now share one implementation, `update::check_and_cache`, and the
+  doctor's "not checked" line names both ways of opting in.
+
 ### Fixed
 
 - **The library's export tests read the developer's own Copilot store and journal.** Their
