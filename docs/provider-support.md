@@ -220,6 +220,46 @@ override it with `--journal PATH`, the `journal` config setting, or `AI_USAGE_JO
 
 The journal collector polls every 60 seconds (configurable via the `interval` key under `[collectors.journal]`) and aggregates Ollama events into the same normalized shape.
 
+## llama.cpp, LM Studio, vLLM
+
+Everything else that serves a local model speaks OpenAI's `/v1/chat/completions` rather than
+Ollama's API, and reports its counts in a `usage` object rather than `prompt_eval_count` /
+`eval_count`. `--record-usage PROVIDER` journals those, into the same table and through the same
+collector:
+
+```sh
+curl -s http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hello"}],"stream":false}' \
+  | ai-usage-tui --record-usage llamacpp
+```
+
+The provider is an argument rather than a guess. It is what `classify` reads to decide whether a
+row is local work at a genuine zero or paid work awaiting a price, and inventing that answer for
+the user is the failure mode this project is organised against. `llamacpp`, `lmstudio`, `vllm`,
+`ollama` and `local` are recognised as local; anything else is recorded honestly as
+`UNKNOWN COST` and left to the pricing engine.
+
+Three details of the mapping are worth stating, because they are where a token count goes wrong:
+
+- **Cached prompt tokens are taken back out of the input count.** OpenAI counts them *inside*
+  `prompt_tokens`; this tool keeps `input_tokens` and `cache_read_tokens` in separate columns, so
+  `input = prompt_tokens - prompt_tokens_details.cached_tokens`. llama.cpp reports the same split
+  a second time as `timings.cache_n`, which is how it was checked.
+- **A streamed response is only recorded if it carries usage.** Servers report it in a final chunk
+  only when the request set `stream_options: {"include_usage": true}`. Without that there is
+  nothing to record, and the command fails saying so rather than journaling a row of zeros. Raw
+  server-sent events pipe in as they come: `data:` prefixes and the `[DONE]` sentinel are handled.
+- **The response's own `id` is its identity.** Replaying one is a no-op, so a wrapper that records
+  twice — or a retry — cannot inflate a total. Without an `id`, the model, timestamp and token
+  counts serve instead.
+
+`reasoning_tokens` is read from `completion_tokens_details` when the server reports it; llama.cpp
+does not, and an absent count stays zero rather than being inferred from the reasoning text.
+
+[`contrib/codecompanion/`](../contrib/codecompanion/) wires this into CodeCompanion, which is how
+llama.cpp gets driven from Neovim.
+
 ## Ollama Cloud
 
 Token counts can be observed when returned by the client response. Account quota and GPU-based Cloud billing are not currently exposed through the supported API, so the tool must not invent a dollar cost. Cloud-routed models are displayed as `CLOUD`, never as local usage.

@@ -14,7 +14,7 @@ use ai_usage_tui::{
     cli::{parse_cli, print_help},
     collector::{
         background::{Collector, CollectorHandle},
-        journal::{record_ollama, record_routing},
+        journal::{record_ollama, record_routing, record_usage},
         load_usage,
         pricing_refresh::refresh_pricing,
         registry,
@@ -106,39 +106,19 @@ fn dispatch() -> Result<()> {
         return doctor(&cli, &config);
     }
     if cli.record_ollama {
-        let path = cli
-            .journal_path
-            .clone()
-            .or_else(ai_usage_tui::utils::journal_path)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "could not determine a home directory; pass an explicit path (see --help)"
-                )
-            })?;
+        let path = journal_path(&cli)?;
         return record_ollama(&path);
     }
+    if let Some(provider) = cli.record_usage.as_deref() {
+        let path = journal_path(&cli)?;
+        return record_usage(&path, provider);
+    }
     if cli.record_routing {
-        let path = cli
-            .journal_path
-            .clone()
-            .or_else(ai_usage_tui::utils::journal_path)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "could not determine a home directory; pass an explicit path (see --help)"
-                )
-            })?;
+        let path = journal_path(&cli)?;
         return record_routing(&path);
     }
     if cli.claude_code_hook {
-        let path = cli
-            .journal_path
-            .clone()
-            .or_else(ai_usage_tui::utils::journal_path)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "could not determine a home directory; pass an explicit path (see --help)"
-                )
-            })?;
+        let path = journal_path(&cli)?;
         return ai_usage_tui::harness::claude_code::record_from_stdin(&SourceRoots::from_cli(
             &cli, path,
         ));
@@ -364,12 +344,13 @@ fn write_omarchy_records(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> R
                 ai_usage_tui::collector::opencode::load_opencode(roots.db_path.as_deref())?.0,
                 "OpenCode",
             ),
+            // Every journal row, not just Ollama's: llama.cpp and the other local servers
+            // record here too, and a filter on one provider would drop them silently. The
+            // record *id* stays `ollama` because that is the filename Omarchy's panel already
+            // reads; only what it is called on screen changes.
             _ => (
-                ai_usage_tui::collector::journal::load_journal(&roots.journal)?
-                    .into_iter()
-                    .filter(|u| u.provider.eq_ignore_ascii_case("ollama"))
-                    .collect(),
-                "Ollama",
+                ai_usage_tui::collector::journal::load_journal(&roots.journal)?,
+                "Local models",
             ),
         };
         ai_usage_tui::pricing::apply_estimated_pricing(&mut rows, &engine);
@@ -397,6 +378,20 @@ fn write_omarchy_records(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> R
 /// Every line comes from the same traversal the dashboard and the exporters use
 /// (`collector::diagnose`), so this can never describe a set of sources the rest of the tool
 /// does not actually read. It reads exactly what a normal collection reads, and writes nothing.
+/// Where the journal lives for a run: the flag, the config, then the platform default.
+///
+/// Three commands write to it, and each one used to resolve the path itself.
+fn journal_path(cli: &ai_usage_tui::cli::Cli) -> Result<std::path::PathBuf> {
+    cli.journal_path
+        .clone()
+        .or_else(ai_usage_tui::utils::journal_path)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "could not determine a home directory; pass an explicit path (see --help)"
+            )
+        })
+}
+
 fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
     use std::fmt::Write as _;
 
@@ -820,9 +815,10 @@ fn absence_hint(id: &str) -> Option<&'static str> {
             "records nothing until Gemini CLI's telemetry is on. In ~/.gemini/settings.json: ",
             r#"{"telemetry":{"enabled":true,"target":"local","outfile":"~/.gemini/telemetry.json"}}"#,
         )),
-        "journal" => {
-            Some("written by --record-ollama and --record-routing; nothing to do if unused")
-        }
+        "journal" => Some(
+            "written by --record-usage (llama.cpp, LM Studio, vLLM), --record-ollama and \
+             --record-routing; nothing to do if unused",
+        ),
         "zen_pricing" => {
             Some("optional; --refresh-pricing writes it (bundled rates work without it)")
         }

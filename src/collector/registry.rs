@@ -128,7 +128,7 @@ pub const SOURCES: &[SourceSpec] = &[
     },
     SourceSpec {
         id: crate::collector::journal::ID,
-        label: "Ollama",
+        label: "Local models",
         contributes_rows: true,
         supports_billing: false,
         default_enabled: true,

@@ -189,8 +189,9 @@ interval = 30
 
 ## Journal collector
 
-Reads the local journal database — Ollama events recorded via `--record-ollama` and routing events
-via `--record-routing`. Polls every 60 seconds by default.
+Reads the local journal database — local-model usage recorded via `--record-usage` (llama.cpp,
+LM Studio, vLLM) and `--record-ollama`, plus routing events via `--record-routing`. Polls every 60
+seconds by default.
 
 ```toml
 [collectors.journal]

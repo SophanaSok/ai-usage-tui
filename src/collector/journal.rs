@@ -159,12 +159,21 @@ fn stored(value: u64) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
 }
 
-pub fn record_ollama(path: &Path) -> Result<()> {
-    let mut input = String::new();
-    io::stdin().read_to_string(&mut input)?;
+/// The JSON values on stdin, and how many lines could not be parsed.
+///
+/// A recorder is fed either one JSON document or a stream of them, one per line. Server-sent
+/// events are the same stream with `data: ` in front and a `[DONE]` sentinel at the end, so both
+/// are stripped here rather than by every caller: it makes `curl … | ai-usage-tui --record-usage`
+/// work against a streaming endpoint without a `jq` in the middle.
+fn read_json_events(input: &str) -> Result<(Vec<Value>, usize)> {
     let mut events = Vec::new();
     let mut invalid_lines = 0;
-    for line in input.lines().filter(|line| !line.trim().is_empty()) {
+    for line in input.lines() {
+        let line = line.trim();
+        let line = line.strip_prefix("data:").map(str::trim).unwrap_or(line);
+        if line.is_empty() || line == "[DONE]" {
+            continue;
+        }
         if let Ok(json) = serde_json::from_str::<Value>(line) {
             events.push(json);
         } else {
@@ -172,11 +181,19 @@ pub fn record_ollama(path: &Path) -> Result<()> {
         }
     }
     if events.is_empty() {
-        let json: Value = serde_json::from_str(&input)?;
-        events.push(json);
+        // Not a stream, then: a pretty-printed document spread over many lines, where every one
+        // of those lines is "invalid" on its own and the count would be noise.
+        events.push(serde_json::from_str(input)?);
         invalid_lines = 0;
     }
+    Ok((events, invalid_lines))
+}
 
+/// The journal, opened for writing and migrated if it predates a column.
+///
+/// This is the only code that creates `usage.db`; the collector opens it read-only and so cannot
+/// migrate it.
+fn journal_connection(path: &Path) -> Result<Connection> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("journal path has no parent directory"))?;
@@ -213,6 +230,62 @@ pub fn record_ollama(path: &Path) -> Result<()> {
         "CREATE UNIQUE INDEX IF NOT EXISTS usage_event_event_id ON usage_event(event_id)",
         [],
     )?;
+    Ok(conn)
+}
+
+/// One completed response, on its way into the journal.
+struct JournalEvent<'a> {
+    event_id: String,
+    provider: &'a str,
+    model: String,
+    input: u64,
+    output: u64,
+    reasoning: u64,
+    cache_read: u64,
+}
+
+/// How a local or quota-billed response is costed.
+///
+/// Local work is a genuine zero and says so; Ollama Cloud is billed against a quota rather than
+/// per token, so its cost is unknown-but-not-zero. Anything else is left for the pricing engine.
+fn cost_status_for(category: Category) -> CostStatus {
+    match category {
+        Category::Local => CostStatus::Local,
+        // Billed on quota, not per token. This arm was already singled out and then
+        // collapsed into the fallback, which is how the distinction got lost.
+        Category::Cloud => CostStatus::Quota,
+        _ => CostStatus::Unavailable,
+    }
+}
+
+/// Insert one event, or do nothing if the journal already holds it.
+///
+/// `cost` is always NULL: no recorder has a price to record, and a zero here would be a
+/// fabricated one. `Category::Local` carries the zero instead, as a status.
+fn insert_event(conn: &Connection, event: &JournalEvent<'_>, created: i64) -> Result<usize> {
+    let category = classify(event.provider, &event.model);
+    Ok(conn.execute(
+        "INSERT OR IGNORE INTO usage_event (event_id, provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created) VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8, ?9, 0, NULL, ?10)",
+        params![
+            event.event_id,
+            event.provider,
+            event.model,
+            category.label(),
+            cost_status_for(category).label(),
+            stored(event.input),
+            stored(event.output),
+            stored(event.reasoning),
+            stored(event.cache_read),
+            created,
+        ],
+    )?)
+}
+
+pub fn record_ollama(path: &Path) -> Result<()> {
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input)?;
+    let (events, invalid_lines) = read_json_events(&input)?;
+    let conn = journal_connection(path)?;
 
     let mut recorded = 0;
     let streaming = events.len() > 1;
@@ -246,14 +319,6 @@ pub fn record_ollama(path: &Path) -> Result<()> {
             continue;
         }
         let model = string(&json, &["model"]).unwrap_or_else(|| "unknown".to_string());
-        let category = classify("ollama", &model);
-        let cost_status = match category {
-            Category::Local => CostStatus::Local,
-            // Billed on quota, not per token. This arm was already singled out and then
-            // collapsed into the fallback, which is how the distinction got lost.
-            Category::Cloud => CostStatus::Quota,
-            _ => CostStatus::Unavailable,
-        };
         let created_at = string(&json, &["created_at"]);
         let event_id = format!(
             "ollama:{}:{}:{}:{}:{}",
@@ -267,19 +332,19 @@ pub fn record_ollama(path: &Path) -> Result<()> {
             .as_deref()
             .and_then(parse_created_at)
             .unwrap_or_else(now);
-        let inserted = conn.execute(
-            "INSERT OR IGNORE INTO usage_event (event_id, provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created) VALUES (?1, 'ollama', ?2, ?3, ?4, 1, ?5, ?6, 0, 0, 0, NULL, ?7)",
-            params![
+        recorded += insert_event(
+            &conn,
+            &JournalEvent {
                 event_id,
+                provider: "ollama",
                 model,
-                category.label(),
-                cost_status.label(),
-                stored(number(&json, &["prompt_eval_count"])),
-                stored(number(&json, &["eval_count"])),
-                created,
-            ],
+                input: number(&json, &["prompt_eval_count"]),
+                output: number(&json, &["eval_count"]),
+                reasoning: 0,
+                cache_read: 0,
+            },
+            created,
         )?;
-        recorded += inserted;
     }
     if invalid_lines > 0 {
         eprintln!("Skipped {} malformed Ollama JSON line(s)", invalid_lines);
@@ -290,6 +355,92 @@ pub fn record_ollama(path: &Path) -> Result<()> {
         path.display()
     );
     Ok(())
+}
+
+/// Journal one completed OpenAI-compatible response, read from stdin.
+///
+/// This is the path for every local server that speaks `/v1/chat/completions` — llama.cpp's
+/// `llama-server`, LM Studio, vLLM — none of which Ollama's format covers. `provider` is required
+/// rather than guessed: it is what `classify` reads to decide LOCAL against UNKNOWN COST, and a
+/// tool that invents that answer is the thing this project exists not to be.
+///
+/// Only a response that actually carries `usage` is recorded. A streamed response carries it only
+/// when the client asked with `stream_options: {"include_usage": true}`, and the honest outcome
+/// when it did not is a loud error, not a row of zeros.
+pub fn record_usage(path: &Path, provider: &str) -> Result<()> {
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input)?;
+    let (events, invalid_lines) = read_json_events(&input)?;
+    let recorded = record_usage_events(path, provider, &events)?;
+
+    if invalid_lines > 0 {
+        eprintln!("Skipped {invalid_lines} malformed JSON line(s)");
+    }
+    println!(
+        "Recorded {} {} usage event(s) in {}",
+        recorded,
+        provider,
+        path.display()
+    );
+    Ok(())
+}
+
+/// The same recording, from values already parsed: the half that has no stdin to read and so can
+/// be tested directly.
+pub(crate) fn record_usage_events(path: &Path, provider: &str, events: &[Value]) -> Result<usize> {
+    if provider.trim().is_empty() {
+        return Err(anyhow::anyhow!(
+            "--record-usage needs a provider to record under, e.g. llamacpp"
+        ));
+    }
+    // The last event that carries usage: a stream's totals arrive in a final chunk, and a
+    // non-streamed reply is the only event there is.
+    let Some(json) = events
+        .iter()
+        .rev()
+        .find(|event| event.get("usage").is_some_and(|usage| !usage.is_null()))
+    else {
+        return Err(anyhow::anyhow!(
+            "response carried no usage object; journal only completed responses. A streamed \
+             response reports usage only when the request set stream_options.include_usage"
+        ));
+    };
+    let usage = &json["usage"];
+
+    let model = string(json, &["model"]).unwrap_or_else(|| "unknown".to_string());
+    // OpenAI counts cached tokens inside `prompt_tokens`; the journal keeps the two apart, so
+    // the cached share has to come back out or the row bills the same tokens twice. llama.cpp
+    // reports the same split a second time as `timings.cache_n`.
+    let prompt = number(usage, &["prompt_tokens"]);
+    let cache_read = number(&usage["prompt_tokens_details"], &["cached_tokens"]);
+    let created = match number(json, &["created"]) {
+        0 => now(),
+        seconds => crate::collector::opencode::timestamp_seconds(seconds as i64),
+    };
+    // `id` is the server's own idempotency key. Without one, the shape of the response has to
+    // serve as its identity, exactly as the Ollama path does.
+    let event_id = match string(json, &["id"]) {
+        Some(id) => format!("{provider}:{model}:{id}"),
+        None => format!(
+            "{provider}:{model}:{created}:{prompt}:{}",
+            number(usage, &["completion_tokens"])
+        ),
+    };
+    let conn = journal_connection(path)?;
+    let recorded = insert_event(
+        &conn,
+        &JournalEvent {
+            event_id,
+            provider,
+            model,
+            input: prompt.saturating_sub(cache_read),
+            output: number(usage, &["completion_tokens"]),
+            reasoning: number(&usage["completion_tokens_details"], &["reasoning_tokens"]),
+            cache_read,
+        },
+        created,
+    )?;
+    Ok(recorded)
 }
 
 pub fn load_routing(path: &Path) -> Result<Vec<RoutingEvent>> {
@@ -1067,5 +1218,132 @@ mod tests {
             )
             .expect("query");
         assert!(indexed, "the identity index was not created by the rebuild");
+    }
+
+    /// Both fixtures are real captures from a `llama-server` on this machine, not hand-written
+    /// shapes: the cached-token split below is only interesting because a real server reports it.
+    fn fixture(name: &str) -> Vec<Value> {
+        let path =
+            std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures")).join(name);
+        let text = fs::read_to_string(path).expect("fixture");
+        read_json_events(&text).expect("parse").0
+    }
+
+    #[test]
+    fn a_cached_prompt_is_not_billed_twice() {
+        // OpenAI counts cached tokens inside `prompt_tokens`; the journal keeps them apart. Add
+        // the cached share to `input` as well and this row reports 11 input tokens for 4.
+        let scratch = scratch_journal("llamacpp-cache");
+        let journal = scratch.journal.clone();
+        assert_eq!(
+            record_usage_events(&journal, "llamacpp", &fixture("llamacpp_chat.json"))
+                .expect("record"),
+            1
+        );
+
+        let rows = load_journal(&journal).expect("load");
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.provider, "llamacpp");
+        assert_eq!(row.model, "qwen3.6-35b-a3b");
+        assert_eq!(
+            row.input, 4,
+            "11 prompt tokens less the 7 the server had cached"
+        );
+        assert_eq!(row.cache_read, 7);
+        assert_eq!(row.output, 8);
+        assert_eq!(row.reasoning, 0, "llama.cpp reports no reasoning count");
+        assert_eq!(row.created, 1_789_525_959);
+    }
+
+    #[test]
+    fn a_local_server_costs_a_genuine_zero_and_says_so() {
+        let scratch = scratch_journal("llamacpp-local");
+        let journal = scratch.journal.clone();
+        record_usage_events(&journal, "llamacpp", &fixture("llamacpp_chat.json")).expect("record");
+
+        let rows = load_journal(&journal).expect("load");
+        assert_eq!(rows[0].category, Category::Local);
+        assert_eq!(rows[0].cost_status, CostStatus::Local);
+        assert_eq!(
+            rows[0].cost, None,
+            "a recorded zero would be an invented price"
+        );
+    }
+
+    #[test]
+    fn a_stream_is_recorded_from_its_final_chunk() {
+        // Server-sent events, `data:` prefixes and `[DONE]` included, exactly as curl writes them.
+        let scratch = scratch_journal("llamacpp-stream");
+        let journal = scratch.journal.clone();
+        let events = fixture("llamacpp_stream.sse");
+        assert!(
+            events.len() > 1,
+            "the fixture is a stream, not one document"
+        );
+        assert_eq!(
+            record_usage_events(&journal, "llamacpp", &events).expect("record"),
+            1,
+            "one response, however many chunks carried it"
+        );
+
+        let rows = load_journal(&journal).expect("load");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].input, 13);
+        assert_eq!(rows[0].output, 24);
+        assert_eq!(rows[0].cache_read, 0);
+    }
+
+    #[test]
+    fn replaying_a_response_records_it_once() {
+        let scratch = scratch_journal("llamacpp-replay");
+        let journal = scratch.journal.clone();
+        let events = fixture("llamacpp_chat.json");
+        record_usage_events(&journal, "llamacpp", &events).expect("record");
+        assert_eq!(
+            record_usage_events(&journal, "llamacpp", &events).expect("record"),
+            0,
+            "the server's own id keys the event; a wrapper that records twice must not inflate it"
+        );
+        assert_eq!(load_journal(&journal).expect("load").len(), 1);
+    }
+
+    #[test]
+    fn a_response_without_usage_is_refused_rather_than_recorded_as_zero() {
+        // What a streamed request gets when it did not ask for stream_options.include_usage.
+        let scratch = scratch_journal("llamacpp-no-usage");
+        let journal = scratch.journal.clone();
+        let chunk = json!({"model": "qwen3.6-35b-a3b", "choices": [{"delta": {"content": "hi"}}]});
+        let error = record_usage_events(&journal, "llamacpp", &[chunk])
+            .expect_err("a chunk with no usage is not a completed response");
+        assert!(
+            error.to_string().contains("include_usage"),
+            "the error has to name the flag that fixes it: {error}"
+        );
+        assert!(load_journal(&journal).expect("load").is_empty());
+    }
+
+    #[test]
+    fn an_empty_provider_is_refused() {
+        // `--record-usage=` would otherwise file the row under "", which classifies as neither
+        // local nor priced and reads as a mystery in every panel.
+        let scratch = scratch_journal("empty-provider");
+        let journal = scratch.journal.clone();
+        let error = record_usage_events(&journal, "  ", &fixture("llamacpp_chat.json"))
+            .expect_err("a blank provider is not a provider");
+        assert!(error.to_string().contains("provider"), "{error}");
+    }
+
+    #[test]
+    fn a_provider_that_is_not_local_keeps_its_cost_unknown() {
+        // The recorder is provider-agnostic on purpose, and only `classify` decides what a
+        // provider means. A hosted one must not inherit the local zero.
+        let scratch = scratch_journal("hosted");
+        let journal = scratch.journal.clone();
+        record_usage_events(&journal, "openrouter", &fixture("llamacpp_chat.json"))
+            .expect("record");
+        let rows = load_journal(&journal).expect("load");
+        assert_eq!(rows[0].cost_status, CostStatus::Unavailable);
+        assert_eq!(rows[0].cost, None);
     }
 }

@@ -1,6 +1,6 @@
 # ai-usage-tui
 
-> Terminal dashboard that measures what each AI coding model actually costs per passing test — routing, escalation and budget analytics across Claude Code, Codex CLI, GitHub Copilot, Gemini CLI, OpenCode and Ollama, where an unknown cost stays unknown instead of rendering as $0.00. Live TUI or JSON/CSV.
+> Terminal dashboard that measures what each AI coding model actually costs per passing test — routing, escalation and budget analytics across Claude Code, Codex CLI, GitHub Copilot, Gemini CLI, OpenCode and Local models, where an unknown cost stays unknown instead of rendering as $0.00. Live TUI or JSON/CSV.
 
 [![CI](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/ci.yml)
 [![Release](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/release.yml/badge.svg)](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/release.yml)
@@ -16,7 +16,8 @@ Claude Code hook that turns real test runs into measured pass/fail events.
 
 It gets there by reading OpenCode's local usage database, Claude Code's session
 logs, Codex CLI's session logs, GitHub Copilot's CLI store and Gemini CLI's
-telemetry log, and can journal completed Ollama responses — presenting the combined
+telemetry log, and can journal completed responses from Local models — Ollama,
+llama.cpp, LM Studio — presenting the combined
 data in an interactive TUI or as JSON, CSV, or plain text. It tracks requests,
 input/output/reasoning/cache tokens, cost provenance, budgets, and model-routing
 events.
@@ -55,7 +56,7 @@ project, or spend appears in any image here.*
 
 - Routing aggregates: cost per passing test, with retries, escalations, and review defects per model
 - Derived escalations: which sessions reached for a pricier model, and what it cost afterwards
-- Usage grouped by provider and model, across OpenCode, Claude Code, Codex CLI, GitHub Copilot, Gemini CLI, and Ollama
+- Usage grouped by provider and model, across OpenCode, Claude Code, Codex CLI, GitHub Copilot, Gemini CLI, and Local models
 - Input, output, reasoning, cache-read, and cache-write tokens
 - Today (local calendar day), trailing 7-day, trailing 30-day, all-time, or custom-day ranges
 - `LOCAL`, `CLOUD`, `FREE`, `PAID`, and `UNKNOWN` classifications
@@ -301,7 +302,7 @@ cargo build --release --locked
 ## Data sources
 
 ```text
-OpenCode DB / Claude Code logs / Codex logs / Copilot store / Gemini telemetry / Ollama journal
+OpenCode DB / Claude Code logs / Codex logs / Copilot store / Gemini telemetry / Local-model journal
         -> one source registry -> background collectors -> TUI
                                \-> one-shot read -> JSON / CSV / budgets
 ```
@@ -414,16 +415,46 @@ tool never edits Gemini's settings itself. Point elsewhere with
 read from there. Only the `api_response` records are parsed, and only their
 token counts, model, timestamps and identifiers.
 
-### Ollama
+### Local models
 
-Opt-in. Pipe a completed response — single or streamed — into
-`--record-ollama`, which stores its token counts in the local journal:
+Opt-in, and the one source this tool is given rather than finding: a local
+server keeps no usage store to read, so a completed response has to be piped
+into the journal.
+
+Ollama speaks its own format — pipe a completed response, single or streamed,
+into `--record-ollama`:
 
 ```sh
 curl -s http://localhost:11434/api/generate \
   -d '{"model":"qwen3-coder:30b","prompt":"hello","stream":false}' \
   | ai-usage-tui --record-ollama
 ```
+
+Everything else that speaks OpenAI's `/v1/chat/completions` — llama.cpp's
+`llama-server`, LM Studio, vLLM — goes through `--record-usage PROVIDER`, which
+records the response under the provider you name:
+
+```sh
+curl -s http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hello"}],"stream":false}' \
+  | ai-usage-tui --record-usage llamacpp
+```
+
+The provider is a required argument, not a guess: it is what decides whether the
+row is local work at a genuine zero or paid work at a price this tool would then
+have to look up.
+
+A streamed response reports its token counts only when the request asked for
+them with `stream_options: {"include_usage": true}` — without that, nothing is
+recorded and the command says so, rather than journaling a row of zeros. Raw
+server-sent events pipe in directly; the `data:` prefixes and `[DONE]` are
+handled.
+
+Replaying the same response is a no-op — each one is keyed by the server's own
+id — so a wrapper that records twice cannot inflate a total.
+[`contrib/codecompanion/`](contrib/codecompanion/) wires this into
+CodeCompanion, which drives llama.cpp from Neovim.
 
 The journal defaults to:
 
@@ -954,6 +985,7 @@ does not load it automatically.
 | `--model NAME` | Filter by exact model name, ignoring case |
 | `--refresh-interval N` | Refresh the TUI every `N` seconds |
 | `--record-ollama` | Read an Ollama response from stdin and journal it |
+| `--record-usage PROVIDER` | Read an OpenAI-compatible response from stdin and journal it under PROVIDER |
 | `--refresh-zen` | Refresh the cached Zen model catalog and exit |
 | `--refresh-pricing` | Refresh the Zen pricing cache and exit |
 | `--check-update` | Ask GitHub for the latest release tag, cache it for the dashboard header, and exit (needs the network; the command is the consent) |
@@ -1101,8 +1133,12 @@ SOURCES
 
 - **No OpenCode rows:** check that the database exists at the displayed source
   path, or pass `--db PATH`.
-- **No Ollama rows:** first pipe a completed response containing `done: true`
-  through `--record-ollama`, then verify the journal path.
+- **No local-model rows:** nothing is recorded until a completed response is
+  piped in. For Ollama that means one containing `done: true` through
+  `--record-ollama`; for llama.cpp, LM Studio or vLLM, one carrying a `usage`
+  object through `--record-usage PROVIDER`. A streamed response only carries
+  `usage` when the request set `stream_options: {"include_usage": true}`. Then
+  verify the journal path.
 - **No cost shown:** the model may be local, free, absent from pricing data, or
   missing authoritative cost metadata. `--doctor`'s `PRICING` section says
   whether a refreshed cache is in use and why not if not; try
