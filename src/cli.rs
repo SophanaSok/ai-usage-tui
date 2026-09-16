@@ -53,6 +53,8 @@ pub struct Cli {
     pub json: bool,
     pub csv_path: Option<PathBuf>,
     pub record_ollama: bool,
+    /// The provider to journal an OpenAI-compatible response under.
+    pub record_usage: Option<String>,
     pub refresh_zen: bool,
     pub refresh_pricing: bool,
     /// Ask GitHub for the latest release tag, cache it for the dashboard header, and exit.
@@ -107,6 +109,7 @@ impl Default for Cli {
             json: false,
             csv_path: None,
             record_ollama: false,
+            record_usage: None,
             refresh_zen: false,
             refresh_pricing: false,
             check_update: false,
@@ -274,6 +277,9 @@ struct Args {
     /// Read an Ollama response JSON from stdin and journal it
     #[arg(long, group = "action")]
     record_ollama: bool,
+    /// Read an OpenAI-compatible response JSON from stdin and journal it under PROVIDER
+    #[arg(long, value_name = "PROVIDER", group = "action")]
+    record_usage: Option<String>,
     /// Read a routing event JSON from stdin and journal it
     #[arg(long, group = "action")]
     record_routing: bool,
@@ -303,6 +309,7 @@ struct Args {
 /// always been accepted and still is.
 const COLLECTION_ACTIONS: &[&str] = &[
     "record_ollama",
+    "record_usage",
     "refresh_zen",
     "check_update",
     "check_budgets",
@@ -422,6 +429,7 @@ impl Cli {
             json: args.json,
             csv_path: args.csv,
             record_ollama: args.record_ollama,
+            record_usage: args.record_usage,
             refresh_zen: args.refresh_zen,
             refresh_pricing: args.refresh_pricing,
             check_update: args.check_update,

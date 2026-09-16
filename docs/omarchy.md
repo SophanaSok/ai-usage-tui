@@ -78,7 +78,9 @@ balance_budget = "global/monthly" # which budget, as <scope>/<period>
 ```
 
 - `opencode` is every OpenCode row, all providers, priced; `ollama` is the
-  journal's Ollama rows. `claude`, `codex` and `fireworks` are refused: those
+  journal's rows — every local model, not only Ollama's, since llama.cpp and the
+  other local servers record there too. The record id stays `ollama` because it is
+  the filename Omarchy's panel already reads; it is labelled "Local models" on screen. `claude`, `codex` and `fireworks` are refused: those
   are Omarchy's own files and a record so named would overwrite them.
 - Claude Code and Codex rows are never included — Omarchy's own tabs cover
   those logs. Omarchy's `claude` and `codex` collectors also fold OpenCode's

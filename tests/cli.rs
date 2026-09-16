@@ -285,6 +285,115 @@ fn recording_an_ollama_response_round_trips_through_the_journal_and_is_idempoten
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The other half of the journal's write path: every local server that is not Ollama.
+///
+/// Both fixtures are real captures from `llama-server` on an author's machine. Until v0.16.0 the
+/// only recorder spoke Ollama's format and hardcoded its provider, so a machine running llama.cpp
+/// — the common case for a 16GB card — saw an empty dashboard and no hint as to why.
+#[test]
+fn recording_an_openai_compatible_response_round_trips_and_splits_cached_tokens() {
+    let dir = scratch("llamacpp-journal");
+    let journal = dir.join("usage.db");
+    let fixture = format!(
+        "{}/tests/fixtures/llamacpp_chat.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+
+    record(&journal, &fixture, "--record-usage=llamacpp");
+    let rows = journal_rows(&journal);
+    assert_eq!(
+        rows.len(),
+        1,
+        "one response should journal one row: {rows:?}"
+    );
+    assert_eq!(rows[0]["provider"], "llamacpp");
+    assert_eq!(rows[0]["model"], "qwen3.6-35b-a3b");
+    // `prompt_tokens` was 11, of which the server had cached 7.
+    assert_eq!(rows[0]["input_tokens"], 4, "{rows:?}");
+    assert_eq!(rows[0]["cache_read_tokens"], 7, "{rows:?}");
+    assert_eq!(rows[0]["output_tokens"], 8);
+    assert_eq!(rows[0]["category"], "LOCAL");
+    assert_eq!(rows[0]["cost_status"], "local");
+
+    record(&journal, &fixture, "--record-usage=llamacpp");
+    assert_eq!(
+        journal_rows(&journal).len(),
+        1,
+        "recording the same response twice double-counted it"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Raw server-sent events, `data:` prefixes and `[DONE]` included, pipe in without a `jq`.
+#[test]
+fn a_streamed_openai_compatible_response_journals_once_from_its_usage_chunk() {
+    let dir = scratch("llamacpp-stream");
+    let journal = dir.join("usage.db");
+    record(
+        &journal,
+        &format!(
+            "{}/tests/fixtures/llamacpp_stream.sse",
+            env!("CARGO_MANIFEST_DIR")
+        ),
+        "--record-usage=llamacpp",
+    );
+
+    let rows = journal_rows(&journal);
+    assert_eq!(
+        rows.len(),
+        1,
+        "a stream should journal one row, not one per chunk: {rows:?}"
+    );
+    assert_eq!(rows[0]["output_tokens"], 24, "{rows:?}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A streamed response that never carried usage is an error, not a row of zeros.
+#[test]
+fn a_response_without_usage_fails_loudly() {
+    let dir = scratch("llamacpp-no-usage");
+    let journal = dir.join("usage.db");
+    let chunk = dir.join("chunk.json");
+    std::fs::write(
+        &chunk,
+        br#"{"model":"m","choices":[{"delta":{"content":"hi"}}]}"#,
+    )
+    .expect("write chunk");
+
+    let output = crate::bin()
+        .arg("--record-usage=llamacpp")
+        .arg("--journal")
+        .arg(&journal)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            child
+                .stdin
+                .take()
+                .expect("stdin")
+                .write_all(&std::fs::read(&chunk).expect("read"))?;
+            child.wait_with_output()
+        })
+        .expect("run");
+    assert!(
+        !output.status.success(),
+        "a response with no usage must fail"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("include_usage"),
+        "the error must name the flag that fixes it: {stderr}"
+    );
+    assert!(!journal.exists(), "nothing should have been written");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A streamed response arrives as many JSON lines; only the final one carries the totals.
 #[test]
 fn a_streamed_ollama_response_journals_once_from_its_final_line() {

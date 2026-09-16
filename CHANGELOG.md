@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`--record-usage PROVIDER`, so llama.cpp usage stops being invisible.** The journal's only
+  write path spoke Ollama's API and hardcoded `provider = 'ollama'` in its INSERT, so a machine
+  serving its models through llama.cpp's `llama-server` -- or LM Studio, or vLLM, none of which
+  speak that format -- had no way in at all. `llamacpp` appeared in this codebase in exactly one
+  place, the `LOCAL_HOSTS` list that *labels* such a row once some collector has produced one,
+  and no collector ever did: the usage reached the dashboard only when OpenCode happened to be
+  proxying it, and `--doctor` reported `journal  found  0 rows` without hinting why. The new
+  command reads a completed OpenAI-compatible response from stdin and journals it under a
+  provider you name. Three things it will not do: it will not guess the provider, because that
+  is what decides local-at-a-genuine-zero against a price it would then have to look up; it will
+  not count cached prompt tokens twice, since OpenAI reports them *inside* `prompt_tokens` while
+  this tool keeps `input_tokens` and `cache_read_tokens` apart; and it will not journal a row of
+  zeros for a streamed response that carried no `usage`, which is what a request that forgot
+  `stream_options.include_usage` gets -- it fails and names the flag instead. Raw server-sent
+  events pipe in directly, and the response's own id keys the row, so a replay is a no-op.
+- **`contrib/codecompanion/`**, which wires that into CodeCompanion -- the way llama.cpp gets
+  driven from Neovim. It asks for usage on streamed requests and pipes the chunk that carries it
+  into `--record-usage`, fire-and-forget, so a missing binary can never interrupt a chat.
+
+### Changed
+
+- **The `journal` source is now "Local models", not "Ollama".** It was never only Ollama's -- it
+  is the local-model journal, and it now has a second recorder feeding it. The Omarchy record
+  still writes under the id `ollama`, which is the filename Omarchy's panel reads, but no longer
+  filters the journal down to rows whose provider is literally `ollama`: that filter would have
+  silently dropped every llama.cpp row from the panel.
+
 ## [0.15.0] - 2026-09-03
 
 ### Added
