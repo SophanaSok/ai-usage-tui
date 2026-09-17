@@ -797,7 +797,7 @@ What the model reads — token counts, model names, costs, project paths and ses
 whichever provider it runs on, as anything in its context does. Your prompts and transcripts are
 never read, and `ai-usage-tui` itself still sends nothing anywhere.
 
-### Let an agent set it up
+### Let an agent set it up, build on it, or extend it
 
 Reading is the default; the same flag takes a topic for the rest. `ai-usage-tui --agent-guide setup`
 is what an agent needs to configure the tool for you — add a budget, switch a source off, install
@@ -810,6 +810,20 @@ change, after showing it to you, and `--doctor` says whether it took. The guide 
 commands write a file or use the network (nothing does by default), that `--print-config`'s
 sample budgets are live and must not be saved whole, and that a budget counts dollars — so on a
 subscription plan it watches nothing, and the agent should tell you that rather than set one up.
+
+`--agent-guide recipes` is for building on the data: a Waybar module showing the fullest plan
+window, a guard that stops a batch job before a rate limit, a budget alert on a schedule, a weekly
+digest, a per-project table, rows into SQLite. It says what is stable enough to script against
+(the JSON and CSV outputs, exit codes, flags) and what is not (anything meant for eyes), and
+carries the reading rules into code — in `jq`, `.cost // 0` turns an unknown into a zero nobody
+can see. Every recipe that needs only `jq` is run by the test suite, as written, against fixture
+data.
+
+`--agent-guide extend` is for what the tool lacks. Usage from a tool it does not read goes through
+[`--record-event`](#local-models) and a few lines of `jq`, with no change here; the guide has the
+keys, a worked adapter, and the rule that outranks the request — if the tool does not measure its
+token counts, there is no row, and saying so is the answer. For a change to the source it sends
+the agent to this repository's `AGENTS.md` and `CONTRIBUTING.md`, or to the issue template.
 
 You do not need to mention any of this when you ask. The skill and the pasted block only ever say
 "run `--agent-guide`"; that guide lists the topics, so an agent finds them on a version that has
@@ -1125,7 +1139,7 @@ does not load it automatically.
 | `--man` | Print the man page in roff and exit |
 | `--print-config` | Print the annotated example `config.toml` and exit (its budgets are samples to edit) |
 | `--schema` | Print a JSON glossary of every key and every enum value in the JSON outputs, with its meaning, and exit |
-| `--agent-guide [TOPIC]` | Print a guide for LLM agents and exit. Bare, or `read`: how to read the JSON outputs, the rules for `null`, `quota` and floors, and what to look for. `setup`: how to configure the tool on someone's behalf — config and budgets, the Claude Code hook and status line, timers, and what each command writes or sends |
+| `--agent-guide [TOPIC]` | Print a guide for LLM agents and exit. Bare, or `read`: how to read the JSON outputs, the rules for `null`, `quota` and floors, and what to look for. `setup`: how to configure the tool on someone's behalf — config and budgets, the Claude Code hook and status line, timers, and what each command writes or sends. `recipes`: scripts over the JSON and CSV outputs — a status-bar module, alerts, a digest, a report. `extend`: covering a tool it does not read, through `--record-event`, or a change to the source |
 | `--db PATH` | Override the OpenCode database path |
 | `--journal PATH` | Override the local journal path |
 | `--claude-dir PATH` | Override the Claude Code session-log directory |

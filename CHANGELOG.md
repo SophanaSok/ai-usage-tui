@@ -4,6 +4,21 @@
 
 ### Added
 
+- **`--agent-guide recipes` and `--agent-guide extend`: an agent can build on the data, and cover
+  what the tool lacks.** `recipes` says what is stable enough to script against and what is not,
+  carries the reading rules into code (`.cost // 0` in `jq` turns an unknown into a zero nobody can
+  see; SQLite sums an empty CSV field as `0`), and gives worked scripts: a Waybar module, a guard
+  that exits non-zero before a plan window runs out, a budget alert, a weekly Markdown digest, a
+  per-project table, rows into SQLite. Every recipe that needs only `jq` is *run* by the test
+  suite, as written, through a shim that pins every source -- a recipe that fails on real output,
+  or prints `null` where it promised a value, fails the build. `extend` routes a request to the
+  cheapest thing that answers it: an adapter into `--record-event` (keys, a worked example, why
+  re-sending the whole log is the right design), a script, or a change to the source, with the
+  rule that outranks all of them -- a tool that does not measure its token counts gets no row.
+  The shipped skill and the pasted `AGENTS.md` block are broadened to set-up, build and extend
+  requests, and still name no topic: a test refuses one, because an installed skill outlives the
+  binary and an older binary rejects a topic.
+
 - **`--agent-guide setup`: an agent can set the tool up, not only read it.** `--agent-guide` takes
   an optional topic. Bare it prints what it always has, byte for byte -- every installed skill and
   pasted `AGENTS.md` block says "run `--agent-guide`", and they outlive the binary they were

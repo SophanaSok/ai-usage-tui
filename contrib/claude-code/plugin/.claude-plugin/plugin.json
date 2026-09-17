@@ -1,6 +1,6 @@
 {
   "name": "ai-usage",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Ask Claude about your AI token usage, cost, cache efficiency and model routing, read locally by the ai-usage-tui CLI.",
   "author": {
     "name": "Sophana Sok"

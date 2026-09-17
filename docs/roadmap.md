@@ -287,6 +287,37 @@ and an `AGENTS.md` snippet. Two decisions worth keeping:
   version. The summary document is what one would serve; revisit if a client without shell access
   (Claude Desktop, an IDE assistant) turns out to matter.
 
+**Extendable by an LLM -- added 2026-09-17, after v0.18.0.** The readable surface was read-only:
+asked to "track my other tool", "set me a budget" or "put it in my bar", an agent had nothing to
+go on. Shipped in answer, in five pull requests (#117--#121): `--record-event`
+(`src/collector/journal.rs`: usage in this tool's own terms, one JSON object per line, with
+project, session, cache writes, a reported cost or subscription billing -- the way in for any
+tool with no collector); `--agent-guide [TOPIC]` with three embedded guides beside the reading
+one (`setup`, `recipes`, `extend`); a contributor's guide that says what a new source really
+takes, `AGENTS.md`'s "Extending it" and a project skill; and guards that ask the registry, the
+bindings table and the parser rather than a list kept in the test. Decisions worth keeping:
+
+- **Both decisions above still hold, and have a corollary: the tool writes into no other
+  program's files.** The agent edits `~/.claude/settings.json`; the guide tells it how to merge
+  and how to verify. `--install-hook` (item 4 below) is still open, and is a different thing: a
+  command a *person* runs.
+- **Nothing installed names a topic.** A copied skill or pasted block outlives its binary, and a
+  release before topics rejects one. The default guide lists them; a test refuses one anywhere
+  else.
+- **An embedded guide carries what it refers to.** No channel ships `contrib/`, so the hook JSON
+  and the units are inside `--agent-guide setup`, held to the files byte for byte.
+- **`--record-event` makes "no measurement, no row" a convention for adapters, where for
+  collectors it is code.** It refuses an event without its counts and any `cost_status` but
+  `reported`, and cannot stop a script inventing counts upstream. The guides say so in those words.
+- **A recipe is code, so it is run.** Every `jq`-only block in the guides executes in the test
+  suite through a shim that pins every source. What that cannot catch -- a misspelt key whose
+  `null` the recipe handles politely -- the schema guard covers from the other side.
+- **Checked end to end, once, against a real account**, with Sonnet, the installed skill and
+  nothing else: asked for a budget it read `setup`, checked billing and declined to set one that
+  would count nothing on a subscription; asked to track a tool it read `extend`, checked `sources`
+  for an overlap and wrote an adapter keyed on the log's own ids; asked for a Waybar module it
+  adapted the recipe and said the thresholds were the user's.
+
 **Found and not yet done, ranked.** Each has its evidence; none blocks the contract above.
 
 1. **Resolved. Unknown stays unknown, in the four places it did not.** An absent token field
