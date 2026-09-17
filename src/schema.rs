@@ -39,14 +39,17 @@ pub fn unknown(flag: &str, document: &Value) -> Vec<String> {
 
 /// `node`'s own keys merged over its shape's, if it names one.
 fn keys_of<'a>(glossary: &'a Value, node: &'a Value) -> Vec<(&'a String, &'a Value)> {
+    // Own keys first: `walk` takes the first match, so this order is what "merged over" means.
+    // They were pushed second, and a node redefining one of its shape's keys -- to type it
+    // differently for one document -- would have been checked against the shape's definition.
     let mut keys = Vec::new();
+    if let Some(own) = node.get("keys").and_then(Value::as_object) {
+        keys.extend(own.iter());
+    }
     if let Some(shape) = node.get("shape").and_then(Value::as_str) {
         if let Some(shared) = glossary["shapes"][shape]["keys"].as_object() {
             keys.extend(shared.iter());
         }
-    }
-    if let Some(own) = node.get("keys").and_then(Value::as_object) {
-        keys.extend(own.iter());
     }
     keys
 }
@@ -266,6 +269,28 @@ mod tests {
             "{problems:?}"
         );
         assert_eq!(problems.len(), 3, "{problems:?}");
+    }
+
+    /// A node's own definition of a key wins over its shape's.
+    #[test]
+    fn a_nodes_own_keys_override_its_shapes() {
+        let glossary = json!({
+            "shapes": { "s": { "keys": { "cost": { "type": "number" } } } },
+        });
+        let node = json!({ "shape": "s", "keys": { "cost": { "type": "number|null" } } });
+        let mut problems = Vec::new();
+        walk(
+            &glossary,
+            &node,
+            &json!({ "cost": null }),
+            "doc",
+            false,
+            &mut problems,
+        );
+        assert!(
+            problems.is_empty(),
+            "the shape's `number` won: {problems:?}"
+        );
     }
 
     #[test]
