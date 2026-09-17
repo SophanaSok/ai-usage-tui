@@ -164,29 +164,41 @@ impl PricingEngine {
     /// model must not be able to delete pricing that shipped in the binary, and a cache that
     /// fails to parse must not be able to silently zero out every price.
     pub fn load() -> Self {
+        Self::load_from(
+            pricing_cache_path().as_deref(),
+            chrono::Utc::now().date_naive(),
+        )
+    }
+
+    /// `load`, with the cache path and the date passed in.
+    ///
+    /// One path to the end, with no early return: the age check runs whatever happened to the
+    /// cache. It was first written after two of them -- "no data directory" and "no cache file"
+    /// -- so it fired only for someone who had run `--refresh-pricing`, and never for the install
+    /// it exists for, which has never refreshed anything.
+    fn load_from(cache: Option<&std::path::Path>, today: chrono::NaiveDate) -> Self {
         let mut engine = Self::bundled();
-        let Some(path) = pricing_cache_path() else {
-            return engine;
-        };
-        if !path.exists() {
-            return engine;
-        }
-        let age = std::fs::metadata(&path)
-            .and_then(|meta| meta.modified())
-            .ok()
-            .and_then(|modified| modified.elapsed().ok());
-        let applied = match std::fs::read_to_string(&path) {
-            Ok(contents) => engine.apply_cache(&contents, age, &path.display().to_string()),
-            Err(error) => {
-                engine.warnings.push(format!(
-                    "cached pricing table at {} is unreadable ({}); using bundled rates",
-                    path.display(),
-                    error
-                ));
-                false
+        let applied = match cache.filter(|path| path.exists()) {
+            None => false,
+            Some(path) => {
+                let age = std::fs::metadata(path)
+                    .and_then(|meta| meta.modified())
+                    .ok()
+                    .and_then(|modified| modified.elapsed().ok());
+                match std::fs::read_to_string(path) {
+                    Ok(contents) => engine.apply_cache(&contents, age, &path.display().to_string()),
+                    Err(error) => {
+                        engine.warnings.push(format!(
+                            "cached pricing table at {} is unreadable ({}); using bundled rates",
+                            path.display(),
+                            error
+                        ));
+                        false
+                    }
+                }
             }
         };
-        engine.note_bundled_age(chrono::Utc::now().date_naive(), applied);
+        engine.note_bundled_age(today, applied);
         engine
     }
 
@@ -916,6 +928,36 @@ mod tests {
         let community_limit = community + days(BUNDLED_PRICING_MAX_AGE_DAYS);
         assert_eq!(bundled_age_notice(community_limit, true), None);
         assert!(bundled_age_notice(community_limit + days(1), true).is_some());
+    }
+
+    /// Through `load_from`, not the helper: the first version returned early when there was no
+    /// cache file, so the notice never fired for an install that had never refreshed anything --
+    /// the one it is for -- and tests that called `note_bundled_age` directly could not see it.
+    #[test]
+    fn an_install_that_never_refreshed_pricing_still_hears_its_tables_are_old() {
+        let far_future = chrono::NaiveDate::from_ymd_opt(2099, 1, 1).unwrap();
+        let (community, _) = bundled_table_dates();
+        let cut = community.expect("dated");
+        let dir = tempfile::TempDir::new().unwrap();
+        let absent = dir.path().join("zen-pricing.toml");
+
+        for cache in [None, Some(absent.as_path())] {
+            let old = PricingEngine::load_from(cache, far_future);
+            assert!(
+                old.warnings().iter().any(|w| w.contains("days old")),
+                "no age notice with cache {cache:?}: {:?}",
+                old.warnings()
+            );
+            assert!(!old.has_fault(), "and no fault: there is simply no cache");
+            assert!(PricingEngine::load_from(cache, cut).warnings().is_empty());
+        }
+
+        // A fresh, valid cache is overlaid and supersedes the curated table's date only.
+        std::fs::write(&absent, "[model.\"m\"]\ninput = 1.0\noutput = 2.0\n").unwrap();
+        let refreshed = PricingEngine::load_from(Some(&absent), far_future);
+        assert!(refreshed.has_model("m"), "the cache was applied");
+        assert!(refreshed.warnings().iter().any(|w| w.contains("days old")));
+        assert!(!refreshed.has_fault());
     }
 
     /// Age is said; it is not a fault. A corrupt cache is. The dashboard goes red for one only.
