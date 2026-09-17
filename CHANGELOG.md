@@ -44,6 +44,27 @@
   It is now a limits problem -- on the status line, and in a `problem` row under `--doctor`'s LIMITS
   section, which had never printed the problems the panel flags at all.
 
+- **Concurrent hooks no longer fail on an unmigrated journal.** Opening the journal to write ran
+  probe-then-`ALTER` with no lock held between the two, so writers that opened a journal from
+  before `event_id` together -- parallel subagents fire parallel hooks -- all saw the column
+  missing, and every one but the first died on "duplicate column name". A test with eight writers
+  reproduced it on the first round. Migrations now run under `BEGIN IMMEDIATE`, the routing
+  table's rebuild runs inside that transaction instead of opening its own, and writers wait up to
+  five seconds for the lock instead of 250ms.
+- **The update and pricing caches no longer share a temporary file between writers.** Both wrote
+  through a fixed `json.tmp` / `toml.tmp` on the belief that only the dashboard wrote them; in fact
+  two dashboards each run `zen_pricing`, and a scheduled `--check-update` can land beside an
+  opted-in `--doctor`. Writers sharing a temporary race, and the loser's rename moves a half-written
+  file into place. All three caches now go through one `helpers::write_atomic`, which names the
+  temporary per process and removes it when the rename fails -- the rule `--statusline` already
+  followed.
+
+### Added
+
+- **A journal schema version.** Writers stamp `PRAGMA user_version` and refuse, by name, a journal a
+  newer build has stamped higher -- a hook installed from one channel beside a dashboard from another
+  is how two builds come to share one file. See `docs/data-model.md`.
+
 ## [0.16.0] - 2026-09-17
 
 ### Added

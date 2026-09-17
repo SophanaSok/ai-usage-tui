@@ -33,6 +33,31 @@ pub fn print_line(line: &str) -> std::io::Result<()> {
     out.flush()
 }
 
+/// Replace `path` with `contents` so a reader sees the old file or the new one, never half of one.
+///
+/// Temporary-then-rename, with the temporary named per process. Every cache this tool writes has
+/// more than one writer: two dashboards each run the `zen_pricing` collector, a scheduled
+/// `--check-update` can land beside an opted-in `--doctor`, and each open Claude Code session feeds
+/// `--statusline`. Writers that share a temporary race -- the first rename moves the second's
+/// half-written file into place, and the second rename finds nothing to move. That rule was
+/// written down in `statusline` and `omarchy::record` and not followed by the update and pricing
+/// caches; it lives here now so there is one spelling of it. A temporary that could not be renamed
+/// is removed, so a failed write leaves nothing behind.
+pub fn write_atomic(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{}.tmp", std::process::id()));
+    let temporary = path.with_file_name(name);
+    let written =
+        std::fs::write(&temporary, contents).and_then(|()| std::fs::rename(&temporary, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    written
+}
+
 /// Whether an error is a downstream reader closing the pipe — a normal way for a command in a
 /// pipeline to end, not a failure to report.
 pub fn is_broken_pipe(error: &anyhow::Error) -> bool {
@@ -43,6 +68,32 @@ pub fn is_broken_pipe(error: &anyhow::Error) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// Two processes writing one cache must not share a temporary: the rename of one would move
+    /// the other's half-written file into place. The update and pricing caches used a fixed
+    /// `json.tmp` / `toml.tmp`, on the belief that only the dashboard ever wrote them.
+    #[test]
+    fn write_atomic_replaces_the_file_and_leaves_no_temporary_behind() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("cache.json");
+        super::write_atomic(&path, b"one").unwrap();
+        super::write_atomic(&path, b"two").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"two");
+
+        // A directory where the file should go makes the rename fail after the temporary exists.
+        let blocked = dir.path().join("blocked.json");
+        std::fs::create_dir(&blocked).unwrap();
+        assert!(super::write_atomic(&blocked, b"x").is_err());
+
+        let names: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            names.iter().all(|name| !name.ends_with(".tmp")),
+            "temporaries left behind: {names:?}"
+        );
+    }
+
     use super::*;
 
     #[test]
