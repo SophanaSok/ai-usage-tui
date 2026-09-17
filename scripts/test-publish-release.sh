@@ -19,11 +19,14 @@ SCRATCH="$(mktemp -d)"
 trap 'rm -rf "$SCRATCH"' EXIT
 fresh_dir() { mktemp -d "$SCRATCH/case.XXXXXX"; }
 
-# A workspace shaped like the release job's: two archives, checksums, the rendered manifests.
+# A workspace shaped like the release job's: two archives, checksums, the bill of materials, the
+# rendered manifests.
 workspace() {
   local dir="$1"
   mkdir -p "$dir"/artifacts/ai-usage-tui-v9.9.9-x86_64-linux "$dir"/artifacts/ai-usage-tui-v9.9.9-x86_64-windows \
-    "$dir"/rendered/homebrew "$dir"/rendered/scoop "$dir"/rendered/chocolatey/tools "$dir"/rendered/aur
+    "$dir"/rendered/homebrew "$dir"/rendered/scoop "$dir"/rendered/chocolatey/tools "$dir"/rendered/aur \
+    "$dir"/sbom
+  echo '{"bomFormat":"CycloneDX"}' >"$dir/sbom/ai-usage-tui-v9.9.9.cdx.json"
   head -c 4000 /dev/urandom >"$dir/artifacts/ai-usage-tui-v9.9.9-x86_64-linux/ai-usage-tui-v9.9.9-x86_64-linux.tar.gz"
   head -c 3000 /dev/urandom >"$dir/artifacts/ai-usage-tui-v9.9.9-x86_64-windows/ai-usage-tui-v9.9.9-x86_64-windows.zip"
   (cd "$dir/artifacts" && sha256sum ./*/ai-usage-tui-* | sed 's#  \./[^/]*/#  #' >checksums.txt)
@@ -126,7 +129,7 @@ ai-usage-tui-v9.9.9-x86_64-windows.zip short drop"; then
   [ "$(uploads_of ai-usage-tui-v9.9.9-x86_64-linux.tar.gz)" = 2 ] || fail "starter: expected 2 uploads"
   [ "$(uploads_of ai-usage-tui-v9.9.9-x86_64-windows.zip)" = 3 ] || fail "short+drop: expected 3 uploads"
   [ "$(awk -F'\t' '$3 != "uploaded"' "$STATE/assets")" = "" ] || fail "an asset was left unfinished"
-  [ "$(wc -l <"$STATE/assets" | tr -d ' ')" = 8 ] || fail "expected exactly 8 assets, one per name"
+  [ "$(wc -l <"$STATE/assets" | tr -d ' ')" = 9 ] || fail "expected exactly 9 assets, one per name"
   grep -q "4242 false" "$STATE/release" || fail "the release was not published"
 else
   fail "a recoverable run failed:"; cat "$CASE_DIR/out"
@@ -151,6 +154,18 @@ else
   [ ! -f "$STATE/release" ] || fail "a release was created although the asset list failed its check"
 fi
 
+# 3b. So does a missing bill of materials: its name carries the tag, so the list finds it by a
+# glob, and a glob that matches nothing must not quietly publish a release without one.
+CASE_DIR="$(fresh_dir)"; STATE="$CASE_DIR/state"; mkdir -p "$STATE"
+workspace "$CASE_DIR/work"; install_fakes "$CASE_DIR/bin"; rm "$CASE_DIR/work"/sbom/*.cdx.json
+if (cd "$CASE_DIR/work" && PATH="$CASE_DIR/bin:$PATH" FAKE_STATE="$STATE" GITHUB_REPOSITORY=o/r \
+  GH_TOKEN=t "$SCRIPT" --publish v9.9.9) >"$CASE_DIR/out" 2>&1; then
+  fail "a run with no bill of materials succeeded"
+else
+  grep -q "missing or empty release asset: sbom/" "$CASE_DIR/out" || fail "the error does not name the bill of materials"
+  [ ! -f "$STATE/release" ] || fail "a release was created although the bill of materials was missing"
+fi
+
 # 4. A re-run against an already published release replaces its assets and leaves it published.
 run_case "" || fail "first publish failed"
 before="$(cut -f1 "$STATE/assets" | sort | tr '\n' ' ')"
@@ -158,7 +173,7 @@ if (cd "$CASE_DIR/work" && PATH="$CASE_DIR/bin:$PATH" FAKE_STATE="$STATE" GITHUB
   GH_TOKEN=t PUBLISH_RETRY_DELAY=0 "$SCRIPT" --publish v9.9.9) >"$CASE_DIR/out2" 2>&1; then
   grep -q "already published" "$CASE_DIR/out2" || fail "the re-run did not reuse the published release"
   [ "$(cut -f1 "$STATE/assets" | sort | tr '\n' ' ')" != "$before" ] || fail "assets were not replaced"
-  [ "$(wc -l <"$STATE/assets" | tr -d ' ')" = 8 ] || fail "a re-run duplicated assets"
+  [ "$(wc -l <"$STATE/assets" | tr -d ' ')" = 9 ] || fail "a re-run duplicated assets"
 else
   fail "a re-run failed:"; cat "$CASE_DIR/out2"
 fi

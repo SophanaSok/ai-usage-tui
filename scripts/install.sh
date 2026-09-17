@@ -11,6 +11,7 @@
 # What it does that a hand-pasted curl|tar does not:
 #   - refuses to guess on an unsupported platform, and names the source build instead
 #   - verifies the download against the release's own checksums.txt
+#   - checks the build attestation when the GitHub CLI is there to check it with
 #   - unpacks into a scratch directory, because the archive also contains README.md and LICENSE
 #   - creates the target directory and says so when it is not on PATH
 #   - says what it replaced, and warns when another copy earlier on PATH will keep winning
@@ -23,16 +24,21 @@ SITE="https://sophanasok.github.io/ai-usage-tui-site/"
 BIN="ai-usage-tui"
 VERSION=""
 DEST=""
+REQUIRE_ATTESTATION=""
 
 usage() {
     cat <<EOF
 Install a prebuilt $BIN release.
 
-Usage: install.sh [--version vX.Y.Z] [--dir PATH]
+Usage: install.sh [--version vX.Y.Z] [--dir PATH] [--require-attestation]
 
   --version   Release tag to install. Default: the latest release.
   --dir       Directory to install into. Default: \$HOME/.local/bin,
               or /usr/local/bin when running as root.
+  --require-attestation
+              Refuse to install unless the GitHub CLI (gh) confirms the download
+              was built by this project's release workflow. Without this flag the
+              same check runs when gh is available, and its result is reported.
   --help      Show this message.
 EOF
 }
@@ -50,6 +56,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --version) [ $# -ge 2 ] || die "--version requires a tag"; VERSION="$2"; shift 2 ;;
         --dir)     [ $# -ge 2 ] || die "--dir requires a path";    DEST="$2";    shift 2 ;;
+        --require-attestation) REQUIRE_ATTESTATION=1; shift ;;
         --help|-h) usage; exit 0 ;;
         *)         die "unknown option: $1 (try --help)" ;;
     esac
@@ -178,6 +185,38 @@ Do not use this download."
     echo "    ok  $actual"
 else
     die "could not fetch $BASE/checksums.txt; refusing to install an unverified binary"
+fi
+
+# --- provenance ------------------------------------------------------------------------------
+# The checksum proves the archive is the one the release lists -- but checksums.txt comes from the
+# same place as the archive, so whoever could replace one could replace both. A build attestation
+# is signed by the release workflow's own identity and kept by GitHub apart from the release's
+# files: it says this exact archive was built by this repository's release.yml. Releases carry one
+# from the first release after v0.19.0.
+#
+# Checking it takes the GitHub CLI, signed in, which most machines do not have. So by default the
+# check runs when it can and its result is reported either way, and nothing is refused for the
+# lack of a tool; --require-attestation makes anything short of a confirmed attestation fatal.
+unattested() {
+    [ -z "$REQUIRE_ATTESTATION" ] || die "$1
+--require-attestation was given, so nothing was installed."
+    echo "    $1"
+}
+
+echo "==> checking build provenance"
+if ! need gh; then
+    unattested "not checked: the GitHub CLI (gh) is not installed"
+elif ! gh auth status >/dev/null 2>&1; then
+    unattested "not checked: gh is not signed in (gh auth login)"
+elif verdict="$(gh attestation verify "$WORK/$ARCHIVE" --repo "$REPO" \
+        --signer-workflow "$REPO/.github/workflows/release.yml" 2>&1)"; then
+    echo "    ok  built by $REPO's release workflow"
+else
+    # No attestation for this exact file. For a release that predates attestations that is
+    # expected; for a later one it means the archive is not what the workflow built.
+    echo "$verdict" | grep -v '^[[:space:]]*$' | tail -n 2 | sed 's/^/    gh: /'
+    unattested "NOT CONFIRMED: gh found no attestation that $REPO's release workflow built this archive.
+    Releases after v0.19.0 carry one; for those, do not use this download."
 fi
 
 # --- install --------------------------------------------------------------------------------

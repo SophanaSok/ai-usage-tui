@@ -44,7 +44,7 @@ jobs:
       contents: write # push the refreshed table to one branch
       issues: write # open or update the one issue
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Is the committed table current?
         id: check
@@ -68,9 +68,11 @@ jobs:
       # A table the engine cannot parse, or that stops pricing a model a test pins, must not be
       # offered for merging. These are the pricing engine's own tests, which include "the
       # generated community table parses cleanly" and the dated-header check.
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master, 2026-09-17
         if: steps.check.outputs.stale == 'true'
-      - uses: Swatinem/rust-cache@v2
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: steps.check.outputs.stale == 'true'
       - name: The engine still parses and prices with it
         id: validate

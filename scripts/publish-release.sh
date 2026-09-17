@@ -36,6 +36,9 @@ assets() {
   for archive in artifacts/*/ai-usage-tui-*; do
     [ -f "$archive" ] && printf '%s\n' "$archive"
   done
+  # The bill of materials, named for the tag. Expanded, not named: the tag is in the filename.
+  # Exactly one, or the glob stays a literal and `plan` refuses it as missing.
+  printf '%s\n' sbom/ai-usage-tui-*.cdx.json
   printf '%s\n' \
     artifacts/checksums.txt \
     rendered/homebrew/ai-usage-tui.rb \
@@ -52,26 +55,28 @@ token() { printf '%s' "${GH_TOKEN:-${GITHUB_TOKEN:-$(gh auth token)}}"; }
 # Everything that can be known before touching the API: each file exists and is not empty, no two
 # share a name (assets are published flat), and every archive is one `checksums.txt` vouches for.
 plan() {
+  # Its errors go to stderr: `publish` captures this function's stdout as the asset list, and an
+  # error printed there was swallowed with it -- the run failed and said nothing about why.
   local files=() file name archives=0
   mapfile -t files < <(assets)
   for file in "${files[@]}"; do
-    [ -s "$file" ] || { echo "::error::missing or empty release asset: $file"; exit 1; }
+    [ -s "$file" ] || { echo "::error::missing or empty release asset: $file" >&2; exit 1; }
     # Used unescaped in the upload URL's `name=`, so it must need no escaping.
     [[ "$(basename "$file")" =~ ^[A-Za-z0-9._-]+$ ]] ||
-      { echo "::error::asset name needs URL escaping: $file"; exit 1; }
+      { echo "::error::asset name needs URL escaping: $file" >&2; exit 1; }
     case "$file" in
       artifacts/*/*)
         archives=$((archives + 1))
         name="$(basename "$file")"
         grep -qE "^[0-9a-f]{64}  ${name//./\\.}\$" artifacts/checksums.txt ||
-          { echo "::error::$name is not listed in checksums.txt"; exit 1; }
+          { echo "::error::$name is not listed in checksums.txt" >&2; exit 1; }
         ;;
     esac
   done
-  [ "$archives" -gt 0 ] || { echo "::error::no build artifacts under artifacts/*/"; exit 1; }
+  [ "$archives" -gt 0 ] || { echo "::error::no build artifacts under artifacts/*/" >&2; exit 1; }
   local duplicates
   duplicates="$(printf '%s\n' "${files[@]}" | xargs -n1 basename | sort | uniq -d)"
-  [ -z "$duplicates" ] || { echo "::error::two assets would publish as: $duplicates"; exit 1; }
+  [ -z "$duplicates" ] || { echo "::error::two assets would publish as: $duplicates" >&2; exit 1; }
   printf '%s\n' "${files[@]}"
 }
 

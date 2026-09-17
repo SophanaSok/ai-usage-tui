@@ -539,6 +539,83 @@ fn the_example_configs_budgets_are_live() {
     );
 }
 
+fn workflows() -> Vec<(String, String)> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows");
+    let mut found: Vec<(String, String)> = std::fs::read_dir(&dir)
+        .expect(".github/workflows")
+        .map(|entry| entry.expect("entry").path())
+        .filter(|path| path.extension().is_some_and(|e| e == "yml" || e == "yaml"))
+        .map(|path| {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            (name, std::fs::read_to_string(&path).expect("read workflow"))
+        })
+        .collect();
+    found.sort();
+    assert!(found.len() >= 5, "found only {} workflows", found.len());
+    found
+}
+
+/// Every action a workflow runs is named by commit, with the release that commit is in a comment.
+///
+/// A tag is a pointer its owner can move, and a moved `v2` runs in the release job with the
+/// token that publishes to crates.io. A commit cannot be moved. The comment is what lets a person
+/// read the pin and what Dependabot rewrites beside it, so it is required too.
+#[test]
+fn every_action_is_pinned_to_a_commit() {
+    let mut seen = 0;
+    for (name, text) in workflows() {
+        for line in text.lines().map(str::trim) {
+            let Some(action) = line
+                .strip_prefix("- uses:")
+                .or_else(|| line.strip_prefix("uses:"))
+            else {
+                continue;
+            };
+            seen += 1;
+            let (reference, comment) = action
+                .trim()
+                .split_once(" # ")
+                .unwrap_or((action.trim(), ""));
+            let pinned = reference.rsplit_once('@').is_some_and(|(_, commit)| {
+                commit.len() == 40 && commit.chars().all(|c| c.is_ascii_hexdigit())
+            });
+            assert!(
+                pinned && !comment.trim().is_empty(),
+                "{name}: `{action}` is not pinned as owner/action@<40-hex commit> # <version>"
+            );
+        }
+    }
+    assert!(
+        seen >= 20,
+        "only {seen} `uses:` lines found; the scan is not reading the workflows"
+    );
+}
+
+/// Every workflow says what its token may do, and none grants a write to every job at once.
+///
+/// With no `permissions:` a workflow takes the repository's default, which is a setting and not a
+/// file: it can be loosened without a diff. A top-level write reaches jobs that never needed it --
+/// `release.yml` gave the five build jobs and the crates.io job a token that could rewrite the
+/// repository. Writes belong on the job that performs them.
+#[test]
+fn every_workflow_declares_least_privilege() {
+    for (name, text) in workflows() {
+        let mut lines = text.lines();
+        let declared = lines.by_ref().find(|line| line.starts_with("permissions:"));
+        let Some(declared) = declared else {
+            panic!("{name} has no top-level `permissions:` block");
+        };
+        let block: Vec<&str> = std::iter::once(declared)
+            .chain(lines.take_while(|line| line.starts_with(' ') || line.trim().is_empty()))
+            .collect();
+        assert!(
+            !block.iter().any(|line| line.contains("write")),
+            "{name} grants a write permission to every job; move it to the job that needs it:\n{}",
+            block.join("\n")
+        );
+    }
+}
+
 /// GitHub's topics cover every keyword and every source.
 ///
 /// The source-name rule is the forcing function: a collector cannot be added without the project
