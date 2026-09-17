@@ -19,6 +19,19 @@
   stop it. The example's budgets are live samples, so the hint says to edit them rather than
   suggesting a `> config.toml` redirect.
 
+- **`docs/stability.md`: what a version number promises.** Semantic versioning covers the
+  command-line tool -- flags, exit codes, config keys, JSON and CSV output, the journal schema,
+  environment variables -- and explicitly not the Rust library API, which exists so the binary, its
+  tests and the screenshot renderer can share code. Nothing had said either, while the crate
+  published nineteen public modules on crates.io. The crate documentation now says the same.
+- **`"schema_version": 1` in every JSON document** -- `--json`, `--routing-json` and
+  `--check-budgets` -- so a consumer can check what it is reading. Additive: no key moved.
+
+### Changed
+
+- **`#![forbid(unsafe_code)]`** in the library and the binary. `SECURITY.md` promised no `unsafe`
+  code; the build now enforces it.
+
 ### Fixed
 
 - **A `kill`, a closed terminal window or a logout no longer leaves the terminal broken.** The
@@ -85,6 +98,17 @@
   height the layout needs, ratatui squeezed the panels to zero height one by one without complaint.
   The dashboard now shows the rows it needs and has, says so when a budget alert is active so a short
   pane cannot hide one, and keeps the key hints -- and how to quit -- on the last line.
+
+- **`SECURITY.md` listed the network calls as `--refresh-zen`, `--refresh-pricing` and the budget
+  webhook**, omitting `--check-update` and an opted-in `--doctor`, which have called GitHub's
+  releases API since v0.11.0. The security policy and the README's privacy section now agree.
+- **The Limits panel was described as "from Omarchy's agents panel"** in `--help`, the `?` overlay
+  and the README panel table, although Claude Code's cache and status line have fed it since
+  v0.13.0 with no Omarchy at all. The README's privacy section and paths table still said "Ollama
+  journaling", and its prerequisites omitted Gemini CLI and llama.cpp.
+- **The review workflow's rubric read a `CLAUDE.md` that did not exist.** `CLAUDE.md` now imports
+  `AGENTS.md`, Claude Code's documented way to share one instructions file, so the reviewer and a
+  local session read the same conventions.
 
 ## [0.16.0] - 2026-09-17
 

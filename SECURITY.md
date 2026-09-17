@@ -32,8 +32,11 @@ them is a security bug, not a feature request:
   never transmitted, but review an export before sharing it.
 - **The user's OpenCode database is opened read-only** (`SQLITE_OPEN_READ_ONLY`).
 - **No telemetry.** Outbound network calls happen only when explicitly requested:
-  `--refresh-zen`, `--refresh-pricing`, and a budget webhook you configure yourself.
-- **No `unsafe` code.**
+  `--refresh-zen` and `--refresh-pricing` (and the `zen_pricing` collector, off unless enabled),
+  `--check-update` and `--doctor` with `[update] check = true` (one GET to GitHub's releases API,
+  naming only the tool and its version), and a budget webhook you configure yourself. The dashboard
+  process itself never makes a request; it reads what those commands cached.
+- **No `unsafe` code**, enforced by `#![forbid(unsafe_code)]` in the library and the binary.
 
 ## Dependency advisories
 

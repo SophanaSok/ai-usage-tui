@@ -220,5 +220,11 @@ that looked right.
 Say what changes for a user, which data sources are touched, any privacy impact, and the
 commands you ran. Keep them focused; avoid unrelated reformatting.
 
+If the change touches a surface [`docs/stability.md`](docs/stability.md) lists as stable — a flag,
+an exit code, a config key, a JSON key or CSV column, the journal schema — say so. Adding is fine.
+Removing, renaming or changing a meaning is a breaking change, and a JSON break also raises
+`JSON_SCHEMA_VERSION` in `src/export.rs`; a journal change an older writer must not touch raises
+`JOURNAL_SCHEMA_VERSION`.
+
 Not every change needs to be perfect to be worth sending. A bug report with a reproduction is a
 real contribution, and so is a doc fix.

@@ -9,6 +9,12 @@ use crate::model::{Range, Usage};
 use crate::ui::cost_display;
 use crate::utils::{format_count, journal_path};
 
+/// The version of every JSON document this tool prints: `--json`, `--routing-json` and
+/// `--check-budgets`. Within a version, keys are only ever added -- never removed, renamed or
+/// changed in meaning -- so a consumer that ignores unknown keys keeps working. A change that
+/// breaks that raises it. See `docs/stability.md`.
+pub const JSON_SCHEMA_VERSION: u32 = 1;
+
 pub fn print_once(cli: &Cli) -> Result<()> {
     let journal = cli
         .journal_path
@@ -96,6 +102,8 @@ pub fn print_once(cli: &Cli) -> Result<()> {
             })
             .collect();
         print_line(&serde_json::to_string_pretty(&serde_json::json!({
+            // The machine-readable contract's version; see docs/stability.md.
+            "schema_version": JSON_SCHEMA_VERSION,
             "source": source,
             "range": cli.range.label(),
             "usage": rows,

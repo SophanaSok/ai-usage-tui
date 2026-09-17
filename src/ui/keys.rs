@@ -140,7 +140,7 @@ pub const BINDINGS: &[Binding] = &[
         key: 'l',
         shown_as: "l",
         action: Action::Panel(Panel::Limits),
-        what: "subscription limits, from Omarchy's agents panel",
+        what: "subscription limits: Claude Code's cache and status line, and Omarchy's panel",
         hint: Some(("l", "limits")),
     },
     Binding {

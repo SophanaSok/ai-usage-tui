@@ -1,3 +1,15 @@
+//! The library half of the `ai-usage-tui` binary.
+//!
+//! **This Rust API is not a stable interface.** It exists so the binary, its integration tests and
+//! the screenshot renderer can share code, and it changes whenever the binary needs it to, in any
+//! release. What *is* covered by semantic versioning is the command-line tool: its flags, exit
+//! codes, config file, JSON and CSV output and journal schema -- listed in `docs/stability.md`.
+//! Depend on those, not on these modules.
+
+// `SECURITY.md` says there is no `unsafe` code. This makes that a property of the build rather than
+// a sentence someone has to keep true.
+#![forbid(unsafe_code)]
+
 pub mod budget;
 pub mod classify;
 pub mod cli;

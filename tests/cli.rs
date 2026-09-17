@@ -1977,3 +1977,24 @@ fn the_example_config_ships_in_the_binary_and_doctor_points_at_it() {
     assert!(!text.contains("copy examples/config.toml"), "{text}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Every JSON document carries the contract version `docs/stability.md` promises, so a consumer can
+/// check what it is reading instead of discovering a change from a missing key.
+#[test]
+fn every_json_document_carries_its_schema_version() {
+    let dir = scratch("schema-version");
+    let journal = dir.join("usage.db");
+    for flag in ["--json", "--routing-json", "--check-budgets"] {
+        let output = hermetic_with(bin().arg(flag), &PathBuf::from(fixture_db()), &journal)
+            .output()
+            .expect("run");
+        assert!(
+            output.status.success(),
+            "{flag}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json parses");
+        assert_eq!(json["schema_version"], 1, "{flag}: {json}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

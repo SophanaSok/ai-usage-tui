@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::env;
 use std::io::stdout;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
@@ -300,7 +302,11 @@ fn webhook_url(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Option<Stri
 fn check_budgets(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
     let budget_engine = budget_engine(config);
     if budget_engine.is_empty() {
-        print_line("{\"budgets\": 0, \"alerts\": []}")?;
+        print_line(&serde_json::to_string_pretty(&serde_json::json!({
+            "schema_version": ai_usage_tui::export::JSON_SCHEMA_VERSION,
+            "budgets": 0,
+            "alerts": [],
+        }))?)?;
         return Ok(());
     }
 
@@ -319,6 +325,7 @@ fn check_budgets(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()
     let has_alerts = alerts.iter().any(|a| a.is_actionable());
 
     let json = serde_json::json!({
+        "schema_version": ai_usage_tui::export::JSON_SCHEMA_VERSION,
         "budgets": budget_engine.budgets().len(),
         "alerts": alerts
             .iter()
@@ -1022,6 +1029,7 @@ fn export_routing(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
             })
             .collect();
         print_line(&serde_json::to_string_pretty(&serde_json::json!({
+            "schema_version": ai_usage_tui::export::JSON_SCHEMA_VERSION,
             "source": format!("journal: {}", journal.display()),
             "events": events.len(),
             "aggregates": rows

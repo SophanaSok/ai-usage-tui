@@ -100,7 +100,9 @@ alongside the coverage figure so it cannot silently disappear.
 - **Data:** An OpenCode SQLite database (default:
   `~/.local/share/opencode/opencode.db`), Claude Code session logs under
   `~/.claude/projects`, Codex CLI session logs under `~/.codex`, GitHub
-  Copilot's store under `~/.copilot`, and/or journaled Ollama usage
+  Copilot's store under `~/.copilot`, Gemini CLI's telemetry log (opt-in, under
+  `~/.gemini`), and/or local-model usage journaled from Ollama, llama.cpp or another
+  OpenAI-compatible server
 - **Build (optional):** Stable Rust via [rustup](https://rustup.rs/)
 - **Platforms:** Linux and macOS (x86_64 and aarch64) and Windows x86_64 prebuilts from
   [GitHub Releases](https://github.com/SophanaSok/ai-usage-tui/releases)
@@ -556,7 +558,7 @@ key.
 | Spend over time | `g` | What does the trend look like day by day |
 | Burn rate | `w` | At this rate, when do I hit my budget |
 | Sessions | `s` | Which individual runs cost the most |
-| Limits | `l` | Subscription windows from Omarchy's agents panel: % used and reset countdown |
+| Limits | `l` | Subscription windows from Claude Code's cache and status line and Omarchy's agents panel: % used and reset countdown |
 
 On a project row, **`Enter`** shows just that project's sessions, and
 **`Backspace`** (or `Esc`) goes back to the list where you left it. The sessions
@@ -1026,7 +1028,7 @@ On Windows, `USERPROFILE` (or `HOMEDRIVE` + `HOMEPATH`) stands in for `HOME`,
 ## Privacy and network behavior
 
 - OpenCode data is read locally from SQLite in read-only mode.
-- Ollama journaling stores usage metadata, not prompt or response content.
+- The local-model journal (`--record-ollama`, `--record-usage`) stores usage metadata, not prompt or response content.
 - Routing events contain only the JSON fields supplied by the caller.
 - Prompts, completions, API keys, credentials, and interaction content are not
   collected.
@@ -1112,7 +1114,7 @@ Default local storage paths (when the corresponding XDG variable is unset):
 | Codex session logs, read-only | `~/.codex/sessions`, `~/.codex/archived_sessions` |
 | Omarchy agents-panel records, read-only | `~/.local/state/omarchy/agents/usage` |
 | Omarchy agents-panel record, written only by `--omarchy-record` | `~/.local/state/omarchy/agents/usage/<id>.json` |
-| Ollama and routing journal | `~/.local/share/ai-usage-tui/usage.db` |
+| Local-model and routing journal | `~/.local/share/ai-usage-tui/usage.db` |
 | Zen pricing cache | `~/.local/share/ai-usage-tui/zen-pricing.toml` |
 | Zen model catalog | `~/.local/share/ai-usage-tui/zen-models.json` |
 | Latest-release answer, written only by `--check-update` or an opted-in `--doctor` | `~/.local/share/ai-usage-tui/update-check.json` |
@@ -1207,6 +1209,8 @@ of releases and writing.
 - [`docs/provider-support.md`](docs/provider-support.md) — provider support matrix
 - [`docs/routing-analytics.md`](docs/routing-analytics.md) — routing analytics
 - [`docs/omarchy.md`](docs/omarchy.md) — reading and publishing Omarchy agents-panel records
+- [`docs/stability.md`](docs/stability.md) — what a version number promises: flags, exit codes,
+  config, JSON/CSV, the journal. Script against those; the Rust library API is not stable
 
 **Contributor docs**
 
