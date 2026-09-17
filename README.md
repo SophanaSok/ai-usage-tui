@@ -2,6 +2,7 @@
 
 > Terminal dashboard that measures what each AI coding model actually costs per passing test — routing, escalation and budget analytics across Claude Code, Codex CLI, GitHub Copilot, Gemini CLI, OpenCode and Local models, where an unknown cost stays unknown instead of rendering as $0.00. Live TUI or JSON/CSV.
 
+[![Website](https://img.shields.io/badge/website-docs%20%C2%B7%20install%20%C2%B7%20write--up-2ea44f)](https://sophanasok.github.io/ai-usage-tui-site/)
 [![CI](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/ci.yml)
 [![Release](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/release.yml/badge.svg)](https://github.com/SophanaSok/ai-usage-tui/actions/workflows/release.yml)
 [![crates.io](https://img.shields.io/crates/v/ai-usage-tui.svg)](https://crates.io/crates/ai-usage-tui)
@@ -31,6 +32,10 @@ numbers: a cost the tool cannot establish stays unknown rather than rendering as
 *Invented demo data, rendered off-screen by `scripts/render-readme-screenshots.sh` — the GIF
 replays a key script through the dashboard's own dispatch, one frame per key. No real account,
 project, or spend appears in any image here.*
+
+**The website — <https://sophanasok.github.io/ai-usage-tui-site/> —** has the dashboard tour, the
+install page for every channel, the data sources and privacy notes, and the write-up, rendered from
+this repository's own documents at the latest release. `ai-usage-tui --help` prints the link too.
 
 ## Contents
 

@@ -5,7 +5,9 @@
     <version>__VERSION__</version>
     <title>AI Usage TUI</title>
     <authors>Sophana Sok</authors>
-    <projectUrl>https://github.com/SophanaSok/ai-usage-tui</projectUrl>
+    <projectUrl>__HOMEPAGE__</projectUrl>
+    <projectSourceUrl>https://github.com/SophanaSok/ai-usage-tui</projectSourceUrl>
+    <docsUrl>__HOMEPAGE__</docsUrl>
     <licenseUrl>https://github.com/SophanaSok/ai-usage-tui/blob/main/LICENSE</licenseUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <description>__DESCRIPTION__</description>
