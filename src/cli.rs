@@ -17,6 +17,10 @@ pub struct Cli {
     pub man: bool,
     /// Print the annotated example configuration and exit.
     pub print_config: bool,
+    /// Print the glossary of every JSON key and enum value, as JSON, and exit.
+    pub schema: bool,
+    /// Print the guide to reading this tool's output from an LLM agent, and exit.
+    pub agent_guide: bool,
     /// `[collectors.<id>] enabled` overrides, by source id. Absent means the registry default.
     pub source_enabled: std::collections::BTreeMap<String, bool>,
     pub config_path: Option<PathBuf>,
@@ -94,6 +98,8 @@ impl Default for Cli {
             completions: None,
             man: false,
             print_config: false,
+            schema: false,
+            agent_guide: false,
             source_enabled: Default::default(),
             config_path: None,
             db_path: None,
@@ -195,6 +201,14 @@ struct Args {
     /// Print the annotated example config.toml and exit
     #[arg(long, group = "action")]
     print_config: bool,
+
+    /// Print a JSON glossary of every key and enum value in the JSON outputs, and exit
+    #[arg(long, group = "action")]
+    schema: bool,
+
+    /// Print the guide for LLM agents: how to read the JSON outputs and what to look for, and exit
+    #[arg(long, group = "action")]
+    agent_guide: bool,
 
     // --- data sources ---------------------------------------------------------------------
     /// Override the OpenCode SQLite database path
@@ -440,6 +454,8 @@ impl Cli {
             completions: args.completions,
             man: args.man,
             print_config: args.print_config,
+            schema: args.schema,
+            agent_guide: args.agent_guide,
             config_path: args.config,
             db_path: args.db,
             journal_path: args.journal,

@@ -59,6 +59,23 @@ fn dispatch() -> Result<()> {
     }
     // Before the config too: the user asking for an example config is often the user whose
     // config does not parse.
+    // The same again: what the JSON means, and how an agent should read it. Compiled in because
+    // no binary install ships `docs/`, and before the config because neither depends on it.
+    if parsed_cli.schema || parsed_cli.agent_guide {
+        use std::io::Write;
+        let text = if parsed_cli.schema {
+            // Compact, like the summary it describes: the file is kept readable for whoever
+            // edits it, and the indentation is a third of what a reader would pay for.
+            let glossary: serde_json::Value = serde_json::from_str(ai_usage_tui::schema::GLOSSARY)?;
+            format!("{glossary}\n")
+        } else {
+            ai_usage_tui::schema::AGENT_GUIDE.to_string()
+        };
+        let mut out = stdout().lock();
+        out.write_all(text.as_bytes())?;
+        out.flush()?;
+        return Ok(());
+    }
     if parsed_cli.print_config {
         use std::io::Write;
         let mut out = stdout().lock();

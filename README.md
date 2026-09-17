@@ -971,6 +971,8 @@ does not load it automatically.
 | `--completions SHELL` | Print a shell completion script (`bash`, `zsh`, `fish`, `elvish`, `powershell`) and exit |
 | `--man` | Print the man page in roff and exit |
 | `--print-config` | Print the annotated example `config.toml` and exit (its budgets are samples to edit) |
+| `--schema` | Print a JSON glossary of every key and every enum value in the JSON outputs, with its meaning, and exit |
+| `--agent-guide` | Print the guide for LLM agents — how to read the JSON outputs, the rules for `null`, `quota` and floors, and what to look for — and exit |
 | `--db PATH` | Override the OpenCode database path |
 | `--journal PATH` | Override the local journal path |
 | `--claude-dir PATH` | Override the Claude Code session-log directory |

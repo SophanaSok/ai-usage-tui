@@ -25,6 +25,7 @@ pub mod model;
 pub mod omarchy;
 pub mod pricing;
 pub mod routing;
+pub mod schema;
 pub mod statusline;
 pub mod summary;
 pub mod ui;

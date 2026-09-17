@@ -1,0 +1,426 @@
+{
+  "schema_version": 1,
+  "about": "Every key of every JSON document ai-usage-tui prints, and every value of every closed vocabulary. Printed by `ai-usage-tui --schema`. Within a schema_version keys are only added. Read `ai-usage-tui --agent-guide` for how to use these documents.",
+  "rules": [
+    "null means unknown or not recorded. It never means 0. A cost of null is not free; a percentage of null is not 0%.",
+    "cost is dollars actually billed per token. When cost_is_floor is true (or unpriced_requests > 0) it leaves requests out and is a minimum, not a total.",
+    "quota_requests were billed against a subscription plan: real cost with no per-request dollar figure. They are never in cost.",
+    "api_equivalent_cost is what subscription requests would have cost at API list rates. It was never charged. It is not spend and not savings.",
+    "Percentages are on the 0..100 scale. Timestamps are unix seconds. Token counts are disjoint: input excludes cache, output excludes reasoning."
+  ],
+  "enums": {
+    "category": {
+      "LOCAL": "Ran on a local endpoint. Genuinely zero cost.",
+      "FREE": "A model explicitly identified as free. Genuinely zero cost.",
+      "PAID": "A provider that bills per token, including aggregators and clouds. Whether a rate is known is cost_status.",
+      "CLOUD": "Hosted or cloud-routed usage without an authoritative cost.",
+      "UNKNOWN": "Provider not recognised as billing per token."
+    },
+    "cost_status": {
+      "reported": "The provider reported this cost.",
+      "calculated": "The source tool calculated it from its own rates.",
+      "estimated": "ai-usage-tui estimated it from its pricing table.",
+      "free": "Explicitly free. Cost is a real 0.",
+      "local": "Local model. Cost is a real 0.",
+      "quota": "Billed against a subscription plan. Real cost, no per-request figure: cost is null.",
+      "unavailable": "Should carry a price and no rate is known: cost is null."
+    },
+    "billing": {
+      "per_token": "Paid per token (an API key).",
+      "subscription": "Paid through a plan; rows become cost_status quota."
+    },
+    "cost_basis": {
+      "exact": "Every contributing task carried a price. cost_per_success is a real figure.",
+      "floor": "Some spend was priced and some was not. cost_per_success is null: a minimum is not printed as though it were the figure. cost holds the priced part.",
+      "plus_quota": "Some tasks were priced, the rest billed against a plan. cost_per_success is null.",
+      "quota": "Every task was billed against a plan; there is no dollar figure. cost_per_success is null.",
+      "unpriced": "Nothing was priced and something should have been. cost_per_success is null.",
+      "free": "Every task was free or local. cost_per_success is a real 0.",
+      "no_successes": "No task passed, so there is no denominator. cost_per_success is null: unknown, not zero."
+    },
+    "budget_level": {
+      "OK": "Below the warn threshold.",
+      "WARN": "At or past warn (default 75% of limit).",
+      "CRITICAL": "At or past critical (default 90% of limit).",
+      "EXCEEDED": "At or past the limit."
+    },
+    "budget_period": {
+      "daily": "Since local midnight.",
+      "monthly": "Since the first of the local calendar month."
+    }
+  },
+  "shapes": {
+    "bucket": {
+      "meaning": "One rollup. Every list in --summary-json is made of these.",
+      "keys": {
+        "requests": { "type": "integer", "meaning": "API requests." },
+        "tokens": { "type": "integer", "meaning": "Sum of the five token counts below." },
+        "input_tokens": { "type": "integer", "meaning": "Uncached prompt tokens." },
+        "output_tokens": { "type": "integer", "meaning": "Completion tokens, excluding reasoning where the source splits it." },
+        "reasoning_tokens": { "type": "integer", "meaning": "Reasoning tokens, where the source reports them separately. Claude Code does not." },
+        "cache_read_tokens": { "type": "integer", "meaning": "Prompt tokens served from cache." },
+        "cache_write_tokens": { "type": "integer", "meaning": "Prompt tokens written to cache." },
+        "cost": { "type": "number|null", "meaning": "Dollars over priced requests. null when the bucket holds paid work and none of it could be priced (all quota or unpriced). 0 only when everything is free, local, or the bucket is empty." },
+        "cost_is_floor": { "type": "boolean", "meaning": "true when cost leaves unpriced requests out." },
+        "priced_requests": { "type": "integer", "meaning": "Requests that carry a dollar cost." },
+        "unpriced_requests": { "type": "integer", "meaning": "Requests that should carry a price and do not." },
+        "quota_requests": { "type": "integer", "meaning": "Requests billed against a subscription plan." },
+        "api_equivalent_cost": { "type": "number|null", "meaning": "List-rate value of the quota requests. Never charged." },
+        "metrics": {
+          "type": "object",
+          "meaning": "Derived figures. Facts, not verdicts; null when nothing recorded supports one.",
+          "keys": {
+            "share_of_tokens_pct": { "type": "number|null", "meaning": "This bucket's tokens as a share of the document's totals." },
+            "cache_hit_pct": { "type": "number|null", "meaning": "cache_read / (input + cache_read + cache_write). null when no cache tokens were recorded at all: several sources never report them, so that is not a 0% hit rate." },
+            "output_pct": { "type": "number|null", "meaning": "output_tokens as a share of tokens." },
+            "reasoning_pct": { "type": "number|null", "meaning": "reasoning_tokens as a share of tokens. null when none were recorded." },
+            "tokens_per_request": { "type": "number|null", "meaning": "tokens / requests." },
+            "cost_per_request": { "type": "number|null", "meaning": "cost / priced_requests. Unpriced and quota requests are not averaged in as free." }
+          }
+        }
+      }
+    },
+    "bucket_brief": {
+      "meaning": "The bucket without its five-way token split, used by day and session rows. Same keys at the same paths. Drill down with --session or --days for the split.",
+      "keys": {
+        "requests": { "type": "integer", "meaning": "As in bucket." },
+        "tokens": { "type": "integer", "meaning": "As in bucket." },
+        "cost": { "type": "number|null", "meaning": "As in bucket." },
+        "cost_is_floor": { "type": "boolean", "meaning": "As in bucket." },
+        "unpriced_requests": { "type": "integer", "meaning": "As in bucket." },
+        "quota_requests": { "type": "integer", "meaning": "As in bucket." },
+        "api_equivalent_cost": { "type": "number|null", "meaning": "As in bucket." },
+        "metrics": {
+          "type": "object",
+          "meaning": "As in bucket, fewer keys.",
+          "keys": {
+            "share_of_tokens_pct": { "type": "number|null", "meaning": "As in bucket." },
+            "cache_hit_pct": { "type": "number|null", "meaning": "As in bucket." },
+            "tokens_per_request": { "type": "number|null", "meaning": "As in bucket." }
+          }
+        }
+      }
+    },
+    "limits": {
+      "meaning": "One agent's subscription rate-limit windows.",
+      "keys": {
+        "agent": { "type": "string", "meaning": "Agent id." },
+        "name": { "type": "string", "meaning": "Display name." },
+        "tier": { "type": "string", "meaning": "Plan label, empty when unknown." },
+        "status": { "type": "string", "meaning": "The source's own status text." },
+        "updated_at": { "type": "integer", "meaning": "When the source recorded this." },
+        "age_secs": { "type": "integer", "meaning": "Seconds since updated_at." },
+        "stale": { "type": "boolean", "meaning": "Too old to trust as current." },
+        "windows": {
+          "type": "array",
+          "meaning": "One per rate-limit window.",
+          "keys": {
+            "label": { "type": "string", "meaning": "e.g. Session (5-hour), Weekly (all models)." },
+            "percent_used": { "type": "number", "meaning": "0..100." },
+            "resets_at": { "type": "integer|null", "meaning": "When the window resets." },
+            "resets_in_secs": { "type": "integer|null", "meaning": "Seconds until then; negative if already past." }
+          }
+        }
+      }
+    },
+    "escalations": {
+      "meaning": "Sessions that moved to a pricier model, derived from usage (not from recorded routing events).",
+      "keys": {
+        "sessions_examined": { "type": "integer", "meaning": "Sessions with enough requests to show a change." },
+        "sessions_escalated": { "type": "integer", "meaning": "Of those, how many moved to a pricier model." },
+        "escalation_rate": { "type": "number|null", "meaning": "Percent. null when no session could be examined." },
+        "unclassified_changes": { "type": "integer", "meaning": "Model changes that could not be ordered because a rate was missing." },
+        "transitions": {
+          "type": "array",
+          "meaning": "One per from/to model pair.",
+          "keys": {
+            "from": { "type": "string", "meaning": "Model the session opened on." },
+            "to": { "type": "string", "meaning": "The pricier model it moved to, by the pricing table's input rate. Never the cheaper one: a move down is not listed." },
+            "from_input_rate": { "type": "number|null", "meaning": "List price of `from`, dollars per million input tokens." },
+            "to_input_rate": { "type": "number|null", "meaning": "List price of `to`. Higher than from_input_rate: that is what makes it an escalation." },
+            "sessions": { "type": "integer", "meaning": "Sessions that made this move." },
+            "cost_after": { "type": "number", "meaning": "Dollars spent on the pricier model afterwards. A floor when unpriced_after or quota_after is non-zero." },
+            "unpriced_after": { "type": "integer", "meaning": "Requests after the move with no price." },
+            "quota_after": { "type": "integer", "meaning": "Requests after the move billed against a plan." }
+          }
+        }
+      }
+    },
+    "provenance": {
+      "meaning": "Where the dollar figures came from.",
+      "keys": {
+        "reported_share": { "type": "number|null", "meaning": "Percent of billable dollars a provider reported rather than this tool worked out. null with no billable dollars." },
+        "billable_cost": { "type": "number", "meaning": "Dollars across reported, calculated and estimated." },
+        "quota_requests": { "type": "integer", "meaning": "Requests billed against a plan." },
+        "unpriced_requests": { "type": "integer", "meaning": "Requests with no known rate." },
+        "by_cost_status": {
+          "type": "array",
+          "meaning": "One entry per cost_status, always all seven.",
+          "keys": {
+            "cost_status": { "type": "string", "enum": "cost_status", "meaning": "The status." },
+            "rows": { "type": "integer", "meaning": "Usage rows." },
+            "requests": { "type": "integer", "meaning": "Requests." },
+            "tokens": { "type": "integer", "meaning": "Tokens." },
+            "cost": { "type": "number|null", "meaning": "null for quota and unavailable." },
+            "api_equivalent_cost": { "type": "number|null", "meaning": "List-rate value, quota rows only." }
+          }
+        }
+      }
+    },
+    "budget": {
+      "meaning": "One configured budget and where spend stands against it.",
+      "keys": {
+        "scope": { "type": "string", "meaning": "global, provider:NAME or model:NAME." },
+        "period": { "type": "string", "enum": "budget_period", "meaning": "The budget's own period; range flags do not apply." },
+        "level": { "type": "string", "enum": "budget_level", "meaning": "Derived from pct." },
+        "spend": { "type": "number", "meaning": "Priced dollars in the period. A floor when unpriced_requests > 0. Quota work is never in it." },
+        "limit": { "type": "number", "meaning": "Configured dollars." },
+        "pct": { "type": "number", "meaning": "spend / limit, 0..100+." },
+        "unpriced_requests": { "type": "integer", "meaning": "In-scope requests with no price." },
+        "quota_requests": { "type": "integer", "meaning": "In-scope requests billed against a plan." }
+      }
+    },
+    "routing_aggregate": {
+      "meaning": "Recorded routing events (test runs journaled by --claude-code-hook or --record-routing) grouped by agent, model and provider.",
+      "keys": {
+        "agent": { "type": "string", "meaning": "Harness or role that ran the task." },
+        "model": { "type": "string", "meaning": "Model." },
+        "provider": { "type": "string", "meaning": "Provider." },
+        "tasks": { "type": "integer", "meaning": "Recorded tasks." },
+        "tokens": { "type": "integer", "meaning": "Tokens across them." },
+        "cost": { "type": "number|null", "meaning": "Dollars over priced tasks; null when none was priced." },
+        "priced_tasks": { "type": "integer", "meaning": "Tasks with a dollar cost." },
+        "unpriced_tasks": { "type": "integer", "meaning": "Tasks that should have one and do not." },
+        "quota_tasks": { "type": "integer", "meaning": "Tasks billed against a plan." },
+        "free_tasks": { "type": "integer", "meaning": "Free or local tasks." },
+        "cost_per_success": { "type": "number|null", "meaning": "Dollars per task that passed its tests. A figure only when cost_basis is exact or free; null otherwise, and cost_basis says why." },
+        "cost_basis": { "type": "string", "enum": "cost_basis", "meaning": "What cost_per_success rests on." },
+        "test_passes": { "type": "integer", "meaning": "Tasks whose test run passed." },
+        "test_failures": { "type": "integer", "meaning": "Tasks whose test run failed." },
+        "success_rate": { "type": "number|null", "meaning": "Percent of tasks with a test result that passed. null when none recorded one." },
+        "retries": { "type": "integer|null", "meaning": "Sum; null when no task reported a count." },
+        "escalations": { "type": "integer|null", "meaning": "Sum; null when no task reported a count." },
+        "review_defects": { "type": "integer|null", "meaning": "Sum; null when no task reported a count." },
+        "retries_observed": { "type": "integer", "meaning": "Tasks that reported a retry count: the denominator of retry_rate." },
+        "escalations_observed": { "type": "integer", "meaning": "Denominator of escalation_rate." },
+        "review_defects_observed": { "type": "integer", "meaning": "Denominator of defect_rate." },
+        "retry_rate": { "type": "number|null", "meaning": "Percent of observed tasks that retried at least once." },
+        "escalation_rate": { "type": "number|null", "meaning": "Percent of observed tasks that escalated." },
+        "defect_rate": { "type": "number|null", "meaning": "Percent of observed tasks with a review defect." }
+      }
+    }
+  },
+  "documents": {
+    "--summary-json": {
+      "meaning": "The compact aggregated document. Start here. Honours --today/--week/--month/--days N/--all (default: 7 days), --provider, --model, --project, --session, --top N.",
+      "keys": {
+        "schema_version": { "type": "integer", "meaning": "Version of this contract." },
+        "generated_at": { "type": "integer", "meaning": "When this was produced." },
+        "range": {
+          "type": "object",
+          "meaning": "The time range covered.",
+          "keys": {
+            "label": { "type": "string", "meaning": "TODAY, 7 DAYS, 30 DAYS, N DAYS or ALL TIME." },
+            "since": { "type": "integer|null", "meaning": "Start of the range; null for all history." }
+          }
+        },
+        "filters": {
+          "type": "object",
+          "meaning": "Filters applied; null when not given.",
+          "keys": {
+            "provider": { "type": "string|null", "meaning": "--provider." },
+            "model": { "type": "string|null", "meaning": "--model." },
+            "project": { "type": "string|null", "meaning": "--project." },
+            "session": { "type": "string|null", "meaning": "--session." }
+          }
+        },
+        "sources": {
+          "type": "array",
+          "meaning": "Every data source, found or not. Not narrowed by range or filters.",
+          "keys": {
+            "id": { "type": "string", "meaning": "opencode, claude_code, codex, copilot, gemini, journal, zen_pricing." },
+            "present": { "type": "boolean", "meaning": "Whether anything was there to read." },
+            "rows": { "type": "integer", "meaning": "Rows read, before cross-source deduplication." },
+            "path": { "type": "string|null", "meaning": "Where it was looked for." },
+            "status": { "type": "string", "meaning": "One-line status, including data that had to be skipped." },
+            "detail": { "type": "string|null", "meaning": "How billing was decided for this source, or why it is off." }
+          }
+        },
+        "pricing": {
+          "type": "object",
+          "meaning": "State of the pricing table.",
+          "keys": {
+            "models_priced": { "type": "integer", "meaning": "Model names the table can price." },
+            "warnings": { "type": "array of string", "meaning": "Problems loading rates, e.g. a stale refreshed cache being ignored." }
+          }
+        },
+        "totals": { "type": "object", "shape": "bucket", "meaning": "Everything in range." },
+        "by_category": {
+          "type": "array",
+          "shape": "bucket",
+          "meaning": "One bucket per category, largest first.",
+          "keys": { "category": { "type": "string", "enum": "category", "meaning": "The category." } }
+        },
+        "by_model": {
+          "type": "object",
+          "meaning": "Largest --top N by tokens.",
+          "keys": {
+            "total": { "type": "integer", "meaning": "Groups that exist." },
+            "shown": { "type": "integer", "meaning": "Groups listed in rows." },
+            "rows": {
+              "type": "array",
+              "shape": "bucket",
+              "meaning": "Grouped by provider, model, category and cost_status, as in the dashboard's model table.",
+              "keys": {
+                "provider": { "type": "string", "meaning": "Pass to --provider." },
+                "model": { "type": "string", "meaning": "Pass to --model." },
+                "category": { "type": "string", "enum": "category", "meaning": "The category." },
+                "cost_status": { "type": "string", "enum": "cost_status", "meaning": "The cost status." },
+                "list_input_rate": { "type": "number|null", "meaning": "The pricing table's list price, dollars per million input tokens. Says which model is the expensive one; it is not what anything cost. null for a free model or one the table cannot price." },
+                "sessions": { "type": "integer", "meaning": "Distinct sessions that used it." }
+              }
+            },
+            "other": { "type": "object|null", "shape": "bucket", "meaning": "Everything not in rows, so rows + other = totals. null when nothing was folded." }
+          }
+        },
+        "by_project": {
+          "type": "object",
+          "meaning": "Largest --top N by tokens.",
+          "keys": {
+            "total": { "type": "integer", "meaning": "Projects that exist." },
+            "shown": { "type": "integer", "meaning": "Projects listed." },
+            "rows": {
+              "type": "array",
+              "shape": "bucket",
+              "meaning": "One per working directory.",
+              "keys": {
+                "project": { "type": "string", "meaning": "Working directory, or (unattributed). Pass to --project." },
+                "sessions": { "type": "integer", "meaning": "Distinct sessions." },
+                "models": { "type": "integer", "meaning": "Distinct provider/model pairs." },
+                "first_seen": { "type": "integer|null", "meaning": "Earliest dated request." },
+                "last_seen": { "type": "integer|null", "meaning": "Latest dated request." }
+              }
+            },
+            "other": { "type": "object|null", "shape": "bucket", "meaning": "As in by_model." }
+          }
+        },
+        "by_session": {
+          "type": "object",
+          "meaning": "Largest --top N by tokens.",
+          "keys": {
+            "total": { "type": "integer", "meaning": "Sessions that exist." },
+            "shown": { "type": "integer", "meaning": "Sessions listed." },
+            "rows": {
+              "type": "array",
+              "shape": "bucket_brief",
+              "meaning": "One per session id.",
+              "keys": {
+                "session_id": { "type": "string", "meaning": "Pass to --session." },
+                "project": { "type": "string|null", "meaning": "Working directory." },
+                "models": { "type": "array of string", "meaning": "provider/model pairs used, first 6." },
+                "models_total": { "type": "integer", "meaning": "How many there were." },
+                "first_seen": { "type": "integer|null", "meaning": "Earliest dated request." },
+                "last_seen": { "type": "integer|null", "meaning": "Latest dated request." },
+                "duration_secs": { "type": "integer|null", "meaning": "last_seen - first_seen." }
+              }
+            },
+            "other": { "type": "object|null", "shape": "bucket", "meaning": "Sessions not listed, plus requests that carry no session id." }
+          }
+        },
+        "by_day": {
+          "type": "object",
+          "meaning": "Local calendar days that have usage, most recent first, at most 31.",
+          "keys": {
+            "total": { "type": "integer", "meaning": "Days with usage in range." },
+            "shown": { "type": "integer", "meaning": "Days listed." },
+            "rows": {
+              "type": "array",
+              "shape": "bucket_brief",
+              "meaning": "One per day.",
+              "keys": { "day": { "type": "string", "meaning": "YYYY-MM-DD, local time." } }
+            },
+            "undated_requests": { "type": "integer", "meaning": "Requests with no timestamp; in totals, in no day." }
+          }
+        },
+        "burn": {
+          "type": "object",
+          "meaning": "The trailing hour, from all usage regardless of range.",
+          "keys": {
+            "window_secs": { "type": "integer", "meaning": "3600." },
+            "requests": { "type": "integer", "meaning": "Requests in the window." },
+            "tokens": { "type": "integer", "meaning": "Tokens in the window." },
+            "tokens_per_minute": { "type": "number", "meaning": "tokens / minutes." },
+            "cost_per_hour": { "type": "number|null", "meaning": "null with fewer than 5 requests or no priced spend: too thin to project from." },
+            "cost_is_floor": { "type": "boolean", "meaning": "Some requests in the window have no price." },
+            "quota_only": { "type": "boolean", "meaning": "The window holds only plan-billed work, so there is no dollar rate." },
+            "unpriced_requests": { "type": "integer", "meaning": "In the window." },
+            "quota_requests": { "type": "integer", "meaning": "In the window." }
+          }
+        },
+        "budgets": { "type": "array", "shape": "budget", "meaning": "Every configured budget, OK ones included. Empty when none is configured." },
+        "limits": { "type": "array", "shape": "limits", "meaning": "Subscription rate-limit windows. Not narrowed by range." },
+        "limit_problems": { "type": "array of string", "meaning": "Limit sources that exist and could not be fully read." },
+        "escalations": { "type": "object", "shape": "escalations", "meaning": "From the rows in range." },
+        "provenance": { "type": "object", "shape": "provenance", "meaning": "From the rows in range." },
+        "routing": {
+          "type": "object",
+          "meaning": "Recorded routing events in range. Empty unless a hook or --record-routing feeds the journal.",
+          "keys": {
+            "events": { "type": "integer", "meaning": "Events in range." },
+            "aggregates": { "type": "array", "shape": "routing_aggregate", "meaning": "Grouped by agent, model and provider." }
+          }
+        }
+      }
+    },
+    "--json": {
+      "meaning": "One object per request. Large: about 130 tokens a row, megabytes on a busy machine. Narrow it with --project, --session, --model, --provider and a range before reading it, or use --csv - for a quarter of the size.",
+      "keys": {
+        "schema_version": { "type": "integer", "meaning": "Version of this contract." },
+        "source": { "type": "string", "meaning": "Every source's status joined into one line." },
+        "range": { "type": "string", "meaning": "TODAY, 7 DAYS, 30 DAYS, N DAYS or ALL TIME." },
+        "usage": {
+          "type": "array",
+          "meaning": "One per request.",
+          "keys": {
+            "provider": { "type": "string", "meaning": "Provider." },
+            "model": { "type": "string", "meaning": "Model." },
+            "category": { "type": "string", "enum": "category", "meaning": "The category." },
+            "cost_status": { "type": "string", "enum": "cost_status", "meaning": "The cost status." },
+            "billing": { "type": "string", "enum": "billing", "meaning": "How the request was paid for." },
+            "requests": { "type": "integer", "meaning": "Usually 1." },
+            "input_tokens": { "type": "integer", "meaning": "Uncached prompt tokens." },
+            "output_tokens": { "type": "integer", "meaning": "Completion tokens." },
+            "reasoning_tokens": { "type": "integer", "meaning": "Where reported separately." },
+            "cache_read_tokens": { "type": "integer", "meaning": "Prompt tokens served from cache." },
+            "cache_write_tokens": { "type": "integer", "meaning": "Prompt tokens written to cache." },
+            "cost": { "type": "number|null", "meaning": "Dollars; null when unknown or plan-billed." },
+            "api_equivalent_cost": { "type": "number|null", "meaning": "List-rate value of a plan-billed request. Never charged." },
+            "created": { "type": "integer", "meaning": "Unix seconds; 0 when the source recorded none." },
+            "project": { "type": "string|null", "meaning": "Working directory." },
+            "session_id": { "type": "string|null", "meaning": "Session id." }
+          }
+        },
+        "limits": { "type": "array", "shape": "limits", "meaning": "Subscription rate-limit windows." },
+        "escalations": { "type": "object", "shape": "escalations", "meaning": "From the rows exported." },
+        "provenance": { "type": "object", "shape": "provenance", "meaning": "From the rows exported." }
+      }
+    },
+    "--routing-json": {
+      "meaning": "Recorded routing events, aggregated. All history unless a range flag is given.",
+      "keys": {
+        "schema_version": { "type": "integer", "meaning": "Version of this contract." },
+        "source": { "type": "string", "meaning": "The journal read." },
+        "events": { "type": "integer", "meaning": "Events aggregated." },
+        "aggregates": { "type": "array", "shape": "routing_aggregate", "meaning": "Grouped by agent, model and provider." }
+      }
+    },
+    "--check-budgets": {
+      "meaning": "Budgets past a threshold. Exits non-zero when any is. For headroom on budgets still OK, read budgets in --summary-json.",
+      "keys": {
+        "schema_version": { "type": "integer", "meaning": "Version of this contract." },
+        "budgets": { "type": "integer", "meaning": "Budgets configured." },
+        "alerts": { "type": "array", "shape": "budget", "meaning": "Only budgets at WARN or above." }
+      }
+    }
+  }
+}
