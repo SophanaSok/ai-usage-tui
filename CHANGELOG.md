@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-17
+
 ### Added
 
 - **`--record-usage PROVIDER`, so llama.cpp usage stops being invisible.** The journal's only
@@ -30,6 +32,17 @@
   still writes under the id `ollama`, which is the filename Omarchy's panel reads, but no longer
   filters the journal down to rows whose provider is literally `ollama`: that filter would have
   silently dropped every llama.cpp row from the panel.
+
+### Security
+
+- **rustls 0.23.45, closing RUSTSEC-2026-0285.** Earlier rustls accepted a TLS 1.3 handshake
+  message sent at the wrong encryption level when it shared a record with a key-changing message,
+  where RFC 8446 §5.1 requires the connection be terminated. The transcript stays authenticated, so
+  a peer could not alter or complete a handshake -- only send in plaintext what should have been
+  encrypted without being hung up on. This tool reaches rustls through `reqwest`, and only on its
+  opt-in outbound calls: `--refresh-pricing` / `--refresh-zen` and the `zen_pricing` collector,
+  `--check-update` and an opted-in `--doctor`, and a configured budget webhook. Lockfile only; every
+  install channel built from v0.15.0 carries the affected version, which is why this release exists.
 
 ## [0.15.0] - 2026-09-03
 

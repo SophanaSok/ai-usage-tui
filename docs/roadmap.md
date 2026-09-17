@@ -1,8 +1,8 @@
 # Roadmap and Outstanding Findings
 
-Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.15.0, which
-shipped the two pull requests merged after v0.14.0 (#92 the library export tests pinned to every
-source root, #93 `--check-update` and its daily user timer).
+Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.16.0, which
+shipped `--record-usage` for llama.cpp and other OpenAI-compatible local servers (#98) and the rustls
+0.23.45 bump that closes RUSTSEC-2026-0285 (#97).
 Shipped items are in the versioned sections of `CHANGELOG.md` (new work goes under
 `[Unreleased]`); this file is the *remaining* work, with enough evidence attached that each item
 can be picked up cold.
