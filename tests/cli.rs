@@ -836,6 +836,173 @@ fn the_text_output_path_also_survives_a_closed_pipe() {
     assert!(status.success(), "got {status}");
 }
 
+/// `--record-event` is the way in for a tool with no collector: an adapter prints the tool's own
+/// usage in this tool's terms. What it has to prove end to end is that the rows arrive *as usage*
+/// -- in the project and session views, which the response recorders could never reach -- and
+/// that the two statements about money an adapter may make are kept exactly as made.
+#[test]
+fn a_recorded_event_round_trips_with_project_session_and_cost() {
+    let dir = scratch("record-event");
+    let journal = dir.join("usage.db");
+    let fixture = format!(
+        "{}/tests/fixtures/usage_events.ndjson",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    record(&journal, &fixture, "--record-event");
+    record(&journal, &fixture, "--record-event");
+    let rows = journal_rows(&journal);
+    assert_eq!(
+        rows.len(),
+        2,
+        "replaying the adapter's output double-counted it: {rows:?}"
+    );
+
+    let plan = rows
+        .iter()
+        .find(|row| row["model"] == "claude-sonnet-5")
+        .expect("the plan row");
+    assert_eq!(plan["billing"], "subscription");
+    assert_eq!(plan["cost_status"], "quota");
+    assert!(
+        plan["cost"].is_null(),
+        "plan-billed work has no per-request price: {plan}"
+    );
+    assert!(
+        plan["api_equivalent_cost"]
+            .as_f64()
+            .is_some_and(|cost| cost > 0.0),
+        "a subscription row carries the list-rate figure beside it, as a native one does: {plan}"
+    );
+    assert_eq!(plan["cache_write_tokens"], 50);
+    assert_eq!(plan["session_id"], "aider-s1");
+    assert_eq!(
+        plan["project"], "/work/app",
+        "stored as the collectors store it"
+    );
+
+    let paid = rows
+        .iter()
+        .find(|row| row["model"] == "gpt-5")
+        .expect("the paid row");
+    assert_eq!(paid["cost_status"], "reported");
+    assert_eq!(
+        paid["cost"], 0.0123,
+        "a reported cost is kept, not re-estimated: {paid}"
+    );
+
+    // The views a bare response never reached, and the filter spelled with the trailing slash
+    // the adapter sent.
+    let mut command = bin();
+    command.args(["--summary-json", "--project", "/work/app/"]);
+    hermetic_with(
+        &mut command,
+        Path::new("/nonexistent/opencode.db"),
+        &journal,
+    );
+    let output = command.output().expect("run");
+    assert!(output.status.success());
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+    assert_eq!(summary["totals"]["requests"], 2, "{summary}");
+    assert_eq!(summary["totals"]["quota_requests"], 1);
+    assert_eq!(summary["totals"]["cost"], 0.0123);
+    let text = summary.to_string();
+    assert!(
+        text.contains("aider-s1"),
+        "the session is in no view: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A refused batch is refused whole: non-zero, the reason on stderr, and no journal. The adapter's
+/// author -- often a model -- has nothing else to learn from.
+#[test]
+fn a_usage_event_that_cannot_be_read_refuses_the_batch() {
+    use std::io::Write;
+    let dir = scratch("record-event-refused");
+    for (input, expected) in [
+        // No counts: the tool measures none, and estimating them is what this refuses.
+        (r#"{"provider":"cursor","model":"m","created":1}"#, "do not estimate"),
+        // A line that is not JSON, between two that are.
+        (
+            "{\"provider\":\"a\",\"model\":\"m\",\"input_tokens\":1,\"output_tokens\":1,\"created\":1}\nnot json\n{\"provider\":\"a\",\"model\":\"m\",\"input_tokens\":1,\"output_tokens\":1,\"created\":2}",
+            "not JSON",
+        ),
+        ("", "nothing on stdin"),
+    ] {
+        let journal = dir.join("usage.db");
+        let mut child = bin()
+            .args(["--record-event", "--journal"])
+            .arg(&journal)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        let output = child.wait_with_output().expect("wait");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "accepted {input:?}");
+        assert!(stderr.contains(expected), "{input:?}: {stderr}");
+        assert!(!journal.exists(), "a refused batch created a journal: {input:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Plan-billed events stay out of a budget's dollars and are counted beside them, exactly as a
+/// native subscription row is; a reported cost reaches the budget.
+#[test]
+fn a_subscription_event_stays_out_of_budget_spend_and_a_reported_cost_reaches_it() {
+    use std::io::Write;
+    let dir = scratch("record-event-budget");
+    let journal = dir.join("usage.db");
+    let config_home = dir.join("config");
+    std::fs::create_dir_all(config_home.join("ai-usage-tui")).expect("config home");
+    std::fs::write(
+        config_home.join("ai-usage-tui").join("config.toml"),
+        "[budgets]\n[[budgets.entry]]\nscope = \"global\"\nperiod = \"monthly\"\nlimit = 100.0\n",
+    )
+    .expect("write config");
+    let now = chrono::Utc::now().timestamp();
+    let events = format!(
+        "{{\"provider\":\"aider\",\"model\":\"claude-sonnet-5\",\"event_id\":\"p\",\"created\":{now},\"input_tokens\":900000,\"output_tokens\":90000,\"billing\":\"subscription\"}}\n\
+         {{\"provider\":\"aider\",\"model\":\"gpt-5\",\"event_id\":\"c\",\"created\":{now},\"input_tokens\":10,\"output_tokens\":3,\"cost\":0.25}}\n"
+    );
+    let mut child = bin()
+        .args(["--record-event", "--journal"])
+        .arg(&journal)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("spawn");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(events.as_bytes())
+        .unwrap();
+    assert!(child.wait().expect("wait").success());
+
+    let mut command = bin();
+    command.arg("--summary-json");
+    hermetic_with(
+        &mut command,
+        Path::new("/nonexistent/opencode.db"),
+        &journal,
+    );
+    command.env("XDG_CONFIG_HOME", &config_home);
+    let output = command.output().expect("run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+    let budget = &summary["budgets"][0];
+    assert_eq!(budget["spend"], 0.25, "{budget}");
+    assert_eq!(budget["quota_requests"], 1, "{budget}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn the_recorders_survive_a_closed_pipe_after_journaling() {
     // Each recorder confirmed with a bare `println!` *after* writing its row, so a caller that
@@ -845,9 +1012,10 @@ fn the_recorders_survive_a_closed_pipe_after_journaling() {
     // not a race.
     use std::io::Write;
     let fixtures = format!("{}/tests/fixtures", env!("CARGO_MANIFEST_DIR"));
-    for (flag, fixture) in [
-        ("--record-ollama", "ollama_single.json"),
-        ("--record-usage=llamacpp", "llamacpp_chat.json"),
+    for (flag, fixture, rows) in [
+        ("--record-ollama", "ollama_single.json", 1),
+        ("--record-usage=llamacpp", "llamacpp_chat.json", 1),
+        ("--record-event", "usage_events.ndjson", 2),
     ] {
         let dir = scratch(&format!("closed-pipe-{}", flag.trim_start_matches('-')));
         let journal = dir.join("usage.db");
@@ -884,7 +1052,11 @@ fn the_recorders_survive_a_closed_pipe_after_journaling() {
             status.success(),
             "{flag} on a closed pipe should exit cleanly, got {status}"
         );
-        assert_eq!(journal_rows(&journal).len(), 1, "{flag} journaled its row");
+        assert_eq!(
+            journal_rows(&journal).len(),
+            rows,
+            "{flag} journaled what it was sent"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
@@ -2431,6 +2603,13 @@ fn every_json_document_is_fully_described_by_the_schema() {
         .write_all(br#"{"agent":"a","model":"m","provider":"p","task":"t","tokens":10,"cost":0.5,"cost_status":"reported","retries":1,"test_result":true}"#)
         .unwrap();
     assert!(child.wait().expect("wait").success());
+    // And usage through `--record-event`, so a row with a journaled project, session and
+    // subscription billing is among what the glossary has to describe.
+    record(
+        &journal,
+        &format!("{fixtures}/usage_events.ndjson"),
+        "--record-event",
+    );
 
     // The committed fixtures are years old, so nothing in them is inside a budget's period. One
     // request dated now, priced per token, is what puts the global budget over its limit.

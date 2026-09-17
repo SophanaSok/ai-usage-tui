@@ -4,6 +4,29 @@
 
 ### Added
 
+- **`--record-event`: a way in for a tool that has no collector.** The recorders each understood
+  one server's response, and a bare response cannot say where it was made -- so usage fed in from
+  outside never reached the Projects or Sessions views, had no cache writes, and could not say it
+  was billed against a plan. `--record-event` reads usage in this tool's own terms, one JSON
+  object per line: `provider`, `model`, `input_tokens`, `output_tokens`, one of `event_id` or
+  `created`, and optionally the rest of the token split, `project`, `session_id`, a `cost` the
+  tool itself recorded (kept as `reported`, never re-estimated) or `"billing": "subscription"`
+  (a `quota` row with `api_equivalent_cost` beside it, on the same path a native collector's
+  takes). A few lines of `jq` over a tool's own log is a whole integration.
+
+  It is strict where a collector is tolerant, because an adapter's author -- often an LLM agent
+  -- learns from the exit status and nothing else: an unknown key, a count that is not a whole
+  number, a line that is not JSON each refuse the *whole* batch, by name, before the journal is
+  opened. And it records measured counts only. An event without its token counts is refused,
+  never stored as zero, so a tool that keeps no counts cannot be journaled by guessing them; and
+  no `cost_status` but `reported` can be supplied, so this tool never vouches for arithmetic it
+  did not see. A supplied `event_id` is stored as `event:<provider>:<id>`, since identities share
+  one namespace across sources.
+
+  The journal's `usage_event` gains three nullable columns (`session_id`, `project`, `billing`).
+  An older build's writer and reader name their columns, so they are unaffected, and the journal
+  schema version stays `1`: an old hook and a new dashboard can keep sharing one file.
+
 - **A monthly job keeps the bundled rate table from going stale by neglect.** The tool now tells
   a user when their install's rates are over 90 days old; this is the other end of that promise.
   `pricing-drift.yml` regenerates `pricing/litellm.tsv` when LiteLLM's table has moved, runs the

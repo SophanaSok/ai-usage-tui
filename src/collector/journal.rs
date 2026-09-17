@@ -8,7 +8,7 @@ use crate::classify::{category_from_label, classify, cost_status_from_label};
 use crate::collector::background::Collector;
 use crate::collector::opencode::parse_created_at;
 use crate::helpers::{number, string};
-use crate::model::{Category, CostStatus, RoutingEvent, Usage};
+use crate::model::{Billing, Category, CostStatus, RoutingEvent, Usage};
 use crate::utils::now;
 use std::path::PathBuf;
 
@@ -65,18 +65,31 @@ pub(crate) fn load_journal_counting(path: &Path) -> Result<(Vec<Usage>, Option<S
     if !has_events {
         return Ok((Vec::new(), None));
     }
-    // A journal written by an older build has no `event_id` column, and this is a read-only
-    // path that cannot migrate it. Select the column only when it actually exists.
-    let has_event_id: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('usage_event') WHERE name = 'event_id')",
-        [],
-        |row| row.get(0),
-    )?;
-    let mut stmt = conn.prepare(if has_event_id {
-        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, event_id, id FROM usage_event"
-    } else {
-        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, NULL AS event_id, id FROM usage_event"
-    })?;
+    // A journal written by an older build lacks the columns added since, and this is a read-only
+    // path that cannot migrate it. Each is selected only when it actually exists -- probed one by
+    // one, because they arrived in different releases and a journal can have any prefix of them.
+    // The new ones go *after* `id`: `row_name` below reads `id` by position.
+    let has_column = |name: &str| -> rusqlite::Result<bool> {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('usage_event') WHERE name = ?1)",
+            [name],
+            |row| row.get(0),
+        )
+    };
+    let optional = |name: &str| -> rusqlite::Result<String> {
+        Ok(if has_column(name)? {
+            name.to_string()
+        } else {
+            format!("NULL AS {name}")
+        })
+    };
+    let mut stmt = conn.prepare(&format!(
+        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, {}, id, {}, {}, {} FROM usage_event",
+        optional("event_id")?,
+        optional("session_id")?,
+        optional("project")?,
+        optional("billing")?,
+    ))?;
     let mut rows = stmt.query([])?;
     let mut usages = Vec::new();
     let mut skipped = 0usize;
@@ -109,14 +122,29 @@ pub(crate) fn load_journal_counting(path: &Path) -> Result<(Vec<Usage>, Option<S
 fn usage_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Usage> {
     let category: String = row.get(2)?;
     let cost_status: String = row.get(3)?;
+    let cost: Option<f64> = row.get(10)?;
+    let billing: Option<String> = row.get(16)?;
+    let subscription = billing.as_deref() == Some(Billing::Subscription.label());
+    // A plan-billed event is *stored* as `quota`, so a build that predates the `billing` column
+    // reads it as what it is and neither prices nor budgets it. This build knows more: handed
+    // back as an unpriced subscription row -- exactly what the native collectors emit -- it takes
+    // the one path that derives `quota` and the list-rate `api_equivalent_cost` beside it.
+    let cost_status = match cost_status_from_label(&cost_status) {
+        CostStatus::Quota if subscription && cost.is_none() => CostStatus::Unavailable,
+        status => status,
+    };
     {
         Ok(Usage {
             event_id: row.get(12).ok().flatten(),
             provider: row.get(0)?,
             model: row.get(1)?,
             category: category_from_label(&category),
-            cost_status: cost_status_from_label(&cost_status),
-            billing: Default::default(),
+            cost_status,
+            billing: if subscription {
+                Billing::Subscription
+            } else {
+                Billing::default()
+            },
             api_equivalent_cost: None,
             // SQLite integers are signed 64-bit; rusqlite 0.40 removed the `u64` impls
             // rather than keep silently reinterpreting the top bit. Read as `i64` and clamp
@@ -127,10 +155,12 @@ fn usage_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Usage> {
             reasoning: count(row.get(7)?),
             cache_read: count(row.get(8)?),
             cache_write: count(row.get(9)?),
-            cost: row.get(10)?,
+            cost,
             created: row.get(11)?,
-            session_id: None,
-            project: None,
+            // Only `--record-event` writes these two; every other recorder is handed a bare
+            // response, which says nothing about where or in what session it was made.
+            session_id: row.get(14)?,
+            project: row.get(15)?,
             // The recorders refuse a response with no usage, so a journaled row is whole.
             incomplete: false,
         })
@@ -290,7 +320,10 @@ fn journal_connection(path: &Path) -> Result<Connection> {
                 cache_read_tokens INTEGER NOT NULL,
                 cache_write_tokens INTEGER NOT NULL,
                 cost REAL,
-                created INTEGER NOT NULL
+                created INTEGER NOT NULL,
+                session_id TEXT,
+                project TEXT,
+                billing TEXT
             );",
         )?;
         let has_event_id: bool = conn.query_row(
@@ -301,6 +334,23 @@ fn journal_connection(path: &Path) -> Result<Connection> {
         if !has_event_id {
             conn.execute("ALTER TABLE usage_event ADD COLUMN event_id TEXT", [])?;
         }
+        // What `--record-event` brought. Nullable and added at the end, so this is a change an
+        // older build can live with on both sides -- its INSERT and its SELECT name their columns
+        // -- which is why `JOURNAL_SCHEMA_VERSION` does not move. Probed one at a time: a journal
+        // can hold any prefix of them.
+        for column in ["session_id", "project", "billing"] {
+            let present: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('usage_event') WHERE name = ?1)",
+                [column],
+                |row| row.get(0),
+            )?;
+            if !present {
+                conn.execute(
+                    &format!("ALTER TABLE usage_event ADD COLUMN {column} TEXT"),
+                    [],
+                )?;
+            }
+        }
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS usage_event_event_id ON usage_event(event_id)",
             [],
@@ -310,6 +360,10 @@ fn journal_connection(path: &Path) -> Result<Connection> {
 }
 
 /// One completed response, on its way into the journal.
+///
+/// The recorders that are handed a bare response fill the first seven fields and leave the rest
+/// at their defaults; `--record-event` is the only one with anything to put there.
+#[derive(Default)]
 struct JournalEvent<'a> {
     event_id: String,
     provider: &'a str,
@@ -318,6 +372,13 @@ struct JournalEvent<'a> {
     output: u64,
     reasoning: u64,
     cache_read: u64,
+    cache_write: u64,
+    /// A figure the source itself recorded. Never computed here.
+    cost: Option<f64>,
+    /// How the source says it is billed, when it says. `None` leaves the question to `classify`.
+    billing: Option<Billing>,
+    session_id: Option<String>,
+    project: Option<String>,
 }
 
 /// How a local or quota-billed response is costed.
@@ -336,23 +397,34 @@ fn cost_status_for(category: Category) -> CostStatus {
 
 /// Insert one event, or do nothing if the journal already holds it.
 ///
-/// `cost` is always NULL: no recorder has a price to record, and a zero here would be a
-/// fabricated one. `Category::Local` carries the zero instead, as a status.
+/// `cost` is NULL unless the source recorded one: a recorder handed a bare response has no price
+/// to record, and a zero here would be a fabricated one. `Category::Local` carries the zero
+/// instead, as a status. A recorded cost is `reported`; a plan-billed event is `quota`.
 fn insert_event(conn: &Connection, event: &JournalEvent<'_>, created: i64) -> Result<usize> {
     let category = classify(event.provider, &event.model);
+    let cost_status = match (event.cost, event.billing) {
+        (Some(_), _) => CostStatus::ProviderReported,
+        (None, Some(Billing::Subscription)) => CostStatus::Quota,
+        (None, _) => cost_status_for(category),
+    };
     Ok(conn.execute(
-        "INSERT OR IGNORE INTO usage_event (event_id, provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created) VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8, ?9, 0, NULL, ?10)",
+        "INSERT OR IGNORE INTO usage_event (event_id, provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, session_id, project, billing) VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             event.event_id,
             event.provider,
             event.model,
             category.label(),
-            cost_status_for(category).label(),
+            cost_status.label(),
             stored(event.input),
             stored(event.output),
             stored(event.reasoning),
             stored(event.cache_read),
+            stored(event.cache_write),
+            event.cost,
             created,
+            event.session_id,
+            event.project,
+            event.billing.map(Billing::label),
         ],
     )?)
 }
@@ -418,6 +490,7 @@ pub fn record_ollama(path: &Path) -> Result<()> {
                 output: number(&json, &["eval_count"]),
                 reasoning: 0,
                 cache_read: 0,
+                ..Default::default()
             },
             created,
         )?;
@@ -513,10 +586,315 @@ pub(crate) fn record_usage_events(path: &Path, provider: &str, events: &[Value])
             output: number(usage, &["completion_tokens"]),
             reasoning: number(&usage["completion_tokens_details"], &["reasoning_tokens"]),
             cache_read,
+            ..Default::default()
         },
         created,
     )?;
     Ok(recorded)
+}
+
+/// The keys `--record-event` reads. Anything else in an event is refused, by name.
+const EVENT_KEYS: &[&str] = &[
+    "provider",
+    "model",
+    "input_tokens",
+    "output_tokens",
+    "reasoning_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "created",
+    "event_id",
+    "session_id",
+    "project",
+    "cost",
+    "cost_status",
+    "billing",
+];
+
+/// Journal usage events a tool's own adapter has already normalised, read from stdin.
+///
+/// The other recorders each understand one server's response. This one is for everything else:
+/// a tool that logs its own token counts, fed through a few lines of `jq` or a script, arrives
+/// here in the terms of `docs/data-model.md` and carries what a bare response cannot -- the
+/// project, the session, cache writes, a cost the tool itself recorded, a plan it is billed
+/// against.
+///
+/// It is strict in the way `--record-routing` is, for the same reason: whoever writes the adapter
+/// learns from the exit code and nothing else. One event that cannot be read refuses the whole
+/// batch, before the journal is opened. And it records **measured counts only** -- an event
+/// without `input_tokens` and `output_tokens` is refused, never stored as zero, so a tool that
+/// keeps no counts cannot be journaled by estimating them. That is the rule the README's "Why
+/// there is no Cursor collector" states; here it is the code's.
+pub fn record_event(path: &Path) -> Result<()> {
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input)?;
+    anyhow::ensure!(
+        !input.trim().is_empty(),
+        "--record-event read nothing on stdin; it takes one JSON usage event per line"
+    );
+    let (events, invalid_lines) = read_json_events(&input)?;
+    // A recorder of responses skips a line it cannot parse, because only the last chunk of a
+    // stream matters. Here every line is usage, and a skipped one is usage silently lost.
+    anyhow::ensure!(
+        invalid_lines == 0,
+        "{invalid_lines} line(s) on stdin are not JSON; nothing was recorded. --record-event \
+         takes one usage event per line and refuses the batch rather than dropping part of it"
+    );
+    // An adapter that collects before it prints sends one array; take it as the batch it is.
+    let events: Vec<Value> = events
+        .into_iter()
+        .flat_map(|event| match event {
+            Value::Array(items) => items,
+            other => vec![other],
+        })
+        .collect();
+    let (recorded, sent) = record_events(path, &events)?;
+    let already = sent - recorded;
+    crate::helpers::print_line(&format!(
+        "Recorded {recorded} of {sent} usage event(s) in {}{}",
+        path.display(),
+        if already > 0 {
+            format!(" ({already} already journaled)")
+        } else {
+            String::new()
+        }
+    ))?;
+    Ok(())
+}
+
+/// The same recording, from values already parsed. Answers how many were new, and how many sent.
+pub(crate) fn record_events(path: &Path, events: &[Value]) -> Result<(usize, usize)> {
+    anyhow::ensure!(!events.is_empty(), "--record-event was given no events");
+    // Everything is validated before the journal is opened, so a refused batch creates no file
+    // and leaves no half of itself behind.
+    let parsed = events
+        .iter()
+        .enumerate()
+        .map(|(index, json)| {
+            parse_event(json)
+                .map_err(|error| anyhow::anyhow!("usage event #{}: {error}", index + 1))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let conn = journal_connection(path)?;
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let inserted = (|| -> Result<usize> {
+        let mut recorded = 0;
+        for event in &parsed {
+            recorded += insert_event(&conn, &event.row(), event.created)?;
+        }
+        Ok(recorded)
+    })();
+    match inserted {
+        Ok(recorded) => {
+            conn.execute_batch("COMMIT")?;
+            Ok((recorded, parsed.len()))
+        }
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
+}
+
+/// One `--record-event` line, read and found whole.
+struct ParsedEvent {
+    event_id: String,
+    provider: String,
+    model: String,
+    input: u64,
+    output: u64,
+    reasoning: u64,
+    cache_read: u64,
+    cache_write: u64,
+    cost: Option<f64>,
+    billing: Option<Billing>,
+    session_id: Option<String>,
+    project: Option<String>,
+    created: i64,
+}
+
+impl ParsedEvent {
+    fn row(&self) -> JournalEvent<'_> {
+        JournalEvent {
+            event_id: self.event_id.clone(),
+            provider: &self.provider,
+            model: self.model.clone(),
+            input: self.input,
+            output: self.output,
+            reasoning: self.reasoning,
+            cache_read: self.cache_read,
+            cache_write: self.cache_write,
+            cost: self.cost,
+            billing: self.billing,
+            session_id: self.session_id.clone(),
+            project: self.project.clone(),
+        }
+    }
+}
+
+fn parse_event(json: &Value) -> Result<ParsedEvent> {
+    let object = json
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("must be a JSON object, got {json}"))?;
+    // A misspelt optional key would otherwise be a count quietly left out of the row.
+    if let Some(unknown) = object
+        .keys()
+        .find(|key| !EVENT_KEYS.contains(&key.as_str()))
+    {
+        anyhow::bail!(
+            "`{unknown}` is not a key this reads; the keys are {}",
+            EVENT_KEYS.join(", ")
+        );
+    }
+    let provider = required_text(json, "provider")?;
+    let model = required_text(json, "model")?;
+    let input = required_count(json, "input_tokens")?;
+    let output = required_count(json, "output_tokens")?;
+    let reasoning = optional_count(json, "usage event", "reasoning_tokens")?.unwrap_or(0);
+    let cache_read = optional_count(json, "usage event", "cache_read_tokens")?.unwrap_or(0);
+    let cache_write = optional_count(json, "usage event", "cache_write_tokens")?.unwrap_or(0);
+    let session_id = optional_text(json, "session_id")?;
+    let project = optional_text(json, "project")?
+        .map(|project| crate::collector::claude_code::normalize_project_path(&project));
+
+    let supplied_id = match json.get("event_id") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(id)) if !id.trim().is_empty() => Some(id.trim().to_string()),
+        Some(Value::Number(id)) => Some(id.to_string()),
+        Some(other) => anyhow::bail!("`event_id` must be a non-empty string, got {other}"),
+    };
+    let created = optional_count(json, "usage event", "created")?
+        .filter(|seconds| *seconds > 0)
+        .map(|seconds| {
+            crate::collector::opencode::timestamp_seconds(
+                i64::try_from(seconds).unwrap_or(i64::MAX),
+            )
+        });
+    // With neither, the only identity left is the time of recording -- which is different on
+    // every run, so replaying the same log would journal it again each time.
+    anyhow::ensure!(
+        supplied_id.is_some() || created.is_some(),
+        "needs `event_id` or `created` (unix seconds): with neither, the same event recorded \
+         twice would be counted twice"
+    );
+    // Identities share one namespace across every source, so an adapter's `1` must not be able
+    // to collide with another tool's `1` -- or with a native collector's id.
+    let event_id = match &supplied_id {
+        Some(id) => format!("event:{provider}:{id}"),
+        None => format!(
+            "event:{provider}:{model}:{}:{input}:{output}:{}",
+            created.unwrap_or_default(),
+            session_id.as_deref().unwrap_or_default()
+        ),
+    };
+
+    let cost = match json.get("cost") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_f64()
+                .filter(|cost| cost.is_finite() && *cost >= 0.0)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("`cost` must be a number of dollars, got {value}")
+                })?,
+        ),
+    };
+    let billing = match optional_text(json, "billing")?.as_deref() {
+        None => None,
+        Some("subscription") => Some(Billing::Subscription),
+        Some("per_token") => Some(Billing::PerToken),
+        Some(other) => {
+            anyhow::bail!("`billing` must be \"subscription\" or \"per_token\", got {other:?}")
+        }
+    };
+    // The status is derived, never taken on trust: `estimated` or `calculated` from an adapter
+    // would be this tool vouching for arithmetic it never saw. The one thing an adapter can
+    // assert is that the figure is the source's own.
+    match optional_text(json, "cost_status")?.as_deref() {
+        None => {}
+        Some("reported") => anyhow::ensure!(
+            cost.is_some(),
+            "`cost_status` \"reported\" needs the `cost` that was reported"
+        ),
+        Some(other) => anyhow::bail!(
+            "`cost_status` {other:?} cannot be supplied: the only status an event may assert is \
+             \"reported\", with the `cost` the tool itself recorded. Leave it out and the status \
+             is derived"
+        ),
+    }
+    anyhow::ensure!(
+        !(billing == Some(Billing::Subscription) && cost.is_some()),
+        "a \"subscription\" event cannot carry a `cost`: work billed against a plan has no \
+         per-request price"
+    );
+
+    Ok(ParsedEvent {
+        event_id,
+        provider,
+        model,
+        input,
+        output,
+        reasoning,
+        cache_read,
+        cache_write,
+        cost,
+        billing,
+        session_id,
+        project,
+        created: created.unwrap_or_else(recorded_now),
+    })
+}
+
+/// A string an event must carry. Blank counts as absent: a provider of `""` classifies nothing.
+fn required_text(json: &Value, key: &str) -> Result<String> {
+    optional_text(json, key)?.ok_or_else(|| anyhow::anyhow!("`{key}` is required"))
+}
+
+/// A string an event may carry; absent, `null` and blank are all "not said".
+fn optional_text(json: &Value, key: &str) -> Result<Option<String>> {
+    match json.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(text)) => {
+            Ok(Some(text.trim().to_string()).filter(|text| !text.is_empty()))
+        }
+        Some(other) => Err(anyhow::anyhow!("`{key}` must be a string, got {other}")),
+    }
+}
+
+/// A token count the source always measures. Absent is refused, not read as `0`: an event with
+/// no output count is not an event that produced no output, and priced as one it is a confident,
+/// low, wrong number.
+fn required_count(json: &Value, key: &str) -> Result<u64> {
+    optional_count(json, "usage event", key)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "`{key}` is required. Record the count the tool measured; if it measures none, \
+             there is nothing to record -- do not estimate one"
+        )
+    })
+}
+
+/// A non-negative whole number as an emitter sent it: `None` when absent or `null`, an error when
+/// it is anything else that is not a count. `what` names the kind of event in the error.
+fn optional_count(json: &Value, what: &str, key: &str) -> Result<Option<u64>> {
+    let Some(value) = json.get(key) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    value
+        .as_u64()
+        .or_else(|| {
+            value
+                .as_f64()
+                .filter(|f| f.fract() == 0.0 && *f >= 0.0)
+                .map(|f| f as u64)
+        })
+        .map(Some)
+        .ok_or_else(|| {
+            anyhow::anyhow!("{what}: `{key}` must be a non-negative integer, got {value}")
+        })
 }
 
 pub fn load_routing(path: &Path) -> Result<Vec<RoutingEvent>> {
@@ -780,25 +1158,15 @@ fn allow_unreported_counters(conn: &Connection) -> Result<()> {
 /// integer: a string or a negative number silently becoming `0` — which is what the old
 /// `number()` default did — is a silent failure, and those reach the user as errors (convention 8).
 fn counter(json: &Value, key: &str) -> Result<Option<u32>> {
-    let Some(value) = json.get(key) else {
-        return Ok(None);
+    let refuse = || {
+        anyhow::anyhow!(
+            "routing event: `{key}` must be a non-negative integer, got {}",
+            json[key]
+        )
     };
-    if value.is_null() {
-        return Ok(None);
-    }
-    value
-        .as_u64()
-        .or_else(|| {
-            value
-                .as_f64()
-                .filter(|f| f.fract() == 0.0 && *f >= 0.0)
-                .map(|f| f as u64)
-        })
-        .and_then(|n| u32::try_from(n).ok())
-        .map(Some)
-        .ok_or_else(|| {
-            anyhow::anyhow!("routing event: `{key}` must be a non-negative integer, got {value}")
-        })
+    optional_count(json, "routing event", key)?
+        .map(|n| u32::try_from(n).map_err(|_| refuse()))
+        .transpose()
 }
 
 /// A non-negative whole quantity — `tokens`, `requests` — where absent means `0`.
@@ -807,23 +1175,7 @@ fn counter(json: &Value, key: &str) -> Result<Option<u32>> {
 /// fields still going through `helpers::number`, which maps a string or a negative to `0` and
 /// reports success. One rule for the whole event.
 fn quantity(json: &Value, key: &str) -> Result<u64> {
-    let Some(value) = json.get(key) else {
-        return Ok(0);
-    };
-    if value.is_null() {
-        return Ok(0);
-    }
-    value
-        .as_u64()
-        .or_else(|| {
-            value
-                .as_f64()
-                .filter(|f| f.fract() == 0.0 && *f >= 0.0)
-                .map(|f| f as u64)
-        })
-        .ok_or_else(|| {
-            anyhow::anyhow!("routing event: `{key}` must be a non-negative integer, got {value}")
-        })
+    Ok(optional_count(json, "routing event", key)?.unwrap_or(0))
 }
 
 /// `test_result` as the emitter sent it: a boolean, `0`/`1`, or `"pass"`/`"fail"`.
@@ -1423,6 +1775,7 @@ mod tests {
 #[cfg(test)]
 mod concurrent_writer_tests {
     use super::*;
+    use serde_json::json;
     use std::sync::{Arc, Barrier};
 
     /// A journal from before `event_id`, which every writer migrates on open.
@@ -1437,6 +1790,256 @@ mod concurrent_writer_tests {
                 cache_write_tokens INTEGER NOT NULL, cost REAL, created INTEGER NOT NULL);",
         )
         .unwrap();
+    }
+
+    /// The journal as v0.18.0 wrote it: `event_id` and its index, none of `--record-event`'s
+    /// columns, one row, stamped with the schema version.
+    fn pre_record_event_journal(path: &Path) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE usage_event (
+                id INTEGER PRIMARY KEY, event_id TEXT, provider TEXT NOT NULL, model TEXT NOT NULL,
+                category TEXT NOT NULL, cost_status TEXT NOT NULL, requests INTEGER NOT NULL,
+                input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+                reasoning_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL,
+                cache_write_tokens INTEGER NOT NULL, cost REAL, created INTEGER NOT NULL);
+             CREATE UNIQUE INDEX usage_event_event_id ON usage_event(event_id);
+             INSERT INTO usage_event (event_id, provider, model, category, cost_status, requests,
+                input_tokens, output_tokens, reasoning_tokens, cache_read_tokens,
+                cache_write_tokens, cost, created)
+             VALUES ('ollama:old', 'ollama', 'qwen3', 'LOCAL', 'local', 1, 7, 3, 0, 0, 0, NULL, 100);
+             PRAGMA user_version = 1;",
+        )
+        .unwrap();
+    }
+
+    fn usage_event(id: &str) -> Value {
+        json!({
+            "provider": "aider", "model": "claude-sonnet-5", "event_id": id,
+            "input_tokens": 1200, "output_tokens": 300, "created": 1_758_000_000
+        })
+    }
+
+    #[test]
+    fn a_recorded_event_carries_what_a_bare_response_cannot() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("usage.db");
+        let mut event = usage_event("a1");
+        event["cache_write_tokens"] = json!(50);
+        event["reasoning_tokens"] = json!(20);
+        event["project"] = json!("/work/app/");
+        event["session_id"] = json!("s1");
+        assert_eq!(record_events(&path, &[event]).unwrap(), (1, 1));
+
+        let rows = load_journal(&path).unwrap();
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!((row.input, row.output), (1200, 300));
+        assert_eq!((row.cache_write, row.reasoning), (50, 20));
+        assert_eq!(row.session_id.as_deref(), Some("s1"));
+        // Normalised as the collectors do it, or `--project /work/app` would not find the row.
+        assert_eq!(row.project.as_deref(), Some("/work/app"));
+        assert_eq!(row.cost, None);
+    }
+
+    /// The rule the README states for Cursor, as code: a tool that keeps no counts cannot be
+    /// journaled, because an absent count is refused rather than read as `0` -- and `0` output
+    /// tokens prices as a confident, low, wrong number.
+    #[test]
+    fn an_event_without_token_counts_is_refused_not_stored_as_zero() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("usage.db");
+        for missing in ["input_tokens", "output_tokens"] {
+            let mut event = usage_event("a1");
+            event.as_object_mut().unwrap().remove(missing);
+            let error = record_events(&path, &[event]).unwrap_err().to_string();
+            assert!(error.contains(missing), "{error}");
+            assert!(error.contains("do not estimate"), "{error}");
+        }
+        for junk in [json!("1200"), json!(-1), json!(1.5)] {
+            let mut event = usage_event("a1");
+            event["output_tokens"] = junk;
+            assert!(record_events(&path, &[event]).is_err());
+        }
+        assert!(!path.exists(), "a refused event must not create a journal");
+        // An explicit zero is a measurement, and is kept.
+        let mut event = usage_event("a1");
+        event["output_tokens"] = json!(0);
+        assert_eq!(record_events(&path, &[event]).unwrap(), (1, 1));
+    }
+
+    #[test]
+    fn one_bad_event_refuses_the_whole_batch_and_creates_no_journal() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("usage.db");
+        let mut bad = usage_event("a2");
+        bad["cach_read_tokens"] = json!(4);
+        let error = record_events(&path, &[usage_event("a1"), bad])
+            .unwrap_err()
+            .to_string();
+        // Named by position and by key, because whoever wrote the adapter reads only this.
+        assert!(
+            error.contains("#2") && error.contains("cach_read_tokens"),
+            "{error}"
+        );
+        assert!(
+            !path.exists(),
+            "the good half of a refused batch was written"
+        );
+    }
+
+    #[test]
+    fn an_event_with_neither_id_nor_time_is_refused() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("usage.db");
+        let mut event = usage_event("a1");
+        event.as_object_mut().unwrap().remove("event_id");
+        event.as_object_mut().unwrap().remove("created");
+        let error = record_events(&path, &[event.clone()])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("event_id") && error.contains("created"),
+            "{error}"
+        );
+        // Either one is an identity.
+        event["created"] = json!(1_758_000_000);
+        assert_eq!(record_events(&path, &[event.clone()]).unwrap(), (1, 1));
+        assert_eq!(record_events(&path, &[event]).unwrap(), (0, 1));
+    }
+
+    #[test]
+    fn a_reported_cost_needs_a_cost_and_a_subscription_forbids_one() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("usage.db");
+        let with = |key: &str, value: Value| {
+            let mut event = usage_event("a1");
+            event[key] = value;
+            event
+        };
+        let refused = |event: Value| record_events(&path, &[event]).unwrap_err().to_string();
+
+        assert!(refused(with("cost_status", json!("reported"))).contains("needs the `cost`"));
+        // The adapter cannot make this tool vouch for arithmetic it never saw.
+        for status in ["estimated", "calculated", "free", "local", "quota"] {
+            assert!(refused(with("cost_status", json!(status))).contains("cannot be supplied"));
+        }
+        let mut both = with("billing", json!("subscription"));
+        both["cost"] = json!(0.5);
+        assert!(refused(both).contains("cannot carry a `cost`"));
+        assert!(refused(with("cost", json!(-1.0))).contains("`cost`"));
+        assert!(refused(with("billing", json!("plan"))).contains("`billing`"));
+        assert!(!path.exists());
+
+        // A cost the tool recorded is `reported`, with or without saying so.
+        assert_eq!(
+            record_events(&path, &[with("cost", json!(0.25))]).unwrap(),
+            (1, 1)
+        );
+        let row = &load_journal(&path).unwrap()[0];
+        assert_eq!(row.cost, Some(0.25));
+        assert_eq!(row.cost_status, CostStatus::ProviderReported);
+    }
+
+    /// Plan-billed work is *stored* as `quota` so an older build neither prices nor budgets it,
+    /// and *read* as the unpriced subscription row a native collector emits -- the shape the
+    /// pricing pass turns into `quota` with a list-rate figure beside it.
+    #[test]
+    fn a_subscription_event_is_stored_as_quota_and_read_as_a_subscription_row() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("usage.db");
+        let mut event = usage_event("a1");
+        event["billing"] = json!("subscription");
+        record_events(&path, &[event]).unwrap();
+
+        let stored: String = Connection::open(&path)
+            .unwrap()
+            .query_row("SELECT cost_status FROM usage_event", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(stored, "quota");
+        let row = &load_journal(&path).unwrap()[0];
+        assert_eq!(row.billing, Billing::Subscription);
+        assert_eq!(row.cost_status, CostStatus::Unavailable);
+        assert_eq!(row.cost, None);
+    }
+
+    /// Identities are one namespace across every source, so an adapter's `1` is stored under its
+    /// provider: two tools that both count from one are two events, not one.
+    #[test]
+    fn a_supplied_event_id_is_namespaced_by_provider() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("usage.db");
+        let mut other = usage_event("1");
+        other["provider"] = json!("othertool");
+        assert_eq!(
+            record_events(&path, &[usage_event("1"), other]).unwrap(),
+            (2, 2)
+        );
+        let ids: Vec<Option<String>> = load_journal(&path)
+            .unwrap()
+            .into_iter()
+            .map(|row| row.event_id)
+            .collect();
+        assert!(ids.contains(&Some("event:aider:1".to_string())), "{ids:?}");
+        assert!(
+            ids.contains(&Some("event:othertool:1".to_string())),
+            "{ids:?}"
+        );
+    }
+
+    #[test]
+    fn replaying_a_batch_records_nothing_new() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("usage.db");
+        let batch = [usage_event("a1"), usage_event("a2"), usage_event("a1")];
+        // The third is the first again: counted as sent, not as recorded.
+        assert_eq!(record_events(&path, &batch).unwrap(), (2, 3));
+        assert_eq!(record_events(&path, &batch).unwrap(), (0, 3));
+        assert_eq!(load_journal(&path).unwrap().len(), 2);
+    }
+
+    /// The three columns are additive. A v0.18.0 journal gains them on the first write and keeps
+    /// its row; read *before* any write -- which is what a dashboard does to a journal only an
+    /// older hook has touched -- it reads as it always did.
+    #[test]
+    fn a_journal_without_the_new_columns_is_migrated_and_an_old_shape_still_reads() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("usage.db");
+        pre_record_event_journal(&path);
+
+        let before = load_journal(&path).unwrap();
+        assert_eq!(before.len(), 1);
+        assert_eq!(
+            (before[0].project.clone(), before[0].session_id.clone()),
+            (None, None)
+        );
+        assert_eq!(before[0].billing, Billing::PerToken);
+
+        let mut event = usage_event("a1");
+        event["project"] = json!("/work/app");
+        record_events(&path, &[event]).unwrap();
+        let after = load_journal(&path).unwrap();
+        assert_eq!(after.len(), 2);
+        assert_eq!(after[0].event_id.as_deref(), Some("ollama:old"));
+        assert_eq!(after[1].project.as_deref(), Some("/work/app"));
+
+        // And an older build's writer, which names thirteen columns, still writes into it.
+        Connection::open(&path)
+            .unwrap()
+            .execute(
+                "INSERT INTO usage_event (event_id, provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created) VALUES ('ollama:older-writer', 'ollama', 'qwen3', 'LOCAL', 'local', 1, 1, 1, 0, 0, 0, NULL, 200)",
+                [],
+            )
+            .unwrap();
+        assert_eq!(load_journal(&path).unwrap().len(), 3);
+        let version: i64 = Connection::open(&path)
+            .unwrap()
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            version, 1,
+            "an additive change must not lock older writers out"
+        );
     }
 
     #[test]
@@ -1491,7 +2094,13 @@ mod concurrent_writer_tests {
         for round in 0..20 {
             let dir = tempfile::TempDir::new().unwrap();
             let path = dir.path().join("usage.db");
-            pre_event_id_journal(&path);
+            // Both shapes a writer can still meet: the oldest, and the one v0.18.0 left, which
+            // has `event_id` and lacks what `--record-event` added.
+            if round % 2 == 0 {
+                pre_event_id_journal(&path);
+            } else {
+                pre_record_event_journal(&path);
+            }
             let writers = 8;
             let start = Arc::new(Barrier::new(writers));
             let handles: Vec<_> = (0..writers)

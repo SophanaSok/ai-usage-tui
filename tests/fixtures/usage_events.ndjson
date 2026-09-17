@@ -1,0 +1,2 @@
+{"provider":"aider","model":"claude-sonnet-5","event_id":"turn-1","created":1758000000,"input_tokens":1200,"output_tokens":300,"cache_read_tokens":9000,"cache_write_tokens":50,"project":"/work/app/","session_id":"aider-s1","billing":"subscription"}
+{"provider":"aider","model":"gpt-5","event_id":"turn-2","created":1758000100,"input_tokens":10,"output_tokens":3,"project":"/work/app","session_id":"aider-s1","cost":0.0123}

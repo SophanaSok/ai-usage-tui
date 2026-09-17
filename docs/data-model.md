@@ -21,8 +21,8 @@ cache_write_tokens
 cost
 billing: per_token | subscription (set by the collector; subscription rows become `quota`; exported in each `--json` row)
 api_equivalent_cost: float | null (list-rate figure for subscription rows only; never summed into cost; the last, 15th, CSV column)
-project (populated by the Claude Code, Codex and Copilot collectors from `cwd`; Copilot falls back to `repository`)
-session (populated by the Claude Code, Codex — the thread id — OpenCode and Copilot collectors)
+project (populated by the Claude Code, Codex and Copilot collectors from `cwd`; Copilot falls back to `repository`; journaled by `--record-event` when the adapter sends it)
+session (populated by the Claude Code, Codex — the thread id — OpenCode and Copilot collectors; journaled by `--record-event` when the adapter sends it)
 ```
 
 Not part of the contract, and not collected: latency, error status, and a per-row source id.
@@ -32,6 +32,22 @@ Historical events are priced at the rates that were in effect when they happened
 Provider adapters should tolerate missing optional fields and preserve the event with an explicit unknown status.
 
 The local journal currently stores usage metadata in `usage_event`. It intentionally excludes prompt and completion content.
+
+`--record-event` writes this contract directly: one JSON object per line on stdin, spelled with
+the keys above (`input_tokens`, `created`, `session_id`, …). It is the way in for a tool with no
+collector, and it is strict where a collector is tolerant, because an adapter's author learns
+only from the exit status: `provider`, `model`, `input_tokens`, `output_tokens` and one of
+`event_id` or `created` are required, an unknown key is refused by name, and one unreadable event
+refuses the batch before the journal is opened. A supplied `event_id` is stored as
+`event:<provider>:<id>`, since identities share one namespace across sources. Of the money fields
+an adapter may state two things and no others: a `cost` the tool itself recorded (`reported`), or
+`"billing": "subscription"` (stored as `quota`, read back as a subscription row so it gains
+`api_equivalent_cost` on the same path a native collector's does). A journaled session takes part
+in escalation detection like any other.
+
+Three nullable columns carry this -- `session_id`, `project`, `billing` -- added at the end of
+`usage_event`. An older build's writer and reader name their columns, so they are unaffected and
+the schema version below did not move.
 
 The journal's schema version lives in SQLite's `PRAGMA user_version` (`JOURNAL_SCHEMA_VERSION` in
 `src/collector/journal.rs`, currently `1`). Writers migrate their table under `BEGIN IMMEDIATE`, so
