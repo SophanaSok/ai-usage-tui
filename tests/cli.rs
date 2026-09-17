@@ -717,6 +717,59 @@ fn the_text_output_path_also_survives_a_closed_pipe() {
 }
 
 #[test]
+fn the_recorders_survive_a_closed_pipe_after_journaling() {
+    // Each recorder confirmed with a bare `println!` *after* writing its row, so a caller that
+    // discards stdout by closing it -- a hook runner, `| head -0` -- got a journaled row and a
+    // panic, and an exit status that told it the recording failed. The closed pipe is set up
+    // before stdin is written, and the child cannot print before stdin closes, so the order is
+    // not a race.
+    use std::io::Write;
+    let fixtures = format!("{}/tests/fixtures", env!("CARGO_MANIFEST_DIR"));
+    for (flag, fixture) in [
+        ("--record-ollama", "ollama_single.json"),
+        ("--record-usage=llamacpp", "llamacpp_chat.json"),
+    ] {
+        let dir = scratch(&format!("closed-pipe-{}", flag.trim_start_matches('-')));
+        let journal = dir.join("usage.db");
+        let mut child = bin()
+            .arg(flag)
+            .arg("--journal")
+            .arg(&journal)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
+
+        drop(child.stdout.take());
+        let body = std::fs::read(format!("{fixtures}/{fixture}")).expect("read fixture");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(&body)
+            .expect("write stdin");
+
+        let mut stderr = String::new();
+        if let Some(mut handle) = child.stderr.take() {
+            let _ = handle.read_to_string(&mut stderr);
+        }
+        let status = child.wait().expect("wait");
+
+        assert!(
+            !stderr.contains("panicked"),
+            "{flag} panicked writing to a closed pipe:\n{stderr}"
+        );
+        assert!(
+            status.success(),
+            "{flag} on a closed pipe should exit cleanly, got {status}"
+        );
+        assert_eq!(journal_rows(&journal).len(), 1, "{flag} journaled its row");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[test]
 fn the_flags_that_describe_the_cli_survive_a_closed_pipe_too() {
     // `--json` and `--once` were covered; the four flags that describe the CLI itself were not,
     // and two of them panicked. `print_help` ended with a bare `println!()`, and

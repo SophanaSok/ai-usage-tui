@@ -291,20 +291,24 @@ pub enum Recorded {
 pub fn record_from_stdin(roots: &SourceRoots) -> Result<()> {
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
-    match record(&input, roots)? {
+    // The event is already journaled by the time anything prints, so a closed stdout must not
+    // turn it into a panic: `print_line` returns the error, and `main` reads a broken pipe as the
+    // ordinary end of a pipeline.
+    let line = match record(&input, roots)? {
         Recorded::Event {
             inserted: true,
             passed,
-        } => println!(
+        } => format!(
             "Recorded a {} test run in {}",
             if passed { "passing" } else { "failing" },
             roots.journal.display()
         ),
         Recorded::Event {
             inserted: false, ..
-        } => println!("Already recorded; nothing to do"),
-        Recorded::Skipped(why) => println!("Nothing to record: {why}"),
-    }
+        } => "Already recorded; nothing to do".to_string(),
+        Recorded::Skipped(why) => format!("Nothing to record: {why}"),
+    };
+    crate::helpers::print_line(&line)?;
     Ok(())
 }
 
