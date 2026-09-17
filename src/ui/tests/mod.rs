@@ -97,6 +97,7 @@ fn test_app(usages: Vec<Usage>) -> App {
         // developer who has opted in would otherwise render a notice these tests never planted.
         update_notice: None,
         no_color: false,
+        pricing_note: None,
         // Bundled, not loaded: a refreshed cache on the developer's machine must not change
         // how a test ranks two models.
         pricing: crate::pricing::PricingEngine::bundled(),

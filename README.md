@@ -492,6 +492,14 @@ hand-checked rate always wins. Where providers charge differently for the same
 model name, the rate follows the provider on the usage row and no bare key is
 published: [Pricing tables](docs/provider-support.md#pricing-tables).
 
+Every figure is **US dollars at list price**; nothing is converted. A rate is a
+fact as of a date, and the tables' dates are printed by `--doctor` and carried in
+`--summary-json` (`pricing.community_table_date`, `pricing.curated_table_date`).
+Once the bundled tables are more than 90 days old the tool says so — on the
+dashboard's status line, in `--doctor` and in the summary's `pricing.warnings` —
+because an old install otherwise prices at old rates without a word. Upgrading
+refreshes both tables; `--refresh-pricing` updates the curated Zen rates only.
+
 These optional network commands update local caches and exit:
 
 ```sh

@@ -446,6 +446,7 @@ pub fn build(inputs: &Inputs<'_>) -> Value {
     let (by_session, sessionless) = group_by(usages, |u| u.session_id.clone());
 
     let aggregates = crate::routing::aggregate(inputs.routing_events);
+    let table_dates = crate::pricing::bundled_table_dates();
 
     json!({
         "schema_version": inputs.schema_version,
@@ -466,7 +467,13 @@ pub fn build(inputs: &Inputs<'_>) -> Value {
             "detail": source.detail,
         })).collect::<Vec<_>>(),
         "pricing": {
+            // Every dollar figure in this document, and every rate, is this. Nothing said so.
+            "currency": "USD",
             "models_priced": inputs.pricing_models,
+            // When the tables compiled into this build were cut. A rate is a fact as of a date,
+            // and a reader weighing a cost estimate should be able to see which.
+            "community_table_date": table_dates.0.map(|date| date.to_string()),
+            "curated_table_date": table_dates.1.map(|date| date.to_string()),
             "warnings": inputs.pricing_warnings,
         },
         "totals": totals.to_json(of_tokens),

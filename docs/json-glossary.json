@@ -250,8 +250,11 @@
           "type": "object",
           "meaning": "State of the pricing table.",
           "keys": {
+            "currency": { "type": "string", "meaning": "USD. Every cost and rate in every document is US dollars at list price; nothing is converted." },
             "models_priced": { "type": "integer", "meaning": "Model names the table can price." },
-            "warnings": { "type": "array of string", "meaning": "Problems loading rates, e.g. a stale refreshed cache being ignored." }
+            "community_table_date": { "type": "string|null", "meaning": "YYYY-MM-DD the bundled community (LiteLLM) rates were snapshotted. Estimated costs rest on rates as of this date." },
+            "curated_table_date": { "type": "string|null", "meaning": "YYYY-MM-DD the bundled curated (Zen and hand-checked) rates were updated. A fresh --refresh-pricing cache supersedes it." },
+            "warnings": { "type": "array of string", "meaning": "Problems loading rates (a refreshed cache ignored as stale or invalid), and a notice when the bundled tables are over 90 days old." }
           }
         },
         "totals": { "type": "object", "shape": "bucket", "meaning": "Everything in range." },

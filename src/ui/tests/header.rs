@@ -92,3 +92,40 @@ fn the_subtitle_is_kept_whenever_the_line_fits() {
     // And it comes back as soon as there is room for both.
     assert!(header_at(120, Some("↑ v0.11.0")).contains("LIVE PROVIDER MONITOR"));
 }
+
+/// What the pricing engine said at load reaches the header: a refused cache turns it red, tables
+/// that are merely old are named and leave it alone. Until this, both were `--doctor`-only, so a
+/// dashboard pricing from a table it had fallen back to looked exactly like one that was not.
+#[test]
+fn the_pricing_note_reaches_the_header_and_only_a_fault_turns_it_red() {
+    use ratatui::{backend::TestBackend, Terminal};
+
+    let render = |note: Option<(String, bool)>| {
+        let mut app = test_app(vec![usage(None, None, Some(1.0), 100)]);
+        app.recompute();
+        app.status = "ok".into();
+        app.pricing_note = note;
+        let mut terminal = Terminal::new(TestBackend::new(160, 30)).expect("backend");
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &app))
+            .expect("draw");
+        let buffer = terminal.backend().buffer().clone();
+        let row: String = (0..160).map(|x| buffer[(x, 0)].symbol()).collect();
+        let red = (0..160).any(|x| buffer[(x, 0)].style().fg == Some(crate::model::RED));
+        (row, red)
+    };
+
+    let (row, red) = render(None);
+    assert!(!row.contains("pricing:") && !red, "{row:?}");
+
+    let (row, red) = render(Some((
+        "pricing: bundled rates over 90 days old, see --doctor".into(),
+        false,
+    )));
+    assert!(row.contains("bundled rates over 90 days old"), "{row:?}");
+    assert!(!red, "old tables are said, not alarmed about");
+
+    let (row, red) = render(Some(("pricing: 1 problem(s), see --doctor".into(), true)));
+    assert!(row.contains("pricing: 1 problem(s)"), "{row:?}");
+    assert!(red, "a refused cache is a fault");
+}
