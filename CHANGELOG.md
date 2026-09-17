@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-17
+
 ### Added
 
 - **A journal schema version.** Writers stamp `PRAGMA user_version` and refuse, by name, a journal a

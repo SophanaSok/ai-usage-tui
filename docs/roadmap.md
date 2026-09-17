@@ -1,8 +1,8 @@
 # Roadmap and Outstanding Findings
 
-Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.16.0, which
-shipped `--record-usage` for llama.cpp and other OpenAI-compatible local servers (#98) and the rustls
-0.23.45 bump that closes RUSTSEC-2026-0285 (#97).
+Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.17.0, which
+shipped the five V1-readiness pull requests (#101–#105): terminal lifecycle, collector failures on
+screen, concurrent journal writers, first run and terminal compatibility, and the stability contract.
 Shipped items are in the versioned sections of `CHANGELOG.md` (new work goes under
 `[Unreleased]`); this file is the *remaining* work, with enough evidence attached that each item
 can be picked up cold.
@@ -261,7 +261,7 @@ stabilises the command-line tool and its data formats, and the Rust library API 
 unstable, so refactors never force a 2.0.
 
 **Suggested path:** cut a minor release once those are merged, let it run, then tag 1.0.0. Items 1–3
-below are the first 1.x work.
+below are the first 1.x work. **v0.17.0, the 1.0 candidate, shipped 2026-09-17** with all five merged.
 
 **Found and not yet done, ranked.** Each has its evidence; none blocks the contract above.
 
