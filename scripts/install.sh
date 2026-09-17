@@ -208,9 +208,13 @@ if ! need gh; then
     unattested "not checked: the GitHub CLI (gh) is not installed"
 elif ! gh auth status >/dev/null 2>&1; then
     unattested "not checked: gh is not signed in (gh auth login)"
+# Three things are pinned, and each closes a door: the repository; the workflow, so that no other
+# workflow's attestation will do; and the tag, because the release workflow can also be run by
+# hand on any branch, and that run's artifacts are attested too -- as built from that branch.
 elif verdict="$(gh attestation verify "$WORK/$ARCHIVE" --repo "$REPO" \
-        --signer-workflow "$REPO/.github/workflows/release.yml" 2>&1)"; then
-    echo "    ok  built by $REPO's release workflow"
+        --signer-workflow "$REPO/.github/workflows/release.yml" \
+        --source-ref "refs/tags/$VERSION" 2>&1)"; then
+    echo "    ok  built by $REPO's release workflow at $VERSION"
 else
     # No attestation for this exact file. For a release that predates attestations that is
     # expected; for a later one it means the archive is not what the workflow built.
