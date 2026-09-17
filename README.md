@@ -773,7 +773,7 @@ ai-usage-tui --json --month --project /home/me/work/api
 ai-usage-tui --summary-json --session 0198f4c2-7d1e-7a3b-9c11-3e5a6b7c8d90
 ```
 
-`--summary-json`, `--json` and `--csv` imply `--once`. Every JSON document carries
+`--json` and `--csv` imply `--once`, and so does `--summary-json`. Every JSON document carries
 `"schema_version": 1`, and `ai-usage-tui --schema` defines every key and every enum value in
 them; what the version promises is in [`docs/stability.md`](docs/stability.md). `--json` includes
 the source description, selected range, usage rows, a `limits` array of subscription
