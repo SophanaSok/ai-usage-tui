@@ -71,6 +71,8 @@ pub struct Cli {
     pub record_ollama: bool,
     /// The provider to journal an OpenAI-compatible response under.
     pub record_usage: Option<String>,
+    /// `--record-event`: journal normalised usage events, one JSON object per line, from stdin.
+    pub record_event: bool,
     pub refresh_zen: bool,
     pub refresh_pricing: bool,
     /// Ask GitHub for the latest release tag, cache it for the dashboard header, and exit.
@@ -133,6 +135,7 @@ impl Default for Cli {
             csv_path: None,
             record_ollama: false,
             record_usage: None,
+            record_event: false,
             refresh_zen: false,
             refresh_pricing: false,
             check_update: false,
@@ -327,6 +330,9 @@ struct Args {
     /// Read an OpenAI-compatible response JSON from stdin and journal it under PROVIDER
     #[arg(long, value_name = "PROVIDER", group = "action")]
     record_usage: Option<String>,
+    /// Read usage events from stdin, one JSON object per line in this tool's own terms, and journal them: for a tool with no collector, through an adapter
+    #[arg(long, group = "action")]
+    record_event: bool,
     /// Read a routing event JSON from stdin and journal it
     #[arg(long, group = "action")]
     record_routing: bool,
@@ -360,6 +366,7 @@ pub const DEFAULT_TOP: usize = 10;
 const COLLECTION_ACTIONS: &[&str] = &[
     "record_ollama",
     "record_usage",
+    "record_event",
     "refresh_zen",
     "check_update",
     "check_budgets",
@@ -488,6 +495,7 @@ impl Cli {
             csv_path: args.csv,
             record_ollama: args.record_ollama,
             record_usage: args.record_usage,
+            record_event: args.record_event,
             refresh_zen: args.refresh_zen,
             refresh_pricing: args.refresh_pricing,
             check_update: args.check_update,
