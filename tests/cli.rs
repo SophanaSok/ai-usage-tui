@@ -2435,8 +2435,10 @@ fn every_json_document_is_fully_described_by_the_schema() {
 /// to the bucket, or a figure computed differently, fails here until the README says so too.
 #[test]
 fn the_readmes_summary_sample_is_what_the_binary_prints() {
+    // Line endings normalised: a Windows checkout has CRLF, and the fence is found by its newline.
     let readme = std::fs::read_to_string(format!("{}/README.md", env!("CARGO_MANIFEST_DIR")))
-        .expect("read README");
+        .expect("read README")
+        .replace("\r\n", "\n");
     let start = readme
         .find("```json\n{ \"provider\": \"opencode\"")
         .expect("the README's summary sample")
@@ -2452,6 +2454,10 @@ fn the_readmes_summary_sample_is_what_the_binary_prints() {
     let output = bin()
         .env("XDG_CONFIG_HOME", "/nonexistent/config-home")
         .env("XDG_DATA_HOME", "/nonexistent/data-home")
+        // `config_json_path` checks `CLAUDE_CONFIG_DIR` before the `--claude-dir` override, so
+        // with it exported this would read the developer's real `~/.claude.json`.
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("CLAUDE_PROJECTS_DIR")
         .args(["--summary-json", "--all", "--top", "0", "--db"])
         .arg(format!("{fixtures}/opencode_test.db"))
         // The three committed fixtures the sample was taken from: `share_of_tokens_pct` is a share
