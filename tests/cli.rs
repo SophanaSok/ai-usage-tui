@@ -1984,7 +1984,12 @@ fn the_example_config_ships_in_the_binary_and_doctor_points_at_it() {
 fn every_json_document_carries_its_schema_version() {
     let dir = scratch("schema-version");
     let journal = dir.join("usage.db");
-    for flag in ["--json", "--routing-json", "--check-budgets"] {
+    for flag in [
+        "--summary-json",
+        "--json",
+        "--routing-json",
+        "--check-budgets",
+    ] {
         let output = hermetic_with(bin().arg(flag), &PathBuf::from(fixture_db()), &journal)
             .output()
             .expect("run");

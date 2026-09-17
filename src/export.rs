@@ -9,8 +9,8 @@ use crate::model::{Range, Usage};
 use crate::ui::cost_display;
 use crate::utils::{format_count, journal_path};
 
-/// The version of every JSON document this tool prints: `--json`, `--routing-json` and
-/// `--check-budgets`. Within a version, keys are only ever added -- never removed, renamed or
+/// The version of every JSON document this tool prints: `--summary-json`, `--json`,
+/// `--routing-json` and `--check-budgets`. Within a version, keys are only ever added -- never removed, renamed or
 /// changed in meaning -- so a consumer that ignores unknown keys keeps working. A change that
 /// breaks that raises it. See `docs/stability.md`.
 pub const JSON_SCHEMA_VERSION: u32 = 1;
