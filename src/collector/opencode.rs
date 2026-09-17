@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use crate::classify::classify;
 use crate::collector::background::Collector;
+use crate::collector::skipped::Skipped;
 use crate::helpers::{number, string};
 use crate::model::{Category, CostStatus, Usage};
 use crate::utils::db_path;
@@ -23,20 +24,29 @@ pub const ID: &str = "opencode";
 /// `Cursor::start()` reads everything. Subsequent polls resume from the last high-water mark,
 /// inclusively — boundary rows are re-read on purpose and dropped by `event_id` deduplication,
 /// which is cheaper and safer than risking rows written within the same clock tick.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Cursor(Option<i64>);
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Cursor {
+    high_water: Option<i64>,
+    /// Rows whose `data` was not JSON; see `collector::skipped`. The cursor moves past them, so
+    /// their usage is gone, and until this was counted nothing said so.
+    skipped: Skipped,
+}
 
 impl Cursor {
     pub fn start() -> Self {
-        Self(None)
+        Self::default()
     }
 
-    pub fn high_water(self) -> Option<i64> {
-        self.0
+    pub fn high_water(&self) -> Option<i64> {
+        self.high_water
+    }
+
+    pub fn skipped(&self) -> &Skipped {
+        &self.skipped
     }
 
     fn advance(&mut self, raw_time_created: i64) {
-        self.0 = Some(match self.0 {
+        self.high_water = Some(match self.high_water {
             Some(current) => current.max(raw_time_created),
             None => raw_time_created,
         });
@@ -100,13 +110,22 @@ pub fn load_opencode_since(
             .collect::<rusqlite::Result<_>>()?,
     };
     let mut usages = Vec::new();
+    let previous_high_water = cursor.high_water();
     for (raw, created) in rows {
         // Advance on every row, including ones we skip below: a non-assistant row still marks
         // history we have seen, and not advancing past it would re-read it forever.
         cursor.advance(created);
         let json: Value = match serde_json::from_str(&raw) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(_) => {
+                // The read is inclusive of the previous high-water mark, so a row stamped
+                // exactly there was already counted by the poll that set it. Counting it again
+                // would make one bad row grow by one every poll.
+                if previous_high_water.is_none_or(|mark| created > mark) {
+                    cursor.skipped.malformed();
+                }
+                continue;
+            }
         };
         let info = json.get("info").unwrap_or(&json);
         if info.get("role").and_then(Value::as_str) != Some("assistant") {
@@ -171,7 +190,11 @@ pub fn load_opencode_since(
         };
         usages.push(usage);
     }
-    Ok((usages, format!("OpenCode: {}", path.display()), cursor))
+    let mut status = format!("OpenCode: {}", path.display());
+    if let Some(detail) = cursor.skipped.detail() {
+        status.push_str(&format!(" · {detail}"));
+    }
+    Ok((usages, status, cursor))
 }
 
 pub fn timestamp_seconds(value: i64) -> i64 {
@@ -205,9 +228,14 @@ impl Collector for OpenCodeCollector {
         Duration::from_secs(self.interval_secs)
     }
     fn poll(&mut self) -> Result<Vec<Usage>> {
-        let (usages, _, cursor) = load_opencode_since(self.db_path.as_deref(), self.cursor)?;
+        // A clone, not a take: a poll that fails must leave the resume point where it was.
+        let (usages, _, cursor) =
+            load_opencode_since(self.db_path.as_deref(), self.cursor.clone())?;
         self.cursor = cursor;
         Ok(usages)
+    }
+    fn warning(&self) -> Option<String> {
+        self.cursor.skipped.warning()
     }
 }
 
@@ -353,6 +381,52 @@ mod tests {
         assert_eq!(third.len(), 2, "expected the boundary row plus the new one");
         assert!(third.iter().any(|u| u.event_id.as_deref() == Some("m3")));
         assert_eq!(cursor.high_water(), Some(1_700_000_120));
+    }
+
+    /// A row whose `data` was not JSON was `Err(_) => continue` with no count. It is now counted
+    /// once -- including when it sits on the inclusive boundary every later poll re-reads, where
+    /// a naive count would grow by one each poll.
+    #[test]
+    fn a_malformed_row_is_counted_once_even_on_the_reread_boundary() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = dir.path().join("opencode.db");
+        seed_db(&db, &[("m1", 1_700_000_000)]);
+        rusqlite::Connection::open(&db)
+            .unwrap()
+            .execute(
+                "INSERT INTO message (data, time_created) VALUES ('{not json', 1700000060)",
+                [],
+            )
+            .unwrap();
+
+        let mut collector = OpenCodeCollector {
+            db_path: Some(db.clone()),
+            interval_secs: 30,
+            cursor: Cursor::start(),
+        };
+        assert_eq!(
+            collector.poll().unwrap().len(),
+            1,
+            "the readable row survives"
+        );
+        assert_eq!(
+            collector.warning().as_deref(),
+            Some("1 malformed record(s) skipped")
+        );
+        for _ in 0..3 {
+            collector.poll().unwrap();
+        }
+        assert_eq!(
+            collector.warning().as_deref(),
+            Some("1 malformed record(s) skipped"),
+            "the boundary re-read counted the same row again"
+        );
+
+        let (_, status, _) = load_opencode_since(Some(&db), Cursor::start()).unwrap();
+        assert!(
+            status.ends_with("· 1 malformed record(s) skipped"),
+            "{status}"
+        );
     }
 
     #[test]

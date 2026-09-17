@@ -36,6 +36,7 @@ use crate::collector::background::Collector;
 use crate::collector::billing::Decision;
 use crate::collector::claude_code::normalize_project_path;
 use crate::collector::opencode::{parse_created_at, timestamp_seconds};
+use crate::collector::skipped::Skipped;
 use crate::helpers::{number, string};
 use crate::model::{CostStatus, Usage};
 use crate::utils::home_dir;
@@ -112,6 +113,8 @@ pub struct Cursor {
     events_raw: Option<String>,
     legacy_offsets: HashMap<PathBuf, u64>,
     legacy_totals: HashMap<(String, String), Totals>,
+    /// Legacy logs and lines the tail had to go around; see `collector::skipped`.
+    legacy_skipped: Skipped,
 }
 
 impl Cursor {
@@ -400,9 +403,8 @@ fn legacy_logs(root: &Path) -> Vec<PathBuf> {
 }
 
 /// The cumulative totals a `session.shutdown` line reports, by model.
-fn shutdown_totals(line: &str) -> Option<Vec<(String, Totals)>> {
-    let json: Value = serde_json::from_str(line).ok()?;
-    if string(&json, &["type", "event"]).as_deref() != Some("session.shutdown") {
+fn shutdown_totals(json: &Value) -> Option<Vec<(String, Totals)>> {
+    if string(json, &["type", "event"]).as_deref() != Some("session.shutdown") {
         return None;
     }
     let metrics = json.get("data")?.get("modelMetrics")?.as_object()?;
@@ -430,20 +432,31 @@ fn shutdown_totals(line: &str) -> Option<Vec<(String, Totals)>> {
 /// Tail the legacy logs, emitting the delta each new shutdown snapshot represents.
 fn load_legacy(root: &Path, cursor: &mut Cursor, decision: &Decision) -> Result<Vec<Usage>> {
     let mut usages = Vec::new();
+    cursor.legacy_skipped.begin_pass();
     for path in legacy_logs(root) {
-        // One unreadable or half-written log must not sink the whole source.
-        let Ok(file) = fs::File::open(&path) else {
-            continue;
+        // One unreadable or half-written log must not sink the whole source -- but it is counted,
+        // because its usage is missing from every total on screen.
+        let file = match fs::File::open(&path) {
+            Ok(file) => file,
+            Err(error) => {
+                cursor.legacy_skipped.unreadable(&path, error);
+                continue;
+            }
         };
-        let Ok(size) = file.metadata().map(|meta| meta.len()) else {
-            continue;
+        let size = match file.metadata() {
+            Ok(meta) => meta.len(),
+            Err(error) => {
+                cursor.legacy_skipped.unreadable(&path, error);
+                continue;
+            }
         };
         let offset = cursor.legacy_offsets.entry(path.clone()).or_insert(0);
         if *offset > size {
             *offset = 0;
         }
         let mut reader = BufReader::new(file);
-        if reader.seek(SeekFrom::Start(*offset)).is_err() {
+        if let Err(error) = reader.seek(SeekFrom::Start(*offset)) {
+            cursor.legacy_skipped.unreadable(&path, error);
             continue;
         }
         let session = path
@@ -454,8 +467,13 @@ fn load_legacy(root: &Path, cursor: &mut Cursor, decision: &Decision) -> Result<
         let mut line = String::new();
         loop {
             line.clear();
-            let Ok(bytes) = reader.read_line(&mut line) else {
-                break;
+            let bytes = match reader.read_line(&mut line) {
+                Ok(bytes) => bytes,
+                // The offset stops at the last whole line read, so the rest is retried next poll.
+                Err(error) => {
+                    cursor.legacy_skipped.unreadable(&path, error);
+                    break;
+                }
             };
             if bytes == 0 {
                 break;
@@ -465,7 +483,15 @@ fn load_legacy(root: &Path, cursor: &mut Cursor, decision: &Decision) -> Result<
                 break;
             }
             *offset += bytes as u64;
-            let Some(totals) = shutdown_totals(&line) else {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let Ok(json) = serde_json::from_str::<Value>(trimmed) else {
+                cursor.legacy_skipped.malformed();
+                continue;
+            };
+            let Some(totals) = shutdown_totals(&json) else {
                 continue;
             };
             for (model, cumulative) in totals {
@@ -506,7 +532,7 @@ fn load_legacy(root: &Path, cursor: &mut Cursor, decision: &Decision) -> Result<
                     cost_status: CostStatus::Unavailable,
                     billing: decision.billing,
                     api_equivalent_cost: None,
-                    created: shutdown_time(&line).unwrap_or(0),
+                    created: shutdown_time(&json).unwrap_or(0),
                     session_id: Some(session.clone()),
                     project: None,
                 });
@@ -516,14 +542,13 @@ fn load_legacy(root: &Path, cursor: &mut Cursor, decision: &Decision) -> Result<
     Ok(usages)
 }
 
-fn shutdown_time(line: &str) -> Option<i64> {
-    let json: Value = serde_json::from_str(line).ok()?;
-    if let Some(raw) = string(&json, &["timestamp", "time"]) {
+fn shutdown_time(json: &Value) -> Option<i64> {
+    if let Some(raw) = string(json, &["timestamp", "time"]) {
         if let Some(seconds) = parse_created_at(&raw) {
             return Some(seconds);
         }
     }
-    let raw = number(&json, &["timestamp", "timestampMs", "time"]);
+    let raw = number(json, &["timestamp", "timestampMs", "time"]);
     (raw > 0).then(|| timestamp_seconds(raw as i64))
 }
 
@@ -564,14 +589,15 @@ pub fn load_copilot_since(
         ));
     }
     let usages = load_legacy(&root, cursor, decision)?;
-    Ok((
-        usages,
-        format!(
-            "GitHub Copilot: {} legacy session log(s) under {}",
-            logs.len(),
-            root.join("session-state").display()
-        ),
-    ))
+    let mut status = format!(
+        "GitHub Copilot: {} legacy session log(s) under {}",
+        logs.len(),
+        root.join("session-state").display()
+    );
+    if let Some(detail) = cursor.legacy_skipped.detail() {
+        status.push_str(&format!(" · {detail}"));
+    }
+    Ok((usages, status))
 }
 
 pub struct CopilotCollector {
@@ -592,6 +618,9 @@ impl Collector for CopilotCollector {
         let (usages, _) =
             load_copilot_since(self.root.as_deref(), &mut self.cursor, &self.decision)?;
         Ok(usages)
+    }
+    fn warning(&self) -> Option<String> {
+        self.cursor.legacy_skipped.warning()
     }
 }
 
@@ -1063,6 +1092,44 @@ mod tests {
         assert_eq!(usages[0].requests, 4);
         assert_eq!(usages[0].session_id.as_deref(), Some("abc"));
         assert!(status.contains("legacy session log"), "{status}");
+    }
+
+    /// The legacy reader skipped an unopenable log with `let Ok(..) else continue` and a line
+    /// that was not JSON inside `.ok()?`, counting neither.
+    #[test]
+    fn skipped_legacy_logs_and_lines_are_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        write_legacy(
+            dir.path(),
+            "abc",
+            &[
+                "{\"type\":\"session.shut".to_string(),
+                shutdown_line("claude-sonnet-5", 1000, 200, 4),
+            ],
+        );
+        let broken = dir.path().join("session-state").join("def");
+        fs::create_dir_all(&broken).unwrap();
+        fs::write(broken.join("events.jsonl"), b"\xff\xfe\n").unwrap();
+
+        let mut cursor = Cursor::start();
+        let (usages, status) =
+            load_copilot_since(Some(dir.path()), &mut cursor, &decision()).expect("load");
+        assert_eq!(usages.len(), 1, "the readable snapshot survives");
+        assert!(
+            status.contains("1 file(s) unreadable, 1 malformed record(s) skipped"),
+            "{status}"
+        );
+        let mut collector = CopilotCollector {
+            root: Some(dir.path().to_path_buf()),
+            interval_secs: 30,
+            cursor,
+            decision: decision(),
+        };
+        collector.poll().unwrap();
+        assert_eq!(
+            collector.warning().as_deref(),
+            Some("1 file(s) unreadable, 1 malformed record(s) skipped")
+        );
     }
 
     #[test]

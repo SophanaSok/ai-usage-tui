@@ -1,6 +1,9 @@
 use std::env;
 use std::io::stdout;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::{
@@ -186,12 +189,48 @@ fn build_collectors(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Option
     }
 }
 
+/// How long quitting waits for collector threads before leaving them to the process exit.
+///
+/// A poll cannot be cancelled, and the slowest one -- a pricing fetch retrying a rate-limited page
+/// -- runs for most of a minute. Waiting that long after `q` reads as a hang; the process is
+/// exiting anyway, and every writer this tool has renames into place, so an abandoned poll leaves
+/// no half-written file behind.
+const COLLECTOR_JOIN_GRACE: Duration = Duration::from_secs(2);
+
+/// Turn SIGTERM, SIGHUP and SIGINT into an ordinary quit.
+///
+/// Without this a `kill`, a closed terminal window or a logout ended the process with the terminal
+/// still in raw mode on the alternate screen: the panic hook restores it, a signal never reached
+/// that code. Raw mode already turns Ctrl-C into a key event, so SIGINT here is only the one sent
+/// from outside. A second signal exits at once, for a dashboard that has stopped reaching its
+/// loop.
+fn quit_on_signals() -> Result<Arc<AtomicBool>> {
+    let requested = Arc::new(AtomicBool::new(false));
+    #[cfg(unix)]
+    for signal in [
+        signal_hook::consts::SIGTERM,
+        signal_hook::consts::SIGHUP,
+        signal_hook::consts::SIGINT,
+    ] {
+        // Order matters: the conditional exit sees the flag as it was *before* this signal, so the
+        // first signal only raises it and the second one exits.
+        signal_hook::flag::register_conditional_shutdown(signal, 1, Arc::clone(&requested))?;
+        signal_hook::flag::register(signal, Arc::clone(&requested))?;
+    }
+    Ok(requested)
+}
+
 fn run_tui(
     cli: &ai_usage_tui::cli::Cli,
     collector: Option<CollectorHandle>,
     budget_engine: BudgetEngine,
     dispatcher: AlertDispatcher,
 ) -> Result<()> {
+    let stop = quit_on_signals()?;
+    // Held here, not only by the dashboard, so the last reference -- whose drop joins the
+    // collector threads -- goes after the terminal is restored rather than inside the loop's
+    // unwind, where an in-flight poll kept the user staring at a frozen raw-mode screen.
+    let collector = collector.map(Arc::new);
     // Restore the terminal from inside the panic hook, before the default hook prints.
     //
     // `catch_unwind` below already restores it -- but it runs after the unwind has begun, and by
@@ -214,11 +253,27 @@ fn run_tui(
     let backend = CrosstermBackend::new(out);
     let mut terminal = Terminal::new(backend)?;
     let result = catch_unwind(AssertUnwindSafe(|| {
-        run(&mut terminal, cli, collector, budget_engine, dispatcher)
+        run(
+            &mut terminal,
+            cli,
+            collector.clone(),
+            budget_engine,
+            dispatcher,
+            &stop,
+        )
     }));
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
+    let restored = (|| -> Result<()> {
+        disable_raw_mode()?;
+        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+        terminal.show_cursor()?;
+        Ok(())
+    })();
+    // Bounded whether or not the restore worked: after SIGHUP the terminal is gone and restoring
+    // it fails, and an unbounded join there is a process that outlives its window by a minute.
+    if let Some(collector) = collector {
+        collector.join_within(COLLECTOR_JOIN_GRACE);
+    }
+    restored?;
     match result {
         Ok(result) => result,
         Err(payload) => resume_unwind(payload),
@@ -645,6 +700,8 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
         }
         let cache = ai_usage_tui::statusline::cache_path()
             .filter(|_| ai_usage_tui::limits::claude_enabled(&roots));
+        // The statusline row prints its own parse error; `limits::load` below reports the same one.
+        let mut statusline_problem: Option<String> = None;
         match cache
             .as_deref()
             .map(ai_usage_tui::statusline::read_cache_at)
@@ -671,6 +728,7 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
             }
             Some(Err(problem)) => {
                 let _ = writeln!(out, "  {:<12} unreadable  {problem}", "statusline");
+                statusline_problem = Some(problem);
             }
             _ => {
                 let _ = writeln!(
@@ -688,6 +746,20 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
                     "", ""
                 );
             }
+        }
+        // What the panel itself would flag: a record or cache that exists and could not be used,
+        // or windows it read and would not show. The dashboard puts these on its status line;
+        // until this, `--doctor` -- the place a user is sent to look -- listed every file as
+        // "found" and said nothing about them.
+        //
+        // Except the one already printed on the statusline row: `load` reads that cache again and
+        // would report its parse error a second time, on an unlabelled row.
+        for problem in ai_usage_tui::limits::load(&roots, ai_usage_tui::utils::now())
+            .problems
+            .into_iter()
+            .filter(|problem| statusline_problem.as_ref() != Some(problem))
+        {
+            let _ = writeln!(out, "  {:<12} problem     {problem}", "");
         }
     } else {
         let _ = writeln!(out, "  {:<12} disabled ([omarchy] limits = false)", "panel");

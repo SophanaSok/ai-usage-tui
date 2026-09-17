@@ -30,14 +30,14 @@ pub mod theme;
 #[cfg(test)]
 mod tests;
 
-use std::io;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
-    backend::CrosstermBackend,
+    backend::Backend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
@@ -65,13 +65,23 @@ use panels::{
 };
 use theme::{panel, MUTED};
 
-pub fn run(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+/// Run the dashboard until the user quits or `stop` is raised.
+///
+/// `stop` is how a termination signal reaches the loop: the caller's handler only sets the flag,
+/// and the loop checks it at least every 250ms, so a `kill` leaves through the same exit as `q`
+/// and the terminal is restored rather than left in raw mode on the alternate screen.
+pub fn run<B>(
+    terminal: &mut Terminal<B>,
     cli: &Cli,
-    collector: Option<CollectorHandle>,
+    collector: Option<Arc<CollectorHandle>>,
     budget_engine: BudgetEngine,
     mut dispatcher: AlertDispatcher,
-) -> Result<()> {
+    stop: &AtomicBool,
+) -> Result<()>
+where
+    B: Backend,
+    B::Error: Send + Sync + 'static,
+{
     let journal = cli
         .journal_path
         .clone()
@@ -105,7 +115,7 @@ pub fn run(
         budget_engine,
         alert_sink,
     );
-    loop {
+    while !stop.load(Ordering::Relaxed) {
         app.refresh_if_due();
         terminal.draw(|frame| draw(frame, &app))?;
         if event::poll(Duration::from_millis(250))? {
