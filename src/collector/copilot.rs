@@ -113,8 +113,8 @@ pub struct Cursor {
     events_raw: Option<String>,
     legacy_offsets: HashMap<PathBuf, u64>,
     legacy_totals: HashMap<(String, String), Totals>,
-    /// Legacy logs and lines the tail had to go around; see `collector::skipped`.
-    legacy_skipped: Skipped,
+    /// What either read went around or kept with something missing; see `collector::skipped`.
+    skipped: Skipped,
 }
 
 impl Cursor {
@@ -250,15 +250,31 @@ fn usage_from_event_row(row: &rusqlite::Row<'_>, decision: &Decision) -> Option<
         .flatten()
         .unwrap_or_else(|| "unknown".into());
 
+    // The input and output columns are on every build seen; `NULL` there -- a column the schema
+    // probe could not find is selected as `NULL` -- is a format change, not a zero. The three
+    // below them are optional and genuinely absent on older builds.
+    let raw_input: Option<i64> = row.get(2).ok().flatten();
+    let raw_output: Option<i64> = row.get(3).ok().flatten();
+    let incomplete = raw_input.is_none() || raw_output.is_none();
     let cache_read = count(row.get(4).ok().flatten());
     let cache_write = count(row.get(5).ok().flatten());
     let reasoning = count(row.get(6).ok().flatten());
-    let input = count(row.get(2).ok().flatten())
+    let input = count(raw_input)
         .saturating_sub(cache_read)
         .saturating_sub(cache_write);
-    let output = count(row.get(3).ok().flatten()).saturating_sub(reasoning);
+    let output = count(raw_output).saturating_sub(reasoning);
 
-    if input == 0 && output == 0 && reasoning == 0 && cache_read == 0 && cache_write == 0 {
+    // A row with zeros in every bucket says nothing, and is counted as skipped by the caller. One
+    // that is empty because its input or output is `NULL` is a request of unknown size: no row in
+    // the validating capture or a live store has a `NULL` there, so it is kept and flagged rather
+    // than filed under "no tokens".
+    if input == 0
+        && output == 0
+        && reasoning == 0
+        && cache_read == 0
+        && cache_write == 0
+        && !incomplete
+    {
         return None;
     }
 
@@ -304,6 +320,7 @@ fn usage_from_event_row(row: &rusqlite::Row<'_>, decision: &Decision) -> Option<
         created,
         session_id,
         project: cwd.as_deref().map(normalize_project_path).or(repository),
+        incomplete,
     })
 }
 
@@ -367,6 +384,9 @@ fn load_events(
     let mut rows = stmt.query(rusqlite::params_from_iter(bind))?;
     let mut usages = Vec::new();
     let mut skipped = 0usize;
+    // The read is inclusive of the previous high-water mark, so a row stamped there was already
+    // counted by the poll that set it.
+    let previous_high_water = cursor.high_water();
     // Driven by hand rather than through `query_map`: a step error means the store cannot be
     // read past this point and is the whole read's error, while a row that steps but does not
     // map is one skipped row.
@@ -380,7 +400,12 @@ fn load_events(
             cursor.advance_raw(&raw);
         }
         match usage_from_event_row(row, decision) {
-            Some(usage) => usages.push(usage),
+            Some(usage) => {
+                if previous_high_water.is_none_or(|mark| usage.created > mark) {
+                    cursor.skipped.note(&usage);
+                }
+                usages.push(usage)
+            }
             None => skipped += 1,
         }
     }
@@ -432,21 +457,21 @@ fn shutdown_totals(json: &Value) -> Option<Vec<(String, Totals)>> {
 /// Tail the legacy logs, emitting the delta each new shutdown snapshot represents.
 fn load_legacy(root: &Path, cursor: &mut Cursor, decision: &Decision) -> Result<Vec<Usage>> {
     let mut usages = Vec::new();
-    cursor.legacy_skipped.begin_pass();
+    cursor.skipped.begin_pass();
     for path in legacy_logs(root) {
         // One unreadable or half-written log must not sink the whole source -- but it is counted,
         // because its usage is missing from every total on screen.
         let file = match fs::File::open(&path) {
             Ok(file) => file,
             Err(error) => {
-                cursor.legacy_skipped.unreadable(&path, error);
+                cursor.skipped.unreadable(&path, error);
                 continue;
             }
         };
         let size = match file.metadata() {
             Ok(meta) => meta.len(),
             Err(error) => {
-                cursor.legacy_skipped.unreadable(&path, error);
+                cursor.skipped.unreadable(&path, error);
                 continue;
             }
         };
@@ -456,7 +481,7 @@ fn load_legacy(root: &Path, cursor: &mut Cursor, decision: &Decision) -> Result<
         }
         let mut reader = BufReader::new(file);
         if let Err(error) = reader.seek(SeekFrom::Start(*offset)) {
-            cursor.legacy_skipped.unreadable(&path, error);
+            cursor.skipped.unreadable(&path, error);
             continue;
         }
         let session = path
@@ -471,7 +496,7 @@ fn load_legacy(root: &Path, cursor: &mut Cursor, decision: &Decision) -> Result<
                 Ok(bytes) => bytes,
                 // The offset stops at the last whole line read, so the rest is retried next poll.
                 Err(error) => {
-                    cursor.legacy_skipped.unreadable(&path, error);
+                    cursor.skipped.unreadable(&path, error);
                     break;
                 }
             };
@@ -488,7 +513,7 @@ fn load_legacy(root: &Path, cursor: &mut Cursor, decision: &Decision) -> Result<
                 continue;
             }
             let Ok(json) = serde_json::from_str::<Value>(trimmed) else {
-                cursor.legacy_skipped.malformed();
+                cursor.skipped.malformed();
                 continue;
             };
             let Some(totals) = shutdown_totals(&json) else {
@@ -512,7 +537,7 @@ fn load_legacy(root: &Path, cursor: &mut Cursor, decision: &Decision) -> Result<
                     .saturating_sub(delta.cache_read)
                     .saturating_sub(delta.cache_write);
                 let output = delta.output.saturating_sub(delta.reasoning);
-                usages.push(Usage {
+                let usage = Usage {
                     // Content-derived, so a log re-read from the start dedups against what is
                     // already merged instead of doubling it.
                     event_id: Some(format!(
@@ -535,7 +560,12 @@ fn load_legacy(root: &Path, cursor: &mut Cursor, decision: &Decision) -> Result<
                     created: shutdown_time(&json).unwrap_or(0),
                     session_id: Some(session.clone()),
                     project: None,
-                });
+                    // A shutdown snapshot is a cumulative total; there is no per-field contract
+                    // to be missing from.
+                    incomplete: false,
+                };
+                cursor.skipped.note(&usage);
+                usages.push(usage);
             }
         }
     }
@@ -576,6 +606,9 @@ pub fn load_copilot_since(
         if skipped > 0 {
             status.push_str(&format!(" ({skipped} row(s) with no tokens skipped)"));
         }
+        if let Some(detail) = cursor.skipped.detail() {
+            status.push_str(&format!(" · {detail}"));
+        }
         return Ok((usages, status));
     }
     let logs = legacy_logs(&root);
@@ -594,7 +627,7 @@ pub fn load_copilot_since(
         logs.len(),
         root.join("session-state").display()
     );
-    if let Some(detail) = cursor.legacy_skipped.detail() {
+    if let Some(detail) = cursor.skipped.detail() {
         status.push_str(&format!(" · {detail}"));
     }
     Ok((usages, status))
@@ -620,7 +653,7 @@ impl Collector for CopilotCollector {
         Ok(usages)
     }
     fn warning(&self) -> Option<String> {
-        self.cursor.legacy_skipped.warning()
+        self.cursor.skipped.warning()
     }
 }
 
@@ -973,6 +1006,64 @@ mod tests {
             .filter(|u| seen.insert(usage_key(u)))
             .count();
         assert_eq!(unique, 2, "boundary overlap was double-counted");
+    }
+
+    /// A `NULL` output count is a format change, not a call that produced nothing: kept, flagged,
+    /// and counted once although the boundary row is re-read on every poll.
+    #[test]
+    fn a_row_with_a_null_count_is_flagged_once() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_store(
+            dir.path(),
+            "session-store.db",
+            &[Row {
+                session: "s1",
+                model: "gpt-5.6",
+                input: 900,
+                output: 100,
+                cache_read: 0,
+                cache_write: 0,
+                reasoning: 0,
+                created: 1_700_000_500,
+                turn: 0,
+            }],
+        );
+        Connection::open(dir.path().join("session-store.db"))
+            .unwrap()
+            .execute("UPDATE assistant_usage_events SET output_tokens = NULL", [])
+            .unwrap();
+
+        let mut collector = CopilotCollector {
+            root: Some(dir.path().to_path_buf()),
+            interval_secs: 30,
+            cursor: Cursor::start(),
+            decision: decision(),
+        };
+        let rows = collector.poll().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].incomplete);
+        assert_eq!(rows[0].input, 900);
+        for _ in 0..3 {
+            collector.poll().unwrap();
+        }
+        assert_eq!(
+            collector.warning().as_deref(),
+            Some("1 record(s) missing a token count, left unpriced")
+        );
+
+        // Both counts `NULL` and nothing else on the row: it used to be filed under "no tokens"
+        // with the rows that really are empty (found in review).
+        Connection::open(dir.path().join("session-store.db"))
+            .unwrap()
+            .execute("UPDATE assistant_usage_events SET input_tokens = NULL", [])
+            .unwrap();
+        let mut cursor = Cursor::start();
+        let (rows, status) =
+            load_copilot_since(Some(dir.path()), &mut cursor, &decision()).expect("load");
+        assert_eq!(rows.len(), 1, "kept, not skipped as empty: {status}");
+        assert!(rows[0].incomplete && rows[0].requests == 1);
+        assert!(status.contains("missing a token count"), "{status}");
+        assert!(!status.contains("with no tokens skipped"), "{status}");
     }
 
     #[test]

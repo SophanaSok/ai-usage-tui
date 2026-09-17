@@ -289,12 +289,22 @@ and an `AGENTS.md` snippet. Two decisions worth keeping:
 
 **Found and not yet done, ranked.** Each has its evidence; none blocks the contract above.
 
-1. **Unknown stays unknown, four places it does not.** An absent token field reads as `0`
-   (`helpers::number`, Copilot's `count`, Gemini's closure), so an upstream rename prices zero
-   output instead of saying "unknown". An absent timestamp becomes epoch 0 (`claude_code.rs`,
-   `codex.rs`), invisible outside `--all` with nothing on screen. `classify::is_free_model` asserts
-   $0.00 from a *name* containing a `free` token, with no table lookup. The recorders stamp `now()`
-   when a response carries no time.
+1. **Resolved. Unknown stays unknown, in the four places it did not.** An absent token field
+   read as `0`, so an upstream rename priced zero output; now the counts a source always reports
+   are read through `helpers::required`, a record missing one is kept, marked `Usage::incomplete`,
+   refused by `PricingEngine::estimate_cost` (the one chokepoint both the estimate and a
+   subscription's list-rate figure pass through) and counted onto the status line by
+   `collector::skipped`. An absent timestamp still stores as `0` -- making `created` optional is
+   a change to every rollup -- but is no longer silent: undated rows are counted the same way,
+   and the summary's `by_day.undated_requests` already reported them. `is_free_model` takes a name
+   as evidence only as a provider's documented suffix (`-free`, `:free`), and never against a rate
+   the pricing table lists. The recorders say when they stamp the time of recording.
+
+   Worth knowing: the rule was checked against this machine's logs before it was written --
+   40,805 of 40,805 Claude Code `usage` blocks carry both required counts and a timestamp -- and
+   the change moved no figure on 25,659 real requests. It exists for the day a format changes.
+   Deliberately not done: `incomplete_requests` in every summary bucket. It would be zero in
+   nearly all of them, and the source's `status` and `unpriced_requests` already say it.
 2. **Bundled pricing has no age check.** Only the refreshed cache is dated (30 days); the tables
    compiled into the binary are never compared to the clock, so a six-month-old install prices at
    six-month-old rates without a word. `--refresh-pricing` refreshes Zen only, not the LiteLLM

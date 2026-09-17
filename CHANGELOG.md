@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A token count a source stopped reporting is no longer read as zero.** The counts are plain
+  integers, so an absent `output_tokens` was `0` -- and a field renamed upstream would have priced
+  every request as though it produced no output: a confident, low, wrong number, from a tool whose
+  first rule is that unknown stays unknown. The two counts every record of a source carries are now
+  required, in all five parsers (Claude Code, Codex, OpenCode, Gemini CLI, Copilot's store). A record
+  missing one is kept, because what it does say is a fact; marked `incomplete` (a new key on each
+  `--json` row); **never priced** from what is left, neither as an estimate nor as a subscription's
+  list-rate figure; and counted onto the status line -- `1 record(s) missing a token count, left
+  unpriced` -- and into `--doctor`, `--json` and `--summary-json`. A `usage` block whose every field
+  was renamed is now a flagged request of unknown size rather than a row silently dropped. Cache and
+  reasoning counts stay optional: older builds and other providers genuinely omit them.
+- **Records with no timestamp are counted.** They are stored as the epoch, so they appeared under
+  `--all` and in no other range, no day and no budget period, with nothing on screen saying so. The
+  status line now reads `N record(s) with no timestamp, in no range but --all`.
+- **`FREE` is no longer asserted from any `free` in a model's name.** `FREE` means `$0.00` with no
+  lookup, and the rule was a `free` token anywhere in the id, so `free-tier-preview` on an
+  unrecognised provider was zero-cost on the strength of its spelling. A name now counts only as a
+  provider's documented suffix -- Zen's `-free`, OpenRouter's `:free` -- and never against the
+  pricing table: a model the table lists a rate for is not free however it is spelled.
+- **The recorders say when they stamp the time of recording.** `--record-ollama`, `--record-usage`
+  and `--record-routing` date an event that carries no timestamp with the moment it was recorded,
+  which is a fair reading for a response piped in as it completes and a wrong one for a replayed
+  file. It was done in silence; it is now noted once on stderr.
+
+Checked against real logs before and after: 40,805 of 40,805 Claude Code `usage` blocks carry both
+required counts and a timestamp, and no figure moved across 25,659 requests.
+
 ## [0.18.0] - 2026-09-17
 
 ### Added

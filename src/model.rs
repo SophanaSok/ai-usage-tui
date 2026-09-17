@@ -296,6 +296,14 @@ pub struct Usage {
     /// Project the work happened in — for Claude Code, the repository working directory.
     /// Enables per-project cost, which no view could express before.
     pub project: Option<String>,
+    /// The source record lacked a token count every real record of that source carries.
+    ///
+    /// The counts are plain integers, so an absent `output_tokens` used to read as `0` -- and a
+    /// field renamed upstream priced every request as though it had produced no output: a
+    /// confident, low, wrong number, which is what convention 1 exists to refuse. The row is
+    /// kept, because the counts it does carry are facts, but it is never priced from them (see
+    /// `apply_estimated_pricing`) and the collector counts it onto the status line.
+    pub incomplete: bool,
 }
 
 impl Usage {

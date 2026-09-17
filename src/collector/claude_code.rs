@@ -22,7 +22,7 @@ use crate::collector::background::Collector;
 use crate::collector::billing::Decision;
 use crate::collector::billing::{detect, resolve_sticky, BillingSetting, Signals};
 use crate::collector::skipped::Skipped;
-use crate::helpers::{number, string};
+use crate::helpers::{number, required, string};
 use crate::model::{CostStatus, Usage};
 use crate::utils::home_dir;
 use std::time::Duration;
@@ -209,6 +209,9 @@ fn read_session(path: &Path, offsets: &mut Offsets) -> Result<Vec<Usage>> {
     for _ in 0..malformed {
         offsets.skipped.malformed();
     }
+    for usage in &usages {
+        offsets.skipped.note(usage);
+    }
     Ok(usages)
 }
 
@@ -226,14 +229,21 @@ fn parse_value(json: &Value) -> Option<Usage> {
     }
     let usage = message.get("usage")?;
 
-    let input = number(usage, &["input_tokens", "inputTokens"]);
-    let output = number(usage, &["output_tokens", "outputTokens"]);
+    // Every assistant `usage` block Claude Code writes carries both of these -- 40,805 of 40,805
+    // on the machine this was checked against -- so their absence is a format change, not a
+    // zero. Cache counts are optional: older builds and error turns omit them.
+    let mut incomplete = false;
+    let input = required(usage, &["input_tokens", "inputTokens"], &mut incomplete);
+    let output = required(usage, &["output_tokens", "outputTokens"], &mut incomplete);
     let cache_read = number(usage, &["cache_read_input_tokens", "cacheReadInputTokens"]);
     let cache_write = number(
         usage,
         &["cache_creation_input_tokens", "cacheCreationInputTokens"],
     );
-    if input == 0 && output == 0 && cache_read == 0 && cache_write == 0 {
+    // All zeros *with the fields present* is a turn that used nothing, and is dropped as before.
+    // All zeros because the fields are gone is a request whose size is unknown: kept, so that a
+    // rename upstream shows as flagged rows rather than as a machine that stopped using Claude.
+    if input == 0 && output == 0 && cache_read == 0 && cache_write == 0 && !incomplete {
         return None;
     }
 
@@ -277,6 +287,7 @@ fn parse_value(json: &Value) -> Option<Usage> {
         // different projects, and collapsing them here would silently merge their costs with
         // no way to tell from the aggregate. The UI shortens this for display.
         project: string(json, &["cwd"]).map(|cwd| normalize_project_path(&cwd)),
+        incomplete,
     })
 }
 
@@ -564,6 +575,49 @@ mod tests {
         assert!(
             status.contains("1 file(s) unreadable") && status.contains("broken.jsonl"),
             "{status}"
+        );
+    }
+
+    /// An absent count used to read as `0`, so `output_tokens` renamed upstream priced every
+    /// request as though it had produced nothing; and a turn with no timestamp became 1970,
+    /// present in `--all` and silently missing from every other range. Both are kept -- what
+    /// they do say is a fact -- flagged, and counted once.
+    #[test]
+    fn a_missing_count_or_timestamp_is_flagged_not_read_as_zero() {
+        let renamed = r#"{"type":"assistant","uuid":"u-r","requestId":"req_r","timestamp":"2026-08-18T10:00:00Z","message":{"id":"m","role":"assistant","model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":1200,"completion_tokens":340}}}"#;
+        let usage = parse_line(renamed).expect("kept: its input is a fact");
+        assert!(usage.incomplete, "output_tokens is absent, not zero");
+        assert_eq!((usage.input, usage.output), (1200, 0));
+
+        // Every field gone: a request of unknown size, not a machine that stopped using Claude.
+        let all_renamed = r#"{"type":"assistant","uuid":"u-a","requestId":"req_a","timestamp":"2026-08-18T10:00:00Z","message":{"id":"m","role":"assistant","model":"claude-sonnet-4-5-20250929","usage":{"prompt":1200,"completion":340}}}"#;
+        assert!(parse_line(all_renamed).is_some_and(|u| u.incomplete && u.requests == 1));
+        // Zeros with the fields present are a turn that used nothing, dropped as before.
+        let nothing = r#"{"type":"assistant","uuid":"u-z","timestamp":"2026-08-18T10:00:00Z","message":{"id":"m","role":"assistant","model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":0,"output_tokens":0}}}"#;
+        assert!(parse_line(nothing).is_none());
+        assert!(!parse_line(ASSISTANT_LINE).unwrap().incomplete);
+
+        let undated = ASSISTANT_LINE.replace(r#""timestamp":"2026-08-18T10:00:00Z","#, "");
+        let dir = tempfile::TempDir::new().unwrap();
+        let project = dir.path().join("-home-dev-proj");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            project.join("s.jsonl"),
+            format!("{renamed}\n{undated}\n{ASSISTANT_LINE}\n"),
+        )
+        .unwrap();
+        let mut offsets = Offsets::new();
+        let (rows, status) =
+            load_claude_code(Some(dir.path()), &mut offsets, &per_token()).unwrap();
+        assert_eq!(rows.len(), 3, "nothing is dropped");
+        let expected = "1 record(s) missing a token count, left unpriced, \
+                        1 record(s) with no timestamp, in no range but --all";
+        assert!(status.ends_with(expected), "{status}");
+        load_claude_code(Some(dir.path()), &mut offsets, &per_token()).unwrap();
+        assert_eq!(
+            offsets.skipped().warning().as_deref(),
+            Some(expected),
+            "counted once"
         );
     }
 

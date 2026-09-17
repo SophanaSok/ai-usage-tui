@@ -479,6 +479,15 @@ impl PricingEngine {
             return Some((0.0, CostStatus::Free));
         }
 
+        // A row missing a token count its source always reports cannot be priced: the counts it
+        // does carry would produce a confident figure that is too low by an unknown amount. A
+        // free model stays free above -- nothing times zero is still zero -- and everything else
+        // stays unpriced, which every total already reports as such. One guard, here, because
+        // both the per-token estimate and a subscription's list-rate figure come through it.
+        if usage.incomplete {
+            return None;
+        }
+
         let context_tokens = usage.input + usage.cache_read;
         // Price the event at the rates in effect when it happened, not at whatever the table
         // says now. An undated event falls through to current rates.
@@ -714,6 +723,18 @@ pub fn bundled_free_models() -> &'static std::collections::HashSet<String> {
     })
 }
 
+/// Whether the bundled table lists a non-free input rate for `model`.
+///
+/// For classification, which must not call a model `FREE` on the strength of its name when the
+/// table says what it costs. The bundled engine, built once: classification runs per row.
+pub fn bundled_lists_a_rate(model: &str) -> bool {
+    static ENGINE: std::sync::OnceLock<PricingEngine> = std::sync::OnceLock::new();
+    ENGINE
+        .get_or_init(PricingEngine::bundled)
+        .input_rate(model)
+        .is_some()
+}
+
 /// Price everything still unpriced, and normalise the status of what deliberately cannot be.
 ///
 /// The second job is not decoration. Cloud usage is billed against an account quota or GPU time,
@@ -765,6 +786,52 @@ pub fn apply_estimated_pricing(usages: &mut [Usage], engine: &PricingEngine) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Restore the bug by deleting the `incomplete` guard in `estimate_cost`: the row is priced
+    /// from its input alone, at a third of what the same request costs with its output counted.
+    #[test]
+    fn a_row_missing_a_token_count_is_never_priced_from_what_is_left() {
+        let engine =
+            PricingEngine::parse("[model.\"m\"]\ninput = 1.0\noutput = 2.0\n").expect("parses");
+        let whole = Usage {
+            provider: "p".into(),
+            model: "m".into(),
+            input: 1_000_000,
+            output: 1_000_000,
+            cost_status: CostStatus::Unavailable,
+            ..Default::default()
+        };
+        assert_eq!(
+            engine.estimate_cost(&whole).map(|(cost, _)| cost),
+            Some(3.0)
+        );
+
+        let mut rows = vec![
+            Usage {
+                output: 0,
+                incomplete: true,
+                ..whole.clone()
+            },
+            Usage {
+                output: 0,
+                incomplete: true,
+                billing: Billing::Subscription,
+                ..whole.clone()
+            },
+        ];
+        apply_estimated_pricing(&mut rows, &engine);
+        assert_eq!(rows[0].cost, None, "priced from the input alone");
+        assert_eq!(rows[0].cost_status, CostStatus::Unavailable);
+        assert_eq!(
+            rows[1].cost_status,
+            CostStatus::Quota,
+            "a plan-billed row is still quota"
+        );
+        assert_eq!(
+            rows[1].api_equivalent_cost, None,
+            "and carries no list-rate figure it cannot stand behind"
+        );
+    }
 
     #[test]
     fn a_tier_key_that_does_not_parse_is_reported_and_not_applied_to_every_request() {

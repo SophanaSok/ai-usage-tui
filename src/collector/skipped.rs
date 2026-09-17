@@ -19,6 +19,12 @@ pub struct Skipped {
     /// Complete records that were not valid JSON. The cursor has moved past them, so their usage
     /// is gone for this process: this only grows.
     malformed: u64,
+    /// Records kept although a token count every record of the source carries was absent. Their
+    /// other counts are in the totals; they are never priced. Only grows.
+    incomplete: u64,
+    /// Records kept although they carry no usable timestamp. They are in `--all` and in no other
+    /// range, no day and no budget period -- which, uncounted, reads as less usage. Only grows.
+    undated: u64,
 }
 
 impl Skipped {
@@ -36,8 +42,21 @@ impl Skipped {
         self.malformed = self.malformed.saturating_add(1);
     }
 
+    /// Count what a kept row is missing. Call once per row, where the cursor guarantees once.
+    pub fn note(&mut self, usage: &crate::model::Usage) {
+        if usage.incomplete {
+            self.incomplete = self.incomplete.saturating_add(1);
+        }
+        if usage.created <= 0 {
+            self.undated = self.undated.saturating_add(1);
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.unreadable.is_empty() && self.malformed == 0
+        self.unreadable.is_empty()
+            && self.malformed == 0
+            && self.incomplete == 0
+            && self.undated == 0
     }
 
     /// The short form, for the dashboard's status line; `None` when nothing was skipped.
@@ -48,6 +67,18 @@ impl Skipped {
         }
         if self.malformed > 0 {
             parts.push(format!("{} malformed record(s) skipped", self.malformed));
+        }
+        if self.incomplete > 0 {
+            parts.push(format!(
+                "{} record(s) missing a token count, left unpriced",
+                self.incomplete
+            ));
+        }
+        if self.undated > 0 {
+            parts.push(format!(
+                "{} record(s) with no timestamp, in no range but --all",
+                self.undated
+            ));
         }
         (!parts.is_empty()).then(|| parts.join(", "))
     }

@@ -4,6 +4,29 @@ pub fn string(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter()
         .find_map(|key| value.get(*key).and_then(Value::as_str).map(String::from))
 }
+/// A count under any of `keys`, or `None` when the record carries none of them.
+///
+/// `number` answers `0` for an absent key, which is right for a field a source only sometimes
+/// reports (cache, reasoning) and wrong for one it always does: there, absent means the format
+/// changed, and `0` is an invented reading of it.
+pub fn count(value: &Value, keys: &[&str]) -> Option<u64> {
+    keys.iter().find_map(|key| {
+        let field = value.get(*key)?;
+        field
+            .as_u64()
+            .or_else(|| field.as_f64().map(|number| number.max(0.0) as u64))
+    })
+}
+
+/// `count`, noting in `missing` when the field was not there. For the fields a source always
+/// reports: the caller marks the row `incomplete` rather than trusting the `0`.
+pub fn required(value: &Value, keys: &[&str], missing: &mut bool) -> u64 {
+    count(value, keys).unwrap_or_else(|| {
+        *missing = true;
+        0
+    })
+}
+
 pub fn number(value: &Value, keys: &[&str]) -> u64 {
     keys.iter()
         .find_map(|key| {
