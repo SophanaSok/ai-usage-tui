@@ -438,6 +438,58 @@ fn the_glossary_names_every_source_id() {
     );
 }
 
+/// The setup guide carries the files under `contrib/` inside it, because no install channel
+/// ships `contrib/` and the guide is what an agent on a binary install actually has. A copy is
+/// a second place for the hook's command or a unit's schedule to be changed and the first
+/// forgotten, so each is held to its file byte for byte.
+#[test]
+fn the_setup_guide_inlines_the_shipped_files_byte_for_byte() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    // Line endings aside: a Windows checkout gives both the guide and the files CRLF, and what is
+    // being held together is their content.
+    let guide = ai_usage_tui::schema::AGENT_SETUP.replace('\r', "");
+    let mut inlined = 0;
+    for directory in ["contrib/claude-code", "contrib/systemd/user"] {
+        for entry in std::fs::read_dir(root.join(directory)).expect(directory) {
+            let path = entry.expect("entry").path();
+            let fence = match path.extension().and_then(|e| e.to_str()) {
+                Some("json") => "json",
+                Some("service" | "timer") => "ini",
+                _ => continue,
+            };
+            let contents = std::fs::read_to_string(&path)
+                .expect("read")
+                .replace('\r', "");
+            assert!(
+                guide.contains(&format!("```{fence}\n{contents}```")),
+                "docs/agent-setup.md does not carry {} as it is on disk",
+                path.display()
+            );
+            inlined += 1;
+        }
+    }
+    assert_eq!(
+        inlined, 6,
+        "a file was added under contrib/ or removed from it"
+    );
+}
+
+/// The setup guide tells an agent never to save `--print-config`'s output whole, because its
+/// budgets are live. That is a claim about the example, so it is held to the example.
+#[test]
+fn the_example_configs_budgets_are_live() {
+    let example: toml::Value =
+        toml::from_str(ai_usage_tui::config::EXAMPLE_CONFIG).expect("the example parses");
+    let entries = example["budgets"]["entry"]
+        .as_array()
+        .expect("the example has uncommented [[budgets.entry]] tables");
+    assert!(!entries.is_empty());
+    assert!(
+        ai_usage_tui::schema::AGENT_SETUP.contains("live samples"),
+        "the example's budgets are live and the setup guide no longer says so"
+    );
+}
+
 /// GitHub's topics cover every keyword and every source.
 ///
 /// The source-name rule is the forcing function: a collector cannot be added without the project
@@ -850,6 +902,9 @@ fn the_agent_integration_names_only_flags_that_exist() {
         "--all-features",
         "--check",
         "--no-deps",
+        // systemctl's, in the setup guide's timer instructions.
+        "--user",
+        "--now",
     ];
     // What an agent is handed, and whether it is an *entry point* -- a file installed or pasted
     // somewhere, which must send its reader to the guide that matches the installed version.
@@ -857,6 +912,7 @@ fn the_agent_integration_names_only_flags_that_exist() {
         ("contrib/claude-code/plugin/skills/ai-usage/SKILL.md", true),
         ("contrib/agents/README.md", true),
         ("docs/agent-guide.md", false),
+        ("docs/agent-setup.md", false),
         ("AGENTS.md", true),
         (".claude/skills/add-data-source/SKILL.md", false),
     ] {

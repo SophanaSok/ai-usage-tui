@@ -19,8 +19,9 @@ pub struct Cli {
     pub print_config: bool,
     /// Print the glossary of every JSON key and enum value, as JSON, and exit.
     pub schema: bool,
-    /// Print the guide to reading this tool's output from an LLM agent, and exit.
-    pub agent_guide: bool,
+    /// Print one of the guides for an LLM agent, and exit: `None` when the flag was not given,
+    /// the reading guide when it was given bare.
+    pub agent_guide: Option<crate::schema::GuideTopic>,
     /// `[collectors.<id>] enabled` overrides, by source id. Absent means the registry default.
     pub source_enabled: std::collections::BTreeMap<String, bool>,
     pub config_path: Option<PathBuf>,
@@ -101,7 +102,7 @@ impl Default for Cli {
             man: false,
             print_config: false,
             schema: false,
-            agent_guide: false,
+            agent_guide: None,
             source_enabled: Default::default(),
             config_path: None,
             db_path: None,
@@ -209,9 +210,18 @@ struct Args {
     #[arg(long, group = "action")]
     schema: bool,
 
-    /// Print the guide for LLM agents: how to read the JSON outputs and what to look for, and exit
-    #[arg(long, group = "action")]
-    agent_guide: bool,
+    /// Print a guide for LLM agents, and exit: how to read the JSON outputs and what to look for, or with a TOPIC, how to do more than read
+    // Optional, and bare means `read`: every skill and AGENTS.md block already installed says
+    // "run --agent-guide", and what that prints must not change under them.
+    #[arg(
+        long,
+        group = "action",
+        value_name = "TOPIC",
+        value_enum,
+        num_args = 0..=1,
+        default_missing_value = "read"
+    )]
+    agent_guide: Option<crate::schema::GuideTopic>,
 
     // --- data sources ---------------------------------------------------------------------
     /// Override the OpenCode SQLite database path
