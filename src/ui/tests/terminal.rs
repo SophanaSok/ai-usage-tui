@@ -79,6 +79,36 @@ fn a_pane_too_short_says_so_and_still_says_how_to_quit() {
     assert!(rendered.contains("MODEL ACTIVITY"), "{rendered}");
 }
 
+/// A budget alert adds a banner row, so the layout needs one more. Checking the bare minimum let a
+/// 20-row pane with an alert squeeze the body -- and the too-short screen must still say the alert
+/// is there, or a short pane becomes how one goes unseen. Found in review of #104.
+#[test]
+fn an_alert_banner_raises_the_height_the_dashboard_needs() {
+    use crate::budget::{Alert, AlertLevel, BudgetPeriod, BudgetScope};
+    let mut app = test_app(vec![usage(None, None, Some(1.0), 100)]);
+    app.recompute();
+    app.alerts = vec![Alert {
+        scope: BudgetScope::Global,
+        period: BudgetPeriod::Monthly,
+        spend: 45.0,
+        limit: 50.0,
+        pct: 90.0,
+        level: AlertLevel::Critical,
+        unpriced_requests: 0,
+        quota_requests: 0,
+    }];
+
+    let rendered = text(&render(&app, 80, crate::ui::MIN_HEIGHT));
+    assert!(
+        rendered.contains("needs 21 rows, has 20"),
+        "the banner's row was not counted: {rendered}"
+    );
+    assert!(rendered.contains("A budget alert is active."), "{rendered}");
+
+    let rendered = text(&render(&app, 80, crate::ui::MIN_HEIGHT + 1));
+    assert!(!rendered.contains("Terminal too short"), "{rendered}");
+}
+
 /// The first screen of a new install was a header row over nothing and tiles reading `0`.
 #[test]
 fn an_empty_dashboard_points_at_doctor() {

@@ -49,7 +49,7 @@ use crate::budget::{Alert, AlertDispatcher, BudgetEngine};
 use crate::cli::Cli;
 use crate::collector::background::CollectorHandle;
 use crate::collector::SourceRoots;
-use crate::model::CYAN;
+use crate::model::{CYAN, RED};
 use crate::utils::journal_path;
 
 pub use aggregate::{coverage, project_labels, project_totals};
@@ -166,7 +166,8 @@ where
     Ok(())
 }
 
-/// The fewest rows the dashboard lays out in: header 3, metric tiles 7, body 8, footer 2.
+/// The fewest rows the dashboard lays out in: header 3, metric tiles 7, body 8, footer 2 -- plus
+/// one for the alert banner while a budget alert is actionable (`required_height`).
 ///
 /// Below it ratatui does not complain -- it squeezes the constraints, and panels collapse to zero
 /// height one after another in silence, which on a short pane reads as a dashboard with nothing in
@@ -197,17 +198,25 @@ fn strip_colour(buffer: &mut ratatui::buffer::Buffer) {
     }
 }
 
+/// Whether a budget alert is showing, which costs the layout its banner row.
+fn has_alert_banner(app: &App) -> bool {
+    app.alerts.iter().any(|a| a.is_actionable())
+}
+
+/// `MIN_HEIGHT`, plus the banner row when there is one. Checking the bare constant let a 20-row pane
+/// with an alert run the full layout one row short, squeezing the body below its minimum -- the
+/// silent collapse the check exists to prevent (found in review of #104).
+fn required_height(app: &App) -> u16 {
+    MIN_HEIGHT + u16::from(has_alert_banner(app))
+}
+
 fn draw_in_colour(frame: &mut Frame, app: &App) {
     let area = frame.area();
-    if area.height < MIN_HEIGHT {
+    if area.height < required_height(app) {
         draw_too_short(frame, area, app);
         return;
     }
-    let alert_banner_height = if app.alerts.iter().any(|a| a.is_actionable()) {
-        1u16
-    } else {
-        0u16
-    };
+    let alert_banner_height = u16::from(has_alert_banner(app));
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -244,19 +253,27 @@ fn draw_in_colour(frame: &mut Frame, app: &App) {
     }
 }
 
-/// What a pane shorter than `MIN_HEIGHT` shows: why nothing else is there, and -- on the last
-/// line, as always -- how to leave.
+/// What a pane shorter than `required_height` shows: why nothing else is there, that a budget
+/// alert is active if one is -- a too-short pane must not be how an alert goes unseen -- and, on the
+/// last line as always, how to leave.
 fn draw_too_short(frame: &mut Frame, area: Rect, app: &App) {
-    let message = Paragraph::new(vec![
+    let mut lines = vec![
         Line::from(Span::styled(
             "Terminal too short for the dashboard",
             Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
-            format!("needs {MIN_HEIGHT} rows, has {}", area.height),
+            format!("needs {} rows, has {}", required_height(app), area.height),
             Style::default().fg(MUTED),
         )),
-    ]);
+    ];
+    if has_alert_banner(app) {
+        lines.push(Line::from(Span::styled(
+            "A budget alert is active.",
+            Style::default().fg(RED).add_modifier(Modifier::BOLD),
+        )));
+    }
+    let message = Paragraph::new(lines);
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(1)])

@@ -81,9 +81,10 @@
   likely reading of an empty screen. It now says no usage was collected and names
   `ai-usage-tui --doctor`, or, when data exists outside the range or filter, says so and how to widen
   it.
-- **A pane shorter than 20 rows says so.** Below the height the layout needs, ratatui squeezed the
-  panels to zero height one by one without complaint. The dashboard now shows the rows it needs and
-  has, with the key hints -- and how to quit -- still on the last line.
+- **A pane shorter than 20 rows says so** (21 while a budget alert's banner is showing). Below the
+  height the layout needs, ratatui squeezed the panels to zero height one by one without complaint.
+  The dashboard now shows the rows it needs and has, says so when a budget alert is active so a short
+  pane cannot hide one, and keeps the key hints -- and how to quit -- on the last line.
 
 ## [0.16.0] - 2026-09-17
 
