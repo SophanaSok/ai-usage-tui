@@ -289,7 +289,7 @@ and an `AGENTS.md` snippet. Two decisions worth keeping:
 
 **Extendable by an LLM -- added 2026-09-17, after v0.18.0.** The readable surface was read-only:
 asked to "track my other tool", "set me a budget" or "put it in my bar", an agent had nothing to
-go on. Shipped in answer, in five pull requests (#117--#120 and the recipes one): `--record-event`
+go on. Shipped in answer, in five pull requests (#117--#121): `--record-event`
 (`src/collector/journal.rs`: usage in this tool's own terms, one JSON object per line, with
 project, session, cache writes, a reported cost or subscription billing -- the way in for any
 tool with no collector); `--agent-guide [TOPIC]` with three embedded guides beside the reading
