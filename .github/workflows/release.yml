@@ -390,38 +390,33 @@ jobs:
             }
             found { print }
           ' CHANGELOG.md > body.txt
-          echo "body<<EOF" >> "$GITHUB_OUTPUT"
-          cat body.txt >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
         env:
           # Deliberately not GITHUB_REF_NAME: variables starting with GITHUB_ are
           # reserved, so a step-level override of one is displayed in the log but
           # silently ignored — the runner's own value wins.
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
-      - name: Dry run — skipping publish
+      # The asset list the publish step would upload, checked the same way: every file present
+      # and non-empty, no two with one name, every archive vouched for by checksums.txt.
+      - name: Dry run — check the release assets, skip publishing
         if: github.event_name != 'push'
         run: |
+          scripts/publish-release.sh --plan "$RELEASE_TAG"
           echo "::notice::Dry run complete. Artifacts, packages, checksums and rendered"
           echo "::notice::manifests were all built and verified; nothing was published."
-          ls -la artifacts/ rendered/
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
-      - uses: softprops/action-gh-release@v3
+      # One upload at a time, each confirmed against the API, the release a draft until all are.
+      # This was `softprops/action-gh-release`, which uploads everything at once; on v0.17.0 GitHub
+      # left the large assets stuck half-finished and re-runs made it worse. The reasons and the
+      # recovery are in the script's header.
+      - name: Publish the release, one asset at a time
         if: github.event_name == 'push'
-        with:
-          draft: false
-          prerelease: false
-          body: ${{ steps.changelog.outputs.body }}
-          # Named rather than `rendered/*`: the Chocolatey pair is nested now, and a one-level
-          # glob would try to upload a directory.
-          files: |
-            artifacts/*/ai-usage-tui-*
-            artifacts/checksums.txt
-            rendered/homebrew/ai-usage-tui.rb
-            rendered/scoop/ai-usage-tui.json
-            rendered/chocolatey/ai-usage-tui.nuspec
-            rendered/chocolatey/tools/chocolateyinstall.ps1
-            rendered/aur/PKGBUILD
+        run: scripts/publish-release.sh --publish "$RELEASE_TAG"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
       - name: Upload rendered manifests for the tap job
         uses: actions/upload-artifact@v7

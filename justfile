@@ -48,10 +48,13 @@ msrv:
         || { echo "MSRV toolchain ${version} is not installed: rustup toolchain install ${version}" >&2; exit 1; }
     cargo "+${version}" check --all-targets --locked
 
-# The docs job: rustdoc with warnings denied, and every relative Markdown link resolving.
+# The docs job: rustdoc with warnings denied, every relative Markdown link resolving, and the
+# release scripts linted and tested (the publish step's only real run is a tag push).
 docs:
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
     python3 scripts/check-markdown-links.py .
+    shellcheck scripts/*.sh
+    scripts/test-publish-release.sh
 
 # Dependency advisories and licence policy, as CI runs it.
 deny:
