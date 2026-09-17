@@ -370,12 +370,36 @@ bindings table and the parser rather than a list kept in the test. Decisions wor
    compiled into the binary are never compared to the clock, so a six-month-old install prices at
    six-month-old rates without a word. `--refresh-pricing` refreshes Zen only, not the LiteLLM
    table. Engine warnings reach `--doctor` only. Figures are USD list rates and nothing says so.
-3. **Supply chain.** No build-provenance attestation (`actions/attest-build-provenance` is a few
-   lines), no signing, no SBOM. Actions are pinned by tag, not SHA, and the MSRV job uses
-   `dtolnay/rust-toolchain@master`. `release.yml` grants `contents: write` to every job, and
-   `ci.yml` has no `permissions:` block (the repository default is read, so this is documentation
-   rather than exposure). The "Protect main" ruleset exists with `enforcement: disabled`, so no
-   check is required before merging; enabling it is a settings change.
+3. **Resolved. Supply chain.** Every archive and Linux package is attested by the release
+   workflow (`actions/attest-build-provenance`, over `checksums.txt`), and each release ships a
+   CycloneDX bill of materials attested against the same files (`cargo-cyclonedx`, pinned by
+   version and digest). Actions are pinned by commit with a version comment; `release.yml` is
+   read-only except the release job, the tap job holds no repository token, and every workflow
+   declares `permissions:` -- two tests in `tests/docs.rs` hold both. `install.sh` verifies the
+   attestation when a usable `gh` is there to do it, lets the lack of one through with a notice,
+   refuses a check that fails, and `--require-attestation` refuses both.
+   "Protect main" is enforced, rewritten first: as it stood it required checks named `build`,
+   `test` and `lint`, none of which exist, and an approving code-owner review, which a project
+   with one maintainer can never give -- enabling it would have stopped every merge. It now
+   requires a pull request (no approvals), the seven real checks, no force-push and no deletion,
+   with no bypass; so the release commit goes through a pull request too
+   (`docs/release-process.md`). A second ruleset keeps `v*` tags from being moved or deleted.
+
+   Worth knowing: `--signer-workflow` alone is not enough to verify a download. The release
+   workflow can be dispatched by hand on any branch, and with `attest=true` that run's artifacts
+   are attested as well -- correctly, as built from that branch. `--source-ref refs/tags/<tag>` is
+   what separates a release from a dry run, and the installer and the README both pass it. And the
+   attested dry run is what found that `publish-release.sh --publish` swallowed its own errors.
+
+   Still open from the finding: no code signing (the macOS binaries are unsigned; item 8), and
+   crates.io is published with a long-lived token. crates.io supports trusted publishing over
+   OIDC, which would remove the `CARGO_REGISTRY_TOKEN` secret; it needs the crate's owner to
+   register `release.yml` as a trusted publisher on crates.io first.
+
+   *As filed:* No build-provenance attestation, no signing, no SBOM. Actions pinned by tag, not
+   SHA, and the MSRV job on `dtolnay/rust-toolchain@master`. `release.yml` granted
+   `contents: write` to every job, and `ci.yml` had no `permissions:` block. The "Protect main"
+   ruleset existed with `enforcement: disabled`.
 4. **Onboarding.** Routing analytics, the differentiating feature, sits behind a hand-run `jq`
    merge into `~/.claude/settings.json`. An `--install-hook` / `--uninstall-hook` pair, and an
    uninstall path for the data directory, would close it. The consent question is the one the update

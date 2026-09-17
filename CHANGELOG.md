@@ -2,6 +2,58 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Releases are attested, and ship a bill of materials.** A checksum proves a download is the
+  file the release lists, and nothing more: `checksums.txt` comes from the same place as the
+  archive, so whoever could replace one could replace both. From the next release every archive
+  and every `.deb` and `.rpm` carries a build attestation -- signed by the release workflow's own
+  identity and kept by GitHub apart from the release's files -- binding the file's digest to this
+  repository, `release.yml` and the tagged commit. `gh attestation verify <file> --repo
+  SophanaSok/ai-usage-tui --signer-workflow …/release.yml --source-ref refs/tags/<tag>` checks
+  it; the last flag matters, because a hand-run dry run attests what it builds too, as built from
+  its branch. Each release also ships `ai-usage-tui-<tag>.cdx.json`, a CycloneDX list of every
+  crate any released target links, with version, licence and registry checksum, attested against
+  the same files. Both attestations are made before the release is created, so a failure there
+  publishes nothing. Tried end to end on a dry run before merging: the tarball, the `.deb` and the
+  bill-of-materials predicate verify; a tampered copy, another workflow and the wrong ref do not.
+- **`install.sh` checks the attestation when it can, and refuses a download that fails it.** With
+  a usable GitHub CLI -- installed, recent enough to tie a file to a tag, signed in -- the
+  installer verifies the archive it just downloaded. Nothing is refused for the lack of a tool:
+  that is reported as "not checked" and the install goes on. A check that *fails* on a release
+  that should be attested is different, and refuses; the first draft of this step printed "do not
+  use this download" and then installed it, which the review of this change caught.
+  `--require-attestation` makes "not checked" fatal as well, and `--no-attestation` skips the
+  step for whoever has a reason to.
+
+### Changed
+
+- **Every action is pinned by commit, and every workflow token is least-privilege.** Actions
+  were named by tag -- a pointer its owner can move -- including in the job that holds the
+  crates.io token, and the MSRV job tracked a branch. All are now `owner/action@<commit> # version`,
+  which Dependabot maintains; the one tool the release job downloads is pinned by version and
+  checked against a digest written in the workflow, not the one served beside it. `release.yml`
+  granted `contents: write` to all ten jobs; it is read-only at the top, the release job alone can
+  write, and the tap job gets no repository token at all. `ci.yml` and the two Claude workflows
+  declare their permissions instead of inheriting a setting. Two tests hold this: one fails for
+  any `uses:` not pinned to a 40-hex commit with a version comment, one for a workflow with no
+  `permissions:` block or a top-level write.
+- **A release goes through a pull request.** `main` is now protected -- changes by pull request
+  with the seven CI checks passing, no force-push, no deletion, no bypass -- so the release commit
+  no longer goes straight to it. `scripts/release.sh` runs on `release/vX.Y.Z` before the pull
+  request and again on `main` before the tag, where it also refuses a `main` that is not
+  `origin/main`. The ruleset that existed was switched off, and could not have been switched on:
+  it required three checks that do not exist and an approving review from a second maintainer
+  the project does not have.
+
+### Fixed
+
+- **A release whose asset list failed its check said nothing about why.** `publish-release.sh
+  --publish` captures the list `plan` prints, and `plan` printed its errors to the same stream --
+  so a missing manifest failed the job with no message at all. The dry run (`--plan`) showed the
+  error, which is how it went unnoticed. Errors go to stderr now; found by the test for a missing
+  bill of materials, which asserted on a message that never arrived.
+
 ## [0.19.0] - 2026-09-17
 
 ### Added

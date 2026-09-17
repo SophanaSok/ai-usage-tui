@@ -13,9 +13,18 @@ on:
         description: "Tag to simulate. Nothing is published on a dispatch run."
         default: v0.0.0-dryrun
         type: string
+      # Off by default: an attestation is a public, permanent record in a transparency log, and a
+      # dry run's artifacts are not a release. On when the attestation steps themselves are what
+      # is being tried -- a step first exercised by a real tag is the thing dry runs exist to avoid.
+      attest:
+        description: "Also attest the dry-run artifacts (public and permanent; for testing the attestation steps)."
+        default: false
+        type: boolean
 
+# Read-only unless a job says otherwise. This was `contents: write` for every job, so the five
+# build jobs and the crates.io job each held a token that could rewrite the repository.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -58,11 +67,12 @@ jobs:
     env:
       ARTIFACT: ai-usage-tui-${{ inputs.tag || github.ref_name }}-${{ matrix.slug }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master, 2026-09-17
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: ${{ matrix.target }}
 
@@ -130,7 +140,7 @@ jobs:
           Copy-Item README.md, LICENSE stage/
           7z a "$env:ARTIFACT.zip" "./stage/*"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ env.ARTIFACT }}
           path: |
@@ -155,11 +165,12 @@ jobs:
             linker: aarch64-linux-gnu-gcc
             apt: gcc-aarch64-linux-gnu
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master, 2026-09-17
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: pkg-${{ matrix.target }}
 
@@ -210,7 +221,7 @@ jobs:
             grep -q "$path" /tmp/rpm.txt || { echo "::error::.rpm is missing $path"; exit 1; }
           done
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ai-usage-tui-${{ inputs.tag || github.ref_name }}-${{ matrix.slug }}-linux-packages
           path: |
@@ -222,9 +233,13 @@ jobs:
     name: Release
     needs: [build, linux-packages]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release and upload its assets
+      id-token: write # the signing identity an attestation is issued to
+      attestations: write # store the attestations against this repository
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts
 
@@ -246,6 +261,41 @@ jobs:
             echo "::error::checksums.txt contains path components; it will not verify against the published assets"
             exit 1
           fi
+
+      # What every released binary is built from: each crate in Cargo.lock that any target links,
+      # with its version, licence and registry checksum, as CycloneDX. `--target all` because one
+      # document describes five targets, and a Windows-only crate is still something shipped.
+      # Dev-dependencies are left out by the tool: they are not in the binary.
+      #
+      # The generator is a pinned release, fetched from its own repository and checked against a
+      # digest written here -- not the `.sha256` served beside it, which whoever could replace
+      # the archive could replace too.
+      - name: Generate the bill of materials
+        run: |
+          set -euo pipefail
+          curl -sSfL --retry 3 -o cargo-cyclonedx.tar.xz \
+            "https://github.com/CycloneDX/cyclonedx-rust-cargo/releases/download/cargo-cyclonedx-${CYCLONEDX_VERSION}/cargo-cyclonedx-x86_64-unknown-linux-gnu.tar.xz"
+          echo "${CYCLONEDX_SHA256}  cargo-cyclonedx.tar.xz" | sha256sum -c -
+          tar -xJf cargo-cyclonedx.tar.xz
+          export PATH="$PWD/cargo-cyclonedx-x86_64-unknown-linux-gnu:$PATH"
+          cargo cyclonedx --format json --spec-version 1.5 --target all \
+            --override-filename "ai-usage-tui-${RELEASE_TAG}.cdx"
+          mkdir -p sbom
+          mv "ai-usage-tui-${RELEASE_TAG}.cdx.json" sbom/
+          # It must describe this crate at this version, and list what the lockfile lists.
+          jq -e --arg version "$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)" '
+            .bomFormat == "CycloneDX"
+            and .metadata.component.name == "ai-usage-tui"
+            and .metadata.component.version == $version
+            and (.components | length) > 100
+            and ([.components[] | select(.hashes == null)] | length) == 0
+          ' "sbom/ai-usage-tui-${RELEASE_TAG}.cdx.json" >/dev/null \
+            || { echo "::error::the generated bill of materials does not describe this release"; exit 1; }
+          echo "bill of materials: $(jq '.components | length' "sbom/ai-usage-tui-${RELEASE_TAG}.cdx.json") components"
+        env:
+          CYCLONEDX_VERSION: 0.5.9
+          CYCLONEDX_SHA256: fb8dbee9f182173e062a64a387b21a0badc6fab8b2abf9294973f012972bf6d8
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
       # Package manifests referenced ai-usage-tui-0.2.0-... while the workflow publishes
       # ai-usage-tui-v0.2.0-... , so every template URL 404'd. Render them from the real
@@ -404,16 +454,40 @@ jobs:
           # silently ignored — the runner's own value wins.
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
-      # The asset list the publish step would upload, checked the same way: every file present
-      # and non-empty, no two with one name, every archive vouched for by checksums.txt.
-      - name: Dry run — check the release assets, skip publishing
-        if: github.event_name != 'push'
-        run: |
-          scripts/publish-release.sh --plan "$RELEASE_TAG"
-          echo "::notice::Dry run complete. Artifacts, packages, checksums and rendered"
-          echo "::notice::manifests were all built and verified; nothing was published."
+      # The asset list the publish step will upload, checked before anything is made public: every
+      # file present and non-empty, no two with one name, every archive vouched for by
+      # checksums.txt. On every run, and ahead of the attestations on purpose -- this ran only on a
+      # dry run, so on a real tag the same check first happened inside the publish step, *after*
+      # the attestations were already permanent, for a release that would then never exist.
+      - name: Check the release assets
+        run: scripts/publish-release.sh --plan "$RELEASE_TAG"
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+      # A checksum says a download is the file the release lists. An attestation says where that
+      # file came from: signed by this workflow's identity, it binds each archive and package to
+      # this repository, this workflow and the commit it ran at, and anyone can check it with
+      # `gh attestation verify <file> --repo SophanaSok/ai-usage-tui`. One attestation covers
+      # everything checksums.txt names. Before the publish step on purpose: if this fails, the
+      # release has not been created and nothing downstream has run.
+      - name: Attest where the archives and packages were built
+        if: github.event_name == 'push' || inputs.attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: artifacts/checksums.txt
+
+      - name: Attest what they are built from
+        if: github.event_name == 'push' || inputs.attest
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-checksums: artifacts/checksums.txt
+          sbom-path: sbom/ai-usage-tui-${{ inputs.tag || github.ref_name }}.cdx.json
+
+      - name: Dry run — nothing is published
+        if: github.event_name != 'push'
+        run: |
+          echo "::notice::Dry run complete. Artifacts, packages, checksums, the bill of materials and"
+          echo "::notice::the rendered manifests were all built and verified; nothing was published."
 
       # One upload at a time, each confirmed against the API, the release a draft until all are.
       # This was `softprops/action-gh-release`, which uploads everything at once; on v0.17.0 GitHub
@@ -427,7 +501,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
       - name: Upload rendered manifests for the tap job
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rendered-manifests
           path: rendered/
@@ -442,9 +516,11 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master, 2026-09-17
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Skip when no registry token is configured
         id: gate
@@ -486,8 +562,10 @@ jobs:
     needs: [release]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    # Nothing of this repository's: it pushes to two others, with a token of its own.
+    permissions: {}
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: rendered-manifests
           path: rendered

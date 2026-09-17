@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Pre-flight checklist before tagging a release.
+# Pre-flight checklist for a release: run once on `release/vX.Y.Z` before its pull request, and
+# again on `main` before tagging. See docs/release-process.md.
 # Usage: scripts/release.sh 0.2.0
 
 VERSION="${1:?Usage: scripts/release.sh <version>}"
@@ -13,12 +14,26 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "==> Running pre-flight checks for v${VERSION}..."
 
-# 1. Check we're on main branch
+# 1. Where this is being run from. `main` takes changes only by pull request, so a release is two
+# visits: once on `release/vX.Y.Z`, before the pull request that carries the version bump, and once
+# on `main` after it has merged, before the tag. On `main` the commit about to be tagged must be the
+# one the remote has -- a tag on a local-only commit names something the protected branch never saw.
 BRANCH=$(git branch --show-current)
-if [ "$BRANCH" != "main" ]; then
-  echo "ERROR: Must be on 'main' branch (currently on '$BRANCH')"
-  exit 1
-fi
+case "$BRANCH" in
+  "release/v${VERSION}") STAGE=branch ;;
+  main)
+    STAGE=main
+    git fetch --quiet origin main
+    if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+      echo "ERROR: local main is not origin/main; pull (or merge the release pull request) first"
+      exit 1
+    fi
+    ;;
+  *)
+    echo "ERROR: run this on 'release/v${VERSION}' (before the pull request) or on 'main' (before the tag); currently on '$BRANCH'"
+    exit 1
+    ;;
+esac
 
 # 2. Check working tree is clean
 if [ -n "$(git status --porcelain)" ]; then
@@ -82,9 +97,17 @@ if [ -n "${SKIPPED:-}" ]; then
 else
   echo "==> All checks passed!"
 fi
-echo "==> To release, run:"
-echo "    git tag v${VERSION}"
-echo "    git push origin main"
-echo "    git push origin --tags"
-echo ""
-echo "    CI will build artifacts for all platforms automatically."
+if [ "$STAGE" = branch ]; then
+  echo "==> Next: the pull request, and a dry run of the release workflow on this branch."
+  echo "    git push -u origin release/v${VERSION}"
+  echo "    gh pr create --title 'release: v${VERSION}' --body 'Version bump and changelog for v${VERSION}.'"
+  echo "    gh workflow run release.yml --ref release/v${VERSION} -f tag=v0.0.0-dryrun && gh run watch"
+  echo "    gh pr merge --merge          # once CI and the dry run are green"
+  echo "    git checkout main && git pull && scripts/release.sh ${VERSION}"
+else
+  echo "==> To release, tag the merged commit and push the tag:"
+  echo "    git tag v${VERSION}"
+  echo "    git push origin v${VERSION}"
+  echo ""
+  echo "    CI will build artifacts for all platforms automatically."
+fi

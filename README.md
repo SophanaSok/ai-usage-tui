@@ -240,6 +240,43 @@ sudo rpm -i ai-usage-tui-v0.19.0-amd64.rpm       # Fedora/RHEL
 On Windows, extract the zip and add the directory containing
 `ai-usage-tui.exe` to your `PATH`.
 
+### Verifying a download
+
+Every release publishes `checksums.txt`, and the install script refuses an
+archive that does not match it. That proves the download is the file the release
+lists. It cannot prove more, because the checksums come from the same place as
+the archive.
+
+Releases after v0.19.0 also carry a **build attestation**: a statement signed by
+the release workflow's own identity, kept by GitHub apart from the release's
+files, that this exact file was built by this repository's `release.yml` at the
+tagged commit. With the [GitHub CLI](https://cli.github.com):
+
+```sh
+gh attestation verify ai-usage-tui-"$VERSION"-x86_64-linux.tar.gz \
+  --repo SophanaSok/ai-usage-tui \
+  --signer-workflow SophanaSok/ai-usage-tui/.github/workflows/release.yml \
+  --source-ref "refs/tags/$VERSION"
+```
+
+Each flag closes a door: the repository, the workflow — no other workflow's
+attestation will do — and the tag, because the release workflow can also be run
+by hand on a branch, and what that builds is attested as built from the branch.
+
+It covers every archive and every `.deb` and `.rpm`. The install script runs the
+same check whenever `gh` is there to run it. Nothing is refused for the lack of a
+tool — no `gh`, one too old, or not signed in is reported as "not checked" and
+the install goes on — but a check that *fails* refuses the download, because for
+an attested release that is the case the attestation exists to catch.
+`--require-attestation` makes "not checked" fatal too; `--no-attestation` skips
+the step.
+
+Each release also ships a bill of materials, `ai-usage-tui-<tag>.cdx.json`
+(CycloneDX): every crate any released target links, with its version, licence
+and registry checksum. It is attested against the same files, so
+`gh attestation verify … --predicate-type https://cyclonedx.org/bom` confirms
+that the list belongs to the binary you have.
+
 ### Shell completions and the man page
 
 The `.deb` and `.rpm` install both. From a tarball or `cargo install`, generate

@@ -1,19 +1,28 @@
 # Release Process
 
-1. Update `CHANGELOG.md` with the new version section.
+`main` takes changes only by pull request, with CI passing, and that includes the release commit:
+a release is a pull request like any other, and then a tag.
+
+1. On a branch named `release/vX.Y.Z`: update `CHANGELOG.md` with the new version section.
 2. Update the version in `Cargo.toml`: `version = "X.Y.Z"`. Also update the `VERSION=vX.Y.Z`
    quick-start lines and the `.deb`/`.rpm` example names in `README.md` — `tests/docs.rs` fails
-   if they disagree with `Cargo.toml`.
-3. Run `scripts/release.sh X.Y.Z` — this pre-flight checklist verifies:
-   - On `main` branch with clean working tree
+   if they disagree with `Cargo.toml` — and refresh `Cargo.lock` (`cargo build --offline`;
+   `--locked` refuses to). Commit as `release: vX.Y.Z`.
+3. Run `scripts/release.sh X.Y.Z` on that branch — this pre-flight checklist verifies:
+   - On `release/vX.Y.Z` (or, in step 5, on `main` and level with `origin/main`), with a clean
+     working tree
    - `cargo test --all-targets --locked` passes
    - `cargo clippy --all-targets --all-features --locked -- -D warnings` passes
    - `cargo build --release --locked` succeeds
    - Cargo.toml version matches the requested version
-4. Dry-run the release workflow before tagging — it builds, packages, and verifies everything
-   and skips only the publish:
-   `gh workflow run release.yml -f tag=v0.0.0-dryrun && gh run watch`.
-5. Tag and push: `git tag vX.Y.Z && git push origin main && git push origin --tags`.
+4. Push the branch, open the pull request, and dry-run the release workflow on it — the dry run
+   builds, packages and verifies everything and skips only the publish and the attestations:
+   `gh workflow run release.yml --ref release/vX.Y.Z -f tag=v0.0.0-dryrun && gh run watch`.
+   (`-f attest=true` also runs the attestation steps. Leave it off unless those steps are what
+   changed: an attestation is a public, permanent record, and a dry run is not a release.)
+   Merge when CI and the dry run are green.
+5. On `main`, pulled: run `scripts/release.sh X.Y.Z` once more, then tag the merged commit and
+   push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 6. GitHub Actions (`release.yml`) automatically builds nine artifacts:
    - Linux: `-x86_64-linux.tar.gz`, `-aarch64-linux.tar.gz`
    - macOS: `-x86_64-macos.tar.gz`, `-aarch64-macos.tar.gz` (both cross-compiled on
@@ -22,10 +31,15 @@
    - Windows: `-x86_64-windows.zip`
    - Packages: `-amd64.deb`, `-arm64.deb`, `-amd64.rpm`, `-arm64.rpm`
 7. CI generates `checksums.txt` (SHA256) and publishes the GitHub Release through
-   `scripts/publish-release.sh`: it creates the release as a draft, uploads the fifteen assets one
+   `scripts/publish-release.sh`: it creates the release as a draft, uploads the sixteen assets one
    at a time, confirms each against the API (`state: uploaded`, and the size on disk), retries one
    that is stuck, and makes the release public only once every asset is confirmed. The dry run
    runs the same script's `--plan`, which checks the asset list without uploading.
+   Before anything is uploaded the job writes the bill of materials
+   (`ai-usage-tui-vX.Y.Z.cdx.json`, CycloneDX, from `Cargo.lock` with a pinned `cargo-cyclonedx`)
+   and attests every file `checksums.txt` names, twice: where it was built
+   (`actions/attest-build-provenance`) and what it was built from (`actions/attest-sbom`). Both
+   run before the publish step on purpose — if either fails, no release exists yet.
 8. Packaging manifests (Homebrew, Scoop, Chocolatey) are **rendered by the release job** from the
    real artifact names and checksums and attached to the release. They are not hand-edited; a
    missing checksum fails the job rather than shipping a placeholder. The Chocolatey pair keeps
@@ -35,6 +49,9 @@
    *First publish* below.
 9. Verify the published artifacts independently: architecture with `file`, checksums, `.deb`/`.rpm`
    contents with `bsdtar`, and the Homebrew sha256 against the downloaded tarball.
+   And the attestation, which is the check that does not rest on the release's own files:
+   `gh attestation verify <archive> --repo SophanaSok/ai-usage-tui --signer-workflow
+   SophanaSok/ai-usage-tui/.github/workflows/release.yml --source-ref refs/tags/vX.Y.Z`.
 
 **If the publish step fails**, nothing downstream has run: `publish-crate` and `update-taps` need
 the release job to succeed, and the release is still a draft. Re-run the failed jobs

@@ -40,6 +40,33 @@ them is a security bug, not a feature request:
   process itself never makes a request; it reads what those commands cached.
 - **No `unsafe` code**, enforced by `#![forbid(unsafe_code)]` in the library and the binary.
 
+## Release integrity
+
+What a release is built from, and how to check that a download is one:
+
+- **Build attestations.** Every archive and Linux package in a release after v0.19.0 is attested by
+  the release workflow (`actions/attest-build-provenance`): a Sigstore-signed statement binding the
+  file's digest to this repository, `release.yml` and the tagged commit. Verify with
+  `gh attestation verify <file> --repo SophanaSok/ai-usage-tui --signer-workflow
+  SophanaSok/ai-usage-tui/.github/workflows/release.yml --source-ref refs/tags/<tag>` -- the last
+  flag matters, because a hand-run dry run of the workflow attests what it builds too, as built
+  from its branch. `scripts/install.sh` runs the
+  check whenever a usable GitHub CLI is there: the lack of one is reported and let through, a
+  failed check refuses the download, and `--require-attestation` refuses both. A file that fails
+  it was not built by this project's workflow, whatever its checksum says.
+- **A bill of materials.** `ai-usage-tui-<tag>.cdx.json` (CycloneDX 1.5) lists every crate any
+  released target links, from `Cargo.lock`, and is attested against the same files.
+- **Actions are pinned by commit**, not by tag, with the version in a comment for Dependabot to
+  maintain; a test fails the build for any `uses:` that is not. The one tool the release job
+  downloads is pinned by version and checked against a digest written in the workflow.
+- **Tokens are least-privilege.** Every workflow declares `permissions:`, read-only at the top; a
+  write is granted only to the job that performs it, and a test refuses a top-level write.
+- **`main` is protected**: changes arrive by pull request with the CI checks passing, and the
+  branch cannot be deleted or force-pushed. A release commit goes through the same door.
+
+Not yet: the macOS binaries are unsigned and not notarized, and crates.io is published with a
+long-lived token rather than trusted publishing.
+
 ## Dependency advisories
 
 `cargo-deny` runs on every push and pull request against the RustSec advisory database, with any
