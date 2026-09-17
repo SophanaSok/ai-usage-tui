@@ -802,3 +802,57 @@ fn every_channel_points_at_the_homepage() {
         "--help does not name the repository"
     );
 }
+
+/// The shipped agent integration points at commands that exist, and stays as thin as it claims.
+///
+/// The skill and the AGENTS snippet deliberately say almost nothing: the instructions live in the
+/// binary (`--agent-guide`), so they match whatever version is installed. That only works while
+/// every flag they do name is real -- a renamed flag would leave every installed skill sending
+/// agents to a command that errors.
+#[test]
+fn the_agent_integration_names_only_flags_that_exist() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let help = ai_usage_tui::cli::command().render_long_help().to_string();
+    for relative in [
+        "contrib/claude-code/plugin/skills/ai-usage/SKILL.md",
+        "contrib/agents/README.md",
+        "docs/agent-guide.md",
+    ] {
+        let text = std::fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|e| panic!("read {relative}: {e}"));
+        assert!(
+            text.contains("--agent-guide") || relative == "docs/agent-guide.md",
+            "{relative} does not send the agent to --agent-guide"
+        );
+        for word in text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-')) {
+            // A flag starts with a letter; `---` is a frontmatter delimiter and `--` a dash.
+            if let Some(flag) = word
+                .strip_prefix("--")
+                .filter(|f| f.starts_with(|c: char| c.is_ascii_lowercase()))
+            {
+                assert!(
+                    help.contains(&format!("--{flag}")),
+                    "{relative} names --{flag}, which --help does not list"
+                );
+            }
+        }
+    }
+
+    // The plugin's skill and the manifest that lists it agree on where it lives.
+    let marketplace: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join(".claude-plugin/marketplace.json"))
+            .expect("marketplace"),
+    )
+    .expect("marketplace.json parses");
+    let source = marketplace["plugins"][0]["source"]
+        .as_str()
+        .expect("source");
+    assert!(
+        root.join(source).join("skills/ai-usage/SKILL.md").is_file(),
+        "marketplace.json points at {source}, which holds no ai-usage skill"
+    );
+    assert!(root
+        .join(source)
+        .join(".claude-plugin/plugin.json")
+        .is_file());
+}

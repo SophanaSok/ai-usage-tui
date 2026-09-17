@@ -1,9 +1,10 @@
-# Claude Code integration: the hook and the status line
+# Claude Code integration: the hook, the status line and the skill
 
-Two settings files, deliberately separate so installing one does not install the other:
-`settings.json` feeds routing analytics from Claude Code's hooks, and
-`statusline-settings.json` feeds the limits panel from its status line, giving Claude Code a
-one-line rate-limit readout in the same change.
+Three independent pieces. Two feed data *in* — `settings.json` feeds routing analytics from Claude
+Code's hooks, and `statusline-settings.json` feeds the limits panel from its status line, giving
+Claude Code a one-line rate-limit readout in the same change. Separate files, so installing one
+does not install the other. The third reads data *out*: a [skill](#skill) that lets you ask Claude
+about your usage.
 
 ## Hook
 
@@ -101,3 +102,48 @@ ai-usage-tui                          # `l` shows the row
 Remove the `statusLine` key from the settings file. The cached windows go stale on their own
 after 30 minutes and are dimmed rather than alarmed from then on; delete
 `statusline-limits.json` from the data directory (`--doctor` names it) to remove the row at once.
+
+## Skill
+
+`plugin/skills/ai-usage/` is a Claude Code skill: ask "how can I cut my token usage?", "which
+project is eating my quota?" or "is Opus worth it on this repo?", and Claude reads the answer from
+`ai-usage-tui` instead of guessing. It is deliberately thin. It tells Claude to run
+`ai-usage-tui --agent-guide` and follow it, then `ai-usage-tui --summary-json` — so the
+instructions always match the version you have installed, and the skill itself never needs
+updating. It pre-approves `ai-usage-tui` commands and nothing else.
+
+What Claude reads is the compact summary, not your transcripts: token counts, models, costs,
+project paths and session ids. Those go to your model provider as part of the conversation, like
+anything else Claude reads; `ai-usage-tui` itself sends nothing anywhere.
+
+### Install
+
+As a plugin, from inside Claude Code:
+
+```
+/plugin marketplace add SophanaSok/ai-usage-tui
+/plugin install ai-usage@ai-usage-tui
+```
+
+Or copy the skill, which needs no plugin system and works the same:
+
+```sh
+mkdir -p ~/.claude/skills
+cp -r contrib/claude-code/plugin/skills/ai-usage ~/.claude/skills/
+```
+
+Use `.claude/skills/` inside a repository instead to share it with everyone who works there.
+`ai-usage-tui` 0.18.0 or newer has to be on `PATH`.
+
+### Verify
+
+Ask Claude something the skill's description covers — "what did my Claude Code usage look like
+this week?" — or invoke it directly with `/ai-usage` (as a plugin: `/ai-usage:ai-usage`). Claude
+should run `ai-usage-tui --agent-guide` and then `ai-usage-tui --summary-json`, and answer with
+figures that match what `ai-usage-tui --summary-json | jq .totals` prints. If it reaches for
+`--json` first, the installed binary predates `--summary-json`: `ai-usage-tui --doctor` says which
+copy is on `PATH` and how to upgrade it.
+
+### Uninstall
+
+`/plugin uninstall ai-usage@ai-usage-tui`, or `rm -r ~/.claude/skills/ai-usage`.

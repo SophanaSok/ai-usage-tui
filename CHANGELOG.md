@@ -37,6 +37,19 @@
   no figure, `api_equivalent_cost` was never charged, a token share is not a cost share), what to
   look for in usage and routing, and what not to claim. Both are compiled in, because no binary
   install ships `docs/`, and both work before the config is read.
+- **A Claude Code skill, and a paste-in block for every other agent.** `contrib/` fed data *into*
+  the tool -- the hook, the status line, the recorders -- and shipped nothing for reading it back
+  out. `contrib/claude-code/plugin/skills/ai-usage/` is a skill that answers "how can I cut my
+  token usage?" or "is the expensive model worth it here?" from the tool's own data. It is
+  deliberately thin: it sends Claude to `--agent-guide` and `--summary-json`, so the instructions
+  always match the installed version and the skill never needs updating; it pre-approves
+  `ai-usage-tui` commands and nothing else. Install it as a plugin -- the repository is its own
+  marketplace, `/plugin marketplace add SophanaSok/ai-usage-tui` -- or copy the directory into
+  `~/.claude/skills/`. `contrib/agents/README.md` is the same three lines for `AGENTS.md`,
+  `.cursorrules` or a system prompt. Checked end to end against a real account: Claude loaded the
+  skill, ran the guide and the summary and never `--json`, reported 1.47B tokens at a 98.5% cache
+  hit as plan-billed with no dollar figure, named context size rather than caching as the lever,
+  and declined to judge the routing because only one outcome had been recorded.
 - **`--project PATH` and `--session ID`** filter every export, so a reader goes from the summary
   to one project or session without pulling every row.
 - **`--csv -`** writes the CSV to stdout. It is the compact row format and could only be written
