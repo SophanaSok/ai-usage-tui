@@ -129,3 +129,13 @@ the thresholds are yours to judge and to state.
 Project paths and session ids are in these documents. When you read them, they go to whichever
 model provider you run on. The tool itself never transmits anything; if the user is sensitive
 about paths, summarise rather than quoting them.
+
+## 7. Doing more than reading
+
+This guide is about reading. When the user wants something changed or built, there is a guide
+for that too, printed by the same flag with a topic:
+
+- `ai-usage-tui --agent-guide setup` -- set it up for them: the config file and budgets, the
+  Claude Code hook and status line, timers, and what each command writes or sends.
+
+If the flag rejects a topic, the installed version predates it: say so, and that upgrading adds it.

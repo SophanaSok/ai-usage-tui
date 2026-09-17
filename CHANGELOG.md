@@ -4,6 +4,21 @@
 
 ### Added
 
+- **`--agent-guide setup`: an agent can set the tool up, not only read it.** `--agent-guide` takes
+  an optional topic. Bare it prints what it always has, byte for byte -- every installed skill and
+  pasted `AGENTS.md` block says "run `--agent-guide`", and they outlive the binary they were
+  written for; the default guide now lists the topics, and nothing installed names one, because
+  an older binary would reject it. `setup` covers the config file and budgets, the Claude Code
+  hook and status line, the systemd timers, a tool with no collector, and undoing all of it.
+  It is written for an agent on a binary install, where there is no `contrib/` to copy from: the
+  hook's JSON and the four units are inside the guide, and a test holds each to the shipped file
+  byte for byte. The tool still edits no other program's files and gains no install command --
+  the agent makes the change, after showing it, and `--doctor` says whether it took. What an
+  agent gets wrong without being told is in there too: which commands write or use the network,
+  that `--print-config`'s sample budgets are live, that merging the hook with `jq`'s `*` deletes
+  the user's other hooks, and that a budget counts dollars and so watches nothing on a
+  subscription plan.
+
 - **`--record-event`: a way in for a tool that has no collector.** The recorders each understood
   one server's response, and a bare response cannot say where it was made -- so usage fed in from
   outside never reached the Projects or Sessions views, had no cache writes, and could not say it

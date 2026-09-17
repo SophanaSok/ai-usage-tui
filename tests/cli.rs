@@ -270,6 +270,43 @@ fn documented_fixture_commands_pin_every_source() {
     }
 }
 
+/// `--agent-guide` takes an optional topic, and bare it prints what it always printed: every
+/// installed skill and pasted `AGENTS.md` block says "run `--agent-guide`", and they outlive the
+/// binary they were written for.
+#[test]
+fn the_agent_guide_topics_print_their_documents() {
+    use clap::ValueEnum;
+    let print = |args: &[&str]| {
+        let output = bin().args(args).output().expect("run");
+        assert!(output.status.success(), "{args:?}");
+        String::from_utf8(output.stdout).expect("utf8")
+    };
+    assert_eq!(print(&["--agent-guide"]), ai_usage_tui::schema::AGENT_GUIDE);
+    for topic in ai_usage_tui::schema::GuideTopic::value_variants() {
+        let name = topic
+            .to_possible_value()
+            .expect("named")
+            .get_name()
+            .to_string();
+        assert_eq!(print(&["--agent-guide", &name]), topic.text(), "{name}");
+    }
+    // A topic given after another flag is still the topic, not a stray argument.
+    assert_eq!(
+        print(&["--agent-guide=setup"]),
+        ai_usage_tui::schema::AGENT_SETUP
+    );
+
+    // An unknown topic fails and names the real ones: that error is how an agent on an older
+    // binary learns a topic does not exist there yet.
+    let output = bin().args(["--agent-guide", "nope"]).output().expect("run");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("read") && stderr.contains("setup"),
+        "{stderr}"
+    );
+}
+
 /// A refreshed pricing cache the engine refuses is named, with why, where the user looks.
 #[test]
 fn doctor_reports_a_pricing_cache_it_could_not_use() {

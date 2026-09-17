@@ -19,6 +19,34 @@ pub const GLOSSARY: &str = include_str!("../docs/json-glossary.json");
 /// How to read those documents and what to look for in them. Printed by `--agent-guide`.
 pub const AGENT_GUIDE: &str = include_str!("../docs/agent-guide.md");
 
+/// How to set the tool up on someone's behalf. Printed by `--agent-guide setup`.
+pub const AGENT_SETUP: &str = include_str!("../docs/agent-setup.md");
+
+/// Which of the agent's guides `--agent-guide` prints.
+///
+/// Reading came first and is what the bare flag has always printed, so it stays the default:
+/// every skill and `AGENTS.md` block already installed says "run `--agent-guide`" and must keep
+/// working against a newer binary -- and, the other way round, must never name a topic, which an
+/// older binary rejects. The default guide lists the topics; nothing installed does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
+#[value(rename_all = "lowercase")]
+pub enum GuideTopic {
+    /// Read the JSON outputs and what to look for in them (the default)
+    #[default]
+    Read,
+    /// Set it up for someone: config, budgets, the Claude Code hook and status line, timers
+    Setup,
+}
+
+impl GuideTopic {
+    pub fn text(self) -> &'static str {
+        match self {
+            Self::Read => AGENT_GUIDE,
+            Self::Setup => AGENT_SETUP,
+        }
+    }
+}
+
 /// Everything in `document` that the glossary's entry for `flag` does not account for.
 ///
 /// Empty when the document is fully described. Each entry names a path, so a failing test says
@@ -291,6 +319,36 @@ mod tests {
             problems.is_empty(),
             "the shape's `number` won: {problems:?}"
         );
+    }
+
+    /// The topics are discoverable from one place only -- the default guide -- because nothing
+    /// installed may name one (an older binary rejects it). So the default guide has to name
+    /// every topic, and each topic's guide has to say how it was reached.
+    #[test]
+    fn the_default_guide_lists_every_topic() {
+        use clap::ValueEnum;
+        assert!(GuideTopic::value_variants().len() >= 2);
+        for topic in GuideTopic::value_variants() {
+            let name = topic
+                .to_possible_value()
+                .expect("named")
+                .get_name()
+                .to_string();
+            let invocation = format!("--agent-guide {name}");
+            assert!(!topic.text().trim().is_empty(), "{name} prints nothing");
+            if *topic == GuideTopic::default() {
+                assert_eq!(topic.text(), AGENT_GUIDE);
+                continue;
+            }
+            assert!(
+                AGENT_GUIDE.contains(&invocation),
+                "the default guide never mentions `{invocation}`, so no agent will find it"
+            );
+            assert!(
+                topic.text().contains(&invocation),
+                "the {name} guide does not say it is printed by `{invocation}`"
+            );
+        }
     }
 
     #[test]

@@ -797,6 +797,24 @@ What the model reads — token counts, model names, costs, project paths and ses
 whichever provider it runs on, as anything in its context does. Your prompts and transcripts are
 never read, and `ai-usage-tui` itself still sends nothing anywhere.
 
+### Let an agent set it up
+
+Reading is the default; the same flag takes a topic for the rest. `ai-usage-tui --agent-guide setup`
+is what an agent needs to configure the tool for you — add a budget, switch a source off, install
+the Claude Code hook or the status line, schedule a timer — and it is written for an agent on a
+binary install, which has no `contrib/` directory to copy from: the hook's JSON and the systemd
+units are inside the guide, held to the shipped files by a test.
+
+The tool still has no install command and edits no other program's files. The agent makes the
+change, after showing it to you, and `--doctor` says whether it took. The guide also says which
+commands write a file or use the network (nothing does by default), that `--print-config`'s
+sample budgets are live and must not be saved whole, and that a budget counts dollars — so on a
+subscription plan it watches nothing, and the agent should tell you that rather than set one up.
+
+You do not need to mention any of this when you ask. The skill and the pasted block only ever say
+"run `--agent-guide`"; that guide lists the topics, so an agent finds them on a version that has
+them and is not sent to one that does not.
+
 ## Non-interactive output
 
 Use one-shot mode in scripts and scheduled jobs:
@@ -1107,7 +1125,7 @@ does not load it automatically.
 | `--man` | Print the man page in roff and exit |
 | `--print-config` | Print the annotated example `config.toml` and exit (its budgets are samples to edit) |
 | `--schema` | Print a JSON glossary of every key and every enum value in the JSON outputs, with its meaning, and exit |
-| `--agent-guide` | Print the guide for LLM agents — how to read the JSON outputs, the rules for `null`, `quota` and floors, and what to look for — and exit |
+| `--agent-guide [TOPIC]` | Print a guide for LLM agents and exit. Bare, or `read`: how to read the JSON outputs, the rules for `null`, `quota` and floors, and what to look for. `setup`: how to configure the tool on someone's behalf — config and budgets, the Claude Code hook and status line, timers, and what each command writes or sends |
 | `--db PATH` | Override the OpenCode database path |
 | `--journal PATH` | Override the local journal path |
 | `--claude-dir PATH` | Override the Claude Code session-log directory |
