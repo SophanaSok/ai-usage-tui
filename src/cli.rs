@@ -523,6 +523,16 @@ impl Cli {
     }
 }
 
+/// A check this tool ran came back "no": a budget has reached a threshold. Not a failure.
+pub const EXIT_CHECK_SAID_NO: u8 = 1;
+/// The tool could not do what it was asked: a bad flag, an unreadable source, a failed write.
+pub const EXIT_FAILURE: u8 = 2;
+/// A failed `--claude-code-hook`. Not [`EXIT_FAILURE`], because the status of a hook is read by
+/// Claude Code and not by a script of the user's: measured on 2.1.275, a `PostToolUse` hook that
+/// exits `2` has its stderr handed to the model as something to act on, and one that exits `1`
+/// does not. A journal that could not be written is not the model's to fix.
+pub const EXIT_HOOK_FAILED: u8 = 1;
+
 /// The parts of `--help` clap cannot generate from the argument definitions.
 ///
 /// `KEYS` is rendered from `ui::keys::BINDINGS`, the one table the dispatch and the `?` overlay
@@ -568,6 +578,14 @@ CATEGORIES:
     PAID           Usage from a provider that bills per token
     UNKNOWN        Usage whose provider is not recognised as billing per token
 
+EXIT STATUS:
+    0              Success, including a reader closing the pipe
+    {said_no}              --check-budgets: a budget has reached a threshold
+    {failure}              The tool failed: a bad flag, an unreadable source or
+                   config, a write that did not happen
+                   (--claude-code-hook exits {hook} instead: Claude Code reads a
+                   hook's 2 as a message for the model)
+
 EXAMPLES:
     ai-usage-tui
     OPENCODE_DB_PATH=/path/to/opencode.db ai-usage-tui
@@ -575,6 +593,9 @@ EXAMPLES:
 MORE:
     Website and docs   {homepage}
     Source and issues  {repository}",
+        said_no = EXIT_CHECK_SAID_NO,
+        failure = EXIT_FAILURE,
+        hook = EXIT_HOOK_FAILED,
         homepage = env!("CARGO_PKG_HOMEPAGE"),
         repository = env!("CARGO_PKG_REPOSITORY"),
     )

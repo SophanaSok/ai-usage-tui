@@ -14,9 +14,9 @@ Build on these; they are under the tool's stability contract (semantic versionin
   `"schema_version": 1`. `ai-usage-tui --schema` defines every key and enum value. Within a
   schema version keys are only added.
 - `--csv -` and `--routing-csv`: columns are only appended, so reading by position keeps working.
-- Exit codes: `0` on success; `--check-budgets` exits non-zero when a budget has reached its
-  `warn` level. A failure of the tool is *also* non-zero today, so parse the output before you
-  treat a non-zero exit as a breach.
+- Exit codes: `0` on success; `1` from `--check-budgets` when a budget has reached its `warn`
+  level; `2` when the tool failed. A `1` is an answer and comes with the document on stdout; a
+  `2` comes with a message on stderr and nothing to parse.
 - Flag names, config keys and environment variables.
 
 Never parse these; they change in any release: the dashboard, `--once`, `--doctor`,
@@ -91,8 +91,9 @@ to be told -- every run while a budget is over repeats the alert.
 
 ```sh
 # needs: jq, notify-send
-out=$(ai-usage-tui --check-budgets) && exit 0
-echo "$out" | jq -e '.alerts | length > 0' >/dev/null || { echo "ai-usage-tui failed: $out" >&2; exit 2; }
+out=$(ai-usage-tui --check-budgets); status=$?
+[ "$status" -eq 0 ] && exit 0
+[ "$status" -eq 1 ] || exit "$status"   # the tool failed, and has said why on stderr
 echo "$out" | jq -r '.alerts[] | "\(.scope) \(.period): \(.level), \(.pct | round)% of $\(.limit)\(if .unpriced_requests > 0 then " (at least)" else "" end)"' \
   | while read -r line; do notify-send "AI budget" "$line"; done
 ```

@@ -13,6 +13,12 @@
 //! So pass and fail are told apart by which hook fired, and the snippet in
 //! `contrib/claude-code/` registers the same command for both.
 //!
+//! The hook's *own* exit status is read by Claude Code too, and checked the same way (2.1.275):
+//! a `PostToolUse` hook that exits `2` has its stderr handed to the model as something to act
+//! on; one that exits `1` does not. So a failure here exits `1` where every other command exits
+//! `2` -- `main` decides that, from the arguments, because the hook can fail before this module
+//! is reached.
+//!
 //! What the event says, and where each part comes from:
 //!
 //! - **`test_result`**: the hook event, gated by `shell::test_runner` — the command line must

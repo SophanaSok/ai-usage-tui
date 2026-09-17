@@ -419,7 +419,7 @@
       }
     },
     "--check-budgets": {
-      "meaning": "Budgets past a threshold. Exits non-zero when any is. For headroom on budgets still OK, read budgets in --summary-json.",
+      "meaning": "Budgets past a threshold. Exits 1 when any is; 2 means the check itself failed and printed no document. For headroom on budgets still OK, read budgets in --summary-json.",
       "keys": {
         "schema_version": { "type": "integer", "meaning": "Version of this contract." },
         "budgets": { "type": "integer", "meaning": "Budgets configured." },

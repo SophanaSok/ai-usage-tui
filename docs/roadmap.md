@@ -411,9 +411,17 @@ bindings table and the parser rather than a list kept in the test. Decisions wor
    Codex windows exist only on Omarchy. Claude Code, the largest source, has no captured transcript
    fixture file, only inline strings. No fuzz or property tests over the parsers of other tools'
    formats; no coverage measurement. `.jsonl.zst` Codex rollouts are not read.
-7. **Scripting surface.** One non-zero exit code covers both "a budget is over" and "the tool
-   failed", so a monitor cannot tell them apart; a distinct code is a breaking change and belongs
-   before 1.0.0 if it is wanted at all. ~~No `--csv -`~~ (shipped with `--summary-json`). No
+7. **Scripting surface.** **Exit codes resolved by decision (2026-09-17): `1` is a budget that
+   is over, `2` is the tool failing**, as `grep` and `diff` use them. One non-zero code covered
+   both, so a monitor could not tell them apart, and the shipped budget recipe parsed stdout to
+   find out which it had. The breach kept `1`, which is what the README had documented; failure
+   moved, and `docs/stability.md` had only ever promised "non-zero" for it, so no written promise
+   broke -- which is why this was the way round to do it, and why it had to be settled before
+   1.0.0 froze the other one. One exception, measured and not read: on Claude Code 2.1.275 a
+   `PostToolUse` hook that exits `2` has its stderr handed to the model, and one that exits `1`
+   does not, so a failed `--claude-code-hook` exits `1` -- decided from the arguments, because a
+   config that does not parse fails the hook before the hook's own code runs. **This was the last
+   decision that had to precede 1.0.0.** ~~No `--csv -`~~ (shipped with `--summary-json`). No
    `--doctor --json` -- though what it was wanted for is now in `--summary-json`'s `sources` and
    `pricing` blocks: per-source rows, status, billing decision, skipped data and pricing warnings.
    What remains text-only is the install channel and the update check. No absolute reset time in

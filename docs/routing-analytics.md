@@ -95,6 +95,12 @@ reference: a Bash command that exits non-zero fires `PostToolUseFailure` (with t
 `error`), and `PostToolUse`'s response for Bash carries no exit code at all. Register one event
 without the other and only passes, or only failures, are recorded.
 
+**When the hook itself fails** -- a journal it cannot write, a config that does not parse -- it
+says so on stderr and exits `1`, not the `2` every other command fails with. Claude Code reads a
+hook's status: measured on 2.1.275, a `PostToolUse` hook that exits `2` has its stderr given to
+the model as something to act on, and a journal that could not be written is not the model's to
+fix. With exit `1` the same run told the model nothing.
+
 **What counts as a test run.** The command line must contain a recognised runner at the head of
 a simple command — `cargo test`, `pytest`, `npm test`, `go test`, `just test`, `make check` and
 some forty others, through wrappers like `npx`, `uv run`, `timeout` and leading `VAR=value`

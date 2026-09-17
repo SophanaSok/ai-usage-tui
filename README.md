@@ -1077,7 +1077,8 @@ alerts are POSTed as JSON with this shape:
 `spend` and `pct` are floors when `unpriced_requests` is non-zero.
 `--check-budgets` prints the same per-alert object.
 
-`--check-budgets` posts synchronously before exiting `1` and prints
+`--check-budgets` exits `1` when a budget is over and `2` when the check itself failed, so a
+scheduled run can tell the two apart. It posts synchronously before exiting `1` and prints
 `warning: budget webhook dispatch failed: …` on stderr if the POST fails. The
 dashboard posts from a background thread on every refresh and logs a failed
 POST when `AI_USAGE_LOG` is set. A repeat alert at the same level for the same

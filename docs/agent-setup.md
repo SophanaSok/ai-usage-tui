@@ -74,8 +74,8 @@ none of that work and warns about nothing. Tell the user that instead of setting
 they want is in `limits` (how much of each plan window is used). Do not set `billing = "api"`
 to make a budget "work": that prices plan usage at API rates and calls it spend.
 
-To check budgets on a schedule, `ai-usage-tui --check-budgets` exits non-zero when any budget
-has reached its `warn` level. Setting `webhook` makes every check POST to that URL.
+To check budgets on a schedule, `ai-usage-tui --check-budgets` exits `1` when any budget has
+reached its `warn` level, and `2` when the check itself failed. Setting `webhook` makes every check POST to that URL.
 
 ## 3. Claude Code: routing data from test runs
 
