@@ -59,7 +59,8 @@ pub struct Cli {
     pub json: bool,
     /// Print the compact, aggregated summary document and exit.
     pub summary_json: bool,
-    /// How many projects and sessions the summary lists before folding the rest into `other`.
+    /// How many models, projects and sessions the summary lists before folding the rest into
+    /// `other`.
     /// `0` lists them all.
     pub top: usize,
     pub csv_path: Option<PathBuf>,
@@ -291,10 +292,10 @@ struct Args {
     /// Collect once and print a compact aggregated summary as JSON: totals and efficiency metrics by model, project, session and day, with budgets, limits and routing
     #[arg(long, group = "action")]
     summary_json: bool,
-    /// With --summary-json, list the N largest projects and sessions and fold the rest into `other` (0 = all) [default: 10]
+    /// With --summary-json, list the N largest models, projects and sessions and fold the rest into `other` (0 = all) [default: 10]
     #[arg(long, value_name = "N", requires = "summary_json")]
     top: Option<usize>,
-    /// Collect once and write CSV
+    /// Collect once and write CSV to PATH, or to stdout with `-`
     #[arg(long, value_name = "PATH", group = "action")]
     csv: Option<PathBuf>,
     /// Check budget thresholds and print alerts as JSON, exit 1 if any are actionable
