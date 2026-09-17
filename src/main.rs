@@ -683,6 +683,8 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
         }
         let cache = ai_usage_tui::statusline::cache_path()
             .filter(|_| ai_usage_tui::limits::claude_enabled(&roots));
+        // The statusline row prints its own parse error; `limits::load` below reports the same one.
+        let mut statusline_problem: Option<String> = None;
         match cache
             .as_deref()
             .map(ai_usage_tui::statusline::read_cache_at)
@@ -709,6 +711,7 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
             }
             Some(Err(problem)) => {
                 let _ = writeln!(out, "  {:<12} unreadable  {problem}", "statusline");
+                statusline_problem = Some(problem);
             }
             _ => {
                 let _ = writeln!(
@@ -726,6 +729,20 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
                     "", ""
                 );
             }
+        }
+        // What the panel itself would flag: a record or cache that exists and could not be used,
+        // or windows it read and would not show. The dashboard puts these on its status line;
+        // until this, `--doctor` -- the place a user is sent to look -- listed every file as
+        // "found" and said nothing about them.
+        //
+        // Except the one already printed on the statusline row: `load` reads that cache again and
+        // would report its parse error a second time, on an unlabelled row.
+        for problem in ai_usage_tui::limits::load(&roots, ai_usage_tui::utils::now())
+            .problems
+            .into_iter()
+            .filter(|problem| statusline_problem.as_ref() != Some(problem))
+        {
+            let _ = writeln!(out, "  {:<12} problem     {problem}", "");
         }
     } else {
         let _ = writeln!(out, "  {:<12} disabled ([omarchy] limits = false)", "panel");

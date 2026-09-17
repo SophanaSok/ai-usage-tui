@@ -21,6 +21,7 @@ use crate::classify::classify;
 use crate::collector::background::Collector;
 use crate::collector::billing::Decision;
 use crate::collector::billing::{detect, resolve_sticky, BillingSetting, Signals};
+use crate::collector::skipped::Skipped;
 use crate::helpers::{number, string};
 use crate::model::{CostStatus, Usage};
 use crate::utils::home_dir;
@@ -71,7 +72,11 @@ pub fn config_json_path(explicit: Option<&Path>, claude_dir: Option<&Path>) -> O
 /// Session logs are append-only and grow without bound, so each poll resumes where the last
 /// one stopped rather than re-reading and re-parsing the whole transcript.
 #[derive(Debug, Default, Clone)]
-pub struct Offsets(HashMap<PathBuf, u64>);
+pub struct Offsets {
+    files: HashMap<PathBuf, u64>,
+    /// Transcripts and lines the tail had to go around; see `collector::skipped`.
+    skipped: Skipped,
+}
 
 impl Offsets {
     pub fn new() -> Self {
@@ -79,7 +84,11 @@ impl Offsets {
     }
 
     pub fn tracked_files(&self) -> usize {
-        self.0.len()
+        self.files.len()
+    }
+
+    pub fn skipped(&self) -> &Skipped {
+        &self.skipped
     }
 }
 
@@ -103,6 +112,7 @@ pub fn load_claude_code(
 
     let mut usages = Vec::new();
     let mut files = 0usize;
+    offsets.skipped.begin_pass();
     for path in session_files(&root) {
         files += 1;
         match read_session(&path, offsets) {
@@ -112,20 +122,22 @@ pub fn load_claude_code(
                 }
                 usages.append(&mut found);
             }
-            // One unreadable or truncated transcript must not sink the whole collector.
-            Err(_) => continue,
+            // One unreadable or truncated transcript must not sink the whole collector -- but it
+            // is counted, because its usage is missing from every total on screen.
+            Err(error) => offsets.skipped.unreadable(&path, error),
         }
     }
 
-    Ok((
-        usages,
-        format!(
-            "Claude Code: {} ({} sessions) · {}",
-            root.display(),
-            files,
-            decision.describe("collectors.claude_code")
-        ),
-    ))
+    let mut status = format!(
+        "Claude Code: {} ({} sessions) · {}",
+        root.display(),
+        files,
+        decision.describe("collectors.claude_code")
+    );
+    if let Some(detail) = offsets.skipped.detail() {
+        status.push_str(&format!(" · {detail}"));
+    }
+    Ok((usages, status))
 }
 
 /// Every `*.jsonl` under `root`, one directory deep per project plus any nested layout.
@@ -152,7 +164,7 @@ pub(crate) fn session_files(root: &Path) -> Vec<PathBuf> {
 fn read_session(path: &Path, offsets: &mut Offsets) -> Result<Vec<Usage>> {
     let mut file = File::open(path)?;
     let size = file.metadata()?.len();
-    let resume = offsets.0.get(path).copied().unwrap_or(0);
+    let resume = offsets.files.get(path).copied().unwrap_or(0);
 
     // A shrinking file means it was rotated or rewritten; start over rather than reading from
     // a stale offset into the middle of a line.
@@ -162,6 +174,7 @@ fn read_session(path: &Path, offsets: &mut Offsets) -> Result<Vec<Usage>> {
     let mut reader = BufReader::new(file);
     let mut consumed = start;
     let mut usages = Vec::new();
+    let mut malformed = 0u64;
     let mut line = String::new();
 
     loop {
@@ -176,18 +189,37 @@ fn read_session(path: &Path, offsets: &mut Offsets) -> Result<Vec<Usage>> {
             break;
         }
         consumed += bytes as u64;
-        if let Some(usage) = parse_line(&line) {
-            usages.push(usage);
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<Value>(trimmed) {
+            Ok(json) => {
+                if let Some(usage) = parse_value(&json) {
+                    usages.push(usage);
+                }
+            }
+            Err(_) => malformed += 1,
         }
     }
 
-    offsets.0.insert(path.to_path_buf(), consumed);
+    // Counted only once the offset is saved: a read that fails part-way leaves the offset where
+    // it was, and the retry would otherwise count the same lines again.
+    offsets.files.insert(path.to_path_buf(), consumed);
+    for _ in 0..malformed {
+        offsets.skipped.malformed();
+    }
     Ok(usages)
 }
 
 /// Extract usage from one transcript line, or `None` if it carries no billable usage.
 pub fn parse_line(line: &str) -> Option<Usage> {
-    let json: Value = serde_json::from_str(line.trim()).ok()?;
+    parse_value(&serde_json::from_str(line.trim()).ok()?)
+}
+
+/// `parse_line` over a line already parsed, so the tail parses each line once and can tell a
+/// line that is not JSON from one that simply carries no usage.
+fn parse_value(json: &Value) -> Option<Usage> {
     let message = json.get("message")?;
     if message.get("role").and_then(Value::as_str) != Some("assistant") {
         return None;
@@ -213,12 +245,12 @@ pub fn parse_line(line: &str) -> Option<Usage> {
 
     // Prefer the API request id: retries of one logical request share it, and Claude Code
     // writes the same assistant message across multiple lines when content streams in parts.
-    let event_id = string(&json, &["requestId", "request_id"])
+    let event_id = string(json, &["requestId", "request_id"])
         .or_else(|| string(message, &["id"]))
-        .or_else(|| string(&json, &["uuid"]));
+        .or_else(|| string(json, &["uuid"]));
 
     let provider = "anthropic".to_string();
-    let created = string(&json, &["timestamp"])
+    let created = string(json, &["timestamp"])
         .and_then(|ts| crate::collector::opencode::parse_created_at(&ts))
         .unwrap_or(0);
 
@@ -240,11 +272,11 @@ pub fn parse_line(line: &str) -> Option<Usage> {
         billing: Default::default(),
         api_equivalent_cost: None,
         created,
-        session_id: string(&json, &["sessionId", "session_id"]),
+        session_id: string(json, &["sessionId", "session_id"]),
         // The full working directory, not its last segment: `~/a/build` and `~/b/build` are
         // different projects, and collapsing them here would silently merge their costs with
         // no way to tell from the aggregate. The UI shortens this for display.
-        project: string(&json, &["cwd"]).map(|cwd| normalize_project_path(&cwd)),
+        project: string(json, &["cwd"]).map(|cwd| normalize_project_path(&cwd)),
     })
 }
 
@@ -309,6 +341,9 @@ impl Collector for ClaudeCodeCollector {
         let decision = self.resolve_billing();
         let (usages, _) = load_claude_code(self.root.as_deref(), &mut self.offsets, &decision)?;
         Ok(usages)
+    }
+    fn warning(&self) -> Option<String> {
+        self.offsets.skipped.warning()
     }
 }
 
@@ -467,6 +502,68 @@ mod tests {
             !rendered.contains("hunter2") && !rendered.contains("AWS_SECRET"),
             "message content leaked into the usage record: {}",
             rendered
+        );
+    }
+
+    /// An unreadable transcript and a line that is not JSON both used to vanish: `Err(_) =>
+    /// continue` for the file, `.ok()?` for the line, and no count of either. The dashboard
+    /// showed smaller totals and a clean status line.
+    #[test]
+    fn skipped_transcripts_and_lines_reach_the_status_and_the_collector_warning() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let project = dir.path().join("-home-dev-proj");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            project.join("good.jsonl"),
+            format!("{ASSISTANT_LINE}\n{{\"type\":\"assistant\",\"message\":\n\n"),
+        )
+        .unwrap();
+        // Not UTF-8, so reading it fails on every platform -- no permissions trick needed.
+        let broken = project.join("broken.jsonl");
+        std::fs::write(&broken, b"{\"type\":\"assistant\"}\xff\xfe\n").unwrap();
+
+        let mut collector = ClaudeCodeCollector {
+            root: Some(dir.path().to_path_buf()),
+            interval_secs: 30,
+            offsets: Default::default(),
+            billing: BillingSetting::Auto,
+            claude_json: Some(dir.path().join("no-claude.json")),
+            omarchy_dir: None,
+            decision: None,
+        };
+        assert_eq!(
+            collector.poll().unwrap().len(),
+            1,
+            "the readable row survives"
+        );
+        assert_eq!(
+            collector.warning().as_deref(),
+            Some("1 file(s) unreadable, 1 malformed record(s) skipped")
+        );
+
+        // A second poll retries the broken file and must not count the malformed line again: its
+        // offset moved past it.
+        collector.poll().unwrap();
+        assert_eq!(
+            collector.warning().as_deref(),
+            Some("1 file(s) unreadable, 1 malformed record(s) skipped")
+        );
+
+        // Fixed on disk: the file drops out, the lost line does not.
+        std::fs::write(&broken, format!("{ASSISTANT_LINE}\n")).unwrap();
+        collector.poll().unwrap();
+        assert_eq!(
+            collector.warning().as_deref(),
+            Some("1 malformed record(s) skipped")
+        );
+
+        // The one-shot status names the file, for `--once`, `--json` and `--doctor`.
+        std::fs::write(&broken, b"\xff\n").unwrap();
+        let (_, status) = load_claude_code(Some(dir.path()), &mut Offsets::new(), &per_token())
+            .expect("a bad transcript does not fail the source");
+        assert!(
+            status.contains("1 file(s) unreadable") && status.contains("broken.jsonl"),
+            "{status}"
         );
     }
 

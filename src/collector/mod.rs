@@ -8,6 +8,7 @@ pub mod journal;
 pub mod opencode;
 pub mod pricing_refresh;
 pub mod registry;
+pub mod skipped;
 pub mod zen;
 
 use std::collections::HashSet;

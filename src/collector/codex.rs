@@ -45,6 +45,7 @@ use crate::collector::billing::Decision;
 use crate::collector::billing::{detect, resolve_sticky, BillingSetting, Signals};
 use crate::collector::claude_code::{normalize_project_path, session_files};
 use crate::collector::opencode::parse_created_at;
+use crate::collector::skipped::Skipped;
 use crate::helpers::{number, string};
 use crate::model::{CostStatus, Usage};
 use crate::utils::home_dir;
@@ -86,6 +87,8 @@ pub struct FileCursor {
 pub struct Cursors {
     files: HashMap<PathBuf, FileCursor>,
     disagreements: u64,
+    /// Rollouts and lines the tail had to go around; see `collector::skipped`.
+    skipped: Skipped,
 }
 
 impl Cursors {
@@ -116,13 +119,15 @@ pub fn load_codex(
 
     let mut usages = Vec::new();
     let mut files = 0usize;
+    cursors.skipped.begin_pass();
     for dir in roots.iter().filter(|dir| dir.exists()) {
         for path in session_files(dir) {
             files += 1;
             match read_rollout(&path, cursors, decision) {
                 Ok(mut found) => usages.append(&mut found),
-                // One unreadable or truncated rollout must not sink the whole collector.
-                Err(_) => continue,
+                // One unreadable or truncated rollout must not sink the whole collector -- but
+                // it is counted, because its usage is missing from every total on screen.
+                Err(error) => cursors.skipped.unreadable(&path, error),
             }
         }
     }
@@ -138,6 +143,9 @@ pub fn load_codex(
             " · {} token events disagree with running totals",
             cursors.disagreements
         ));
+    }
+    if let Some(detail) = cursors.skipped.detail() {
+        source.push_str(&format!(" · {detail}"));
     }
     Ok((usages, source))
 }
@@ -156,6 +164,7 @@ fn read_rollout(path: &Path, cursors: &mut Cursors, decision: &Decision) -> Resu
 
     let mut reader = BufReader::new(file);
     let mut usages = Vec::new();
+    let mut malformed = 0u64;
     let mut line = String::new();
     loop {
         line.clear();
@@ -169,13 +178,26 @@ fn read_rollout(path: &Path, cursors: &mut Cursors, decision: &Decision) -> Resu
             break;
         }
         cursor.offset += bytes as u64;
-        if let Some(mut usage) = parse_line(&line, &mut cursor, path, &mut cursors.disagreements) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(json) = serde_json::from_str::<Value>(trimmed) else {
+            malformed += 1;
+            continue;
+        };
+        if let Some(mut usage) = parse_value(&json, &mut cursor, path, &mut cursors.disagreements) {
             usage.billing = decision.billing;
             usages.push(usage);
         }
     }
 
+    // Counted only once the cursor is saved: a read that fails part-way keeps the old cursor, and
+    // the retry would otherwise count the same lines again.
     cursors.files.insert(path.to_path_buf(), cursor);
+    for _ in 0..malformed {
+        cursors.skipped.malformed();
+    }
     Ok(usages)
 }
 
@@ -188,8 +210,19 @@ pub fn parse_line(
     disagreements: &mut u64,
 ) -> Option<Usage> {
     let json: Value = serde_json::from_str(line.trim()).ok()?;
+    parse_value(&json, cursor, path, disagreements)
+}
+
+/// `parse_line` over a line already parsed, so the tail parses each line once and can tell a
+/// line that is not JSON from one that carries no usage.
+fn parse_value(
+    json: &Value,
+    cursor: &mut FileCursor,
+    path: &Path,
+    disagreements: &mut u64,
+) -> Option<Usage> {
     let kind = json.get("type").and_then(Value::as_str).unwrap_or("");
-    let payload = json.get("payload").unwrap_or(&json);
+    let payload = json.get("payload").unwrap_or(json);
 
     match kind {
         "session_meta" => {
@@ -256,7 +289,7 @@ pub fn parse_line(
 
     let model = cursor.model.clone().unwrap_or_else(|| "unknown".into());
     let provider = "openai".to_string();
-    let raw_timestamp = string(&json, &["timestamp"]);
+    let raw_timestamp = string(json, &["timestamp"]);
     let created = raw_timestamp
         .as_deref()
         .and_then(parse_created_at)
@@ -343,6 +376,9 @@ impl Collector for CodexCollector {
         self.decision = Some(decision.clone());
         let (usages, _) = load_codex(self.root.as_deref(), &mut self.cursors, &decision)?;
         Ok(usages)
+    }
+    fn warning(&self) -> Option<String> {
+        self.cursors.skipped.warning()
     }
 }
 
@@ -571,6 +607,33 @@ mod tests {
         // Nothing new: no work.
         let (third, _) = load_codex(Some(dir.path()), &mut cursors, &per_token()).unwrap();
         assert!(third.is_empty());
+    }
+
+    /// An unreadable rollout was `Err(_) => continue` and a line that was not JSON was `.ok()?`,
+    /// with no count of either, so a Codex format or encoding change read as less usage.
+    #[test]
+    fn skipped_rollouts_and_lines_are_counted_once_and_reported() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = rollout_path(dir.path());
+        std::fs::write(&path, format!("{META}\n{TURN}\n{{\"type\":\n{COUNT_1}\n")).unwrap();
+        let broken = path.with_file_name("rollout-broken.jsonl");
+        std::fs::write(&broken, b"{\"type\":\"session_meta\"}\xff\n").unwrap();
+
+        let mut cursors = Cursors::new();
+        let (rows, status) = load_codex(Some(dir.path()), &mut cursors, &per_token()).unwrap();
+        assert_eq!(rows.len(), 1, "the readable call survives");
+        assert!(
+            status.contains("1 file(s) unreadable, 1 malformed record(s) skipped")
+                && status.contains("rollout-broken.jsonl"),
+            "{status}"
+        );
+
+        load_codex(Some(dir.path()), &mut cursors, &per_token()).unwrap();
+        assert_eq!(
+            cursors.skipped.warning().as_deref(),
+            Some("1 file(s) unreadable, 1 malformed record(s) skipped"),
+            "a retry must not count the malformed line twice"
+        );
     }
 
     #[test]

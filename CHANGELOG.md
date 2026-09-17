@@ -24,6 +24,26 @@
   the pipe got a written row, a panic, and a failing exit status that said the recording had not
   happened.
 
+- **Data a collector reads around now shows on the dashboard.** Every tailing reader skipped an
+  unreadable file with `Err(_) => continue` and a line that was not JSON as "no usage here", and
+  counted neither: a transcript with a bad byte, a Codex rollout written in a new encoding or a
+  corrupt OpenCode row made the totals smaller while the header stayed green. Claude Code, Codex,
+  OpenCode, Gemini CLI and Copilot's legacy logs now record both through one `collector::skipped`
+  type and implement `Collector::warning` -- which until now only the local-model journal did --
+  so the live status line reads, say, `claude_code: 1 file(s) unreadable, 2 malformed record(s)
+  skipped` and the header is marked degraded. The one-shot status carries the same note plus the
+  first unreadable path and error into `--once`, `--json` and `--doctor`, and the log records each
+  change. An unreadable file is a current state (it is retried every poll and drops out once it
+  reads); a skipped line is permanent for the process, and is counted exactly once -- including
+  OpenCode's deliberately re-read boundary row, which would otherwise have grown by one per poll.
+  Gemini's existing count had lived only inside a single read, so the incremental dashboard
+  reported it for one poll at most.
+- **Subscription windows this build does not recognise are reported, not dropped.** The
+  `~/.claude.json` reader counted entries of an unknown `kind`, and nothing read the count, so a
+  window Claude Code added upstream vanished from the Limits panel, `--json` and `--doctor` alike.
+  It is now a limits problem -- on the status line, and in a `problem` row under `--doctor`'s LIMITS
+  section, which had never printed the problems the panel flags at all.
+
 ## [0.16.0] - 2026-09-17
 
 ### Added
