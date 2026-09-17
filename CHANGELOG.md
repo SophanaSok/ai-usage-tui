@@ -16,6 +16,10 @@
   and sessions and folds the rest into `other`, so a truncated list still adds up to the totals.
   Every rollup carries derived figures nothing computed before: `cache_hit_pct`,
   `tokens_per_request`, `cost_per_request`, `output_pct`, `reasoning_pct`, `share_of_tokens_pct`.
+  Each `by_model` row carries `list_input_rate`, and each escalation `from_input_rate` and
+  `to_input_rate` (also in `--json`): the pricing table's dollars per million input tokens, so
+  which model is the expensive one is a number rather than something inferred from a name -- a
+  model reading an early build called an escalation to a newer, pricier model a "downgrade".
   They are facts, not advice -- no thresholds, no verdicts -- and unknown stays unknown: a
   percentage nothing recorded is `null`, not `0` (several sources never report cache or reasoning
   tokens), and `cost` is `null` when nothing in a bucket could be priced.

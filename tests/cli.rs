@@ -934,6 +934,13 @@ fn derived_escalations_are_exported() {
     assert_eq!(transitions.len(), 1, "{escalations}");
     assert_eq!(transitions[0]["from"], "claude-sonnet-4-5-20250929");
     assert_eq!(transitions[0]["to"], "claude-opus-4-1-20250805");
+    // The direction is in the numbers, not left to whoever reads the names: a model reading this
+    // export called an escalation to a newer, pricier model a "downgrade".
+    let from_rate = transitions[0]["from_input_rate"]
+        .as_f64()
+        .expect("from rate");
+    let to_rate = transitions[0]["to_input_rate"].as_f64().expect("to rate");
+    assert!(to_rate > from_rate, "{escalations}");
     assert_eq!(transitions[0]["sessions"], 1);
     // Opus output is priced, so the spend after the move is a real figure, not a floor.
     assert!(
@@ -2095,6 +2102,19 @@ fn the_summary_is_one_compact_document_that_adds_up() {
     assert_eq!(by_project[0]["project"], "/w/web", "largest first");
     assert_eq!(doc["by_session"]["rows"][0]["session_id"], "s-web");
     assert_eq!(doc["by_model"]["total"], 2);
+    let rate = |model: &str| {
+        doc["by_model"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["model"] == model)
+            .and_then(|row| row["list_input_rate"].as_f64())
+            .unwrap_or_else(|| panic!("no list rate for {model}"))
+    };
+    assert!(
+        rate("claude-opus-4-1-20250805") > rate("claude-sonnet-4-5-20250929"),
+        "the list rate is what says which model is the expensive one"
+    );
     // What `--doctor` alone said: which sources were read, and how billing was decided.
     let claude = doc["sources"]
         .as_array()

@@ -480,6 +480,11 @@ pub fn build(inputs: &Inputs<'_>) -> Value {
             "model": key.1,
             "category": key.2.label(),
             "cost_status": key.3.label(),
+            // The pricing table's list rate, dollars per million input tokens: how expensive the
+            // model is relative to the others, whatever this range happened to be billed as.
+            // `null` for a free model and for one the table cannot price. It ranks; it is not
+            // what anything cost.
+            "list_input_rate": (inputs.input_rate)(&key.1),
             "sessions": group.sessions.len(),
         })),
         "by_project": top_list(by_project, unkeyed_projects, inputs.top, of_tokens, Shape::Full, |project, group| json!({

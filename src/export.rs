@@ -208,6 +208,11 @@ pub(crate) fn escalations_json(
             serde_json::json!({
                 "from": transition.from,
                 "to": transition.to,
+                // The list rates the two models were ordered by, dollars per million input
+                // tokens. Without them the direction rests on the reader knowing which name is
+                // the pricier model -- and a reader given only names guessed, and guessed wrong.
+                "from_input_rate": rate_of(&transition.from),
+                "to_input_rate": rate_of(&transition.to),
                 "sessions": transition.sessions,
                 // Spend on models pricier than the one the session opened with. A floor, not a
                 // total, whenever `unpriced_after` or `quota_after` is non-zero.
