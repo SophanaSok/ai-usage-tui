@@ -60,15 +60,26 @@ pub fn print_once(cli: &Cli) -> Result<()> {
                 csv_field(&api_equivalent),
             ));
         }
-        fs::write(path, csv)?;
-        print_line(&format!(
-            "Wrote usage CSV to {} ({})",
-            path.display(),
-            source
-        ))?;
+        // `--csv -` is stdout, by the usual convention. CSV is the compact row format -- about a
+        // quarter of the JSON's size -- and it could only ever be written to a file, so it was
+        // unreachable from a pipeline. Nothing else is printed in that case: the confirmation
+        // line would be a row of garbage in the consumer's table.
+        if path.as_os_str() == "-" {
+            use std::io::Write;
+            let mut out = std::io::stdout().lock();
+            out.write_all(csv.as_bytes())?;
+            out.flush()?;
+        } else {
+            fs::write(path, csv)?;
+            print_line(&format!(
+                "Wrote usage CSV to {} ({})",
+                path.display(),
+                source
+            ))?;
+        }
     } else if cli.json {
         let roots = SourceRoots::from_cli(cli, journal.clone());
-        let limits = limits_json(&roots);
+        let limits = limits_report_json(&crate::limits::load(&roots, crate::utils::now()));
         // Filtered once and reused: the escalation block must be derived from exactly the rows
         // the export reports, or the two disagree about the same run.
         let filtered: Vec<Usage> = usages
@@ -76,7 +87,8 @@ pub fn print_once(cli: &Cli) -> Result<()> {
             .filter(|usage| filter.matches(usage))
             .cloned()
             .collect();
-        let escalations = escalations_json(&filtered);
+        let engine = crate::pricing::PricingEngine::load();
+        let escalations = escalations_json(&filtered, &|model| engine.input_rate(model));
         let provenance = provenance_json(&filtered);
         let rows: Vec<_> = filtered
             .iter()
@@ -93,6 +105,9 @@ pub fn print_once(cli: &Cli) -> Result<()> {
                     "cache_read_tokens": usage.cache_read,
                     "cache_write_tokens": usage.cache_write,
                     "cost": usage.cost,
+                    // How the request was paid for. Decided per source and until now visible only
+                    // in `--doctor`'s text, although it is what makes a row `quota`.
+                    "billing": usage.billing.label(),
                     "created": usage.created,
                     "project": usage.project,
                     "session_id": usage.session_id,
@@ -140,7 +155,7 @@ pub fn print_once(cli: &Cli) -> Result<()> {
 ///
 /// `cost` is null for `quota` and `unavailable` rather than `0.0`. Those rows have no per-token
 /// price, and a zero would assert they were free.
-fn provenance_json(filtered: &[Usage]) -> serde_json::Value {
+pub(crate) fn provenance_json(filtered: &[Usage]) -> serde_json::Value {
     let provenance = crate::model::Provenance::of(filtered);
     serde_json::json!({
         "reported_share": provenance.reported_share(),
@@ -174,9 +189,14 @@ fn provenance_json(filtered: &[Usage]) -> serde_json::Value {
 ///
 /// `escalation_rate` is null rather than 0 when no session had enough information to examine: a
 /// rate over zero sessions is not a fact about anything.
-fn escalations_json(filtered: &[Usage]) -> serde_json::Value {
-    let engine = crate::pricing::PricingEngine::load();
-    let escalations = crate::escalation::derive(filtered, |model| engine.input_rate(model));
+///
+/// `rate_of` is the pricing table's input rate, passed in so this stays pure and both exports
+/// that print the block order models by the same table.
+pub(crate) fn escalations_json(
+    filtered: &[Usage],
+    rate_of: &dyn Fn(&str) -> Option<f64>,
+) -> serde_json::Value {
+    let escalations = crate::escalation::derive(filtered, rate_of);
     serde_json::json!({
         "sessions_examined": escalations.sessions_examined,
         "sessions_escalated": escalations.sessions_escalated,
@@ -203,10 +223,9 @@ fn escalations_json(filtered: &[Usage]) -> serde_json::Value {
 /// Claude Code's own cached utilisation -- for scripts that want "session window at 92%" without
 /// scraping the dashboard. `percent_used` is on the 0..100 scale, like `--check-budgets` `pct`.
 ///
-/// Goes through `limits::load` rather than reading Omarchy directly, so a script and the
-/// dashboard cannot disagree about one run: they previously ran two independent reads.
-fn limits_json(roots: &SourceRoots) -> Vec<serde_json::Value> {
-    let report = crate::limits::load(roots, crate::utils::now());
+/// Callers get the report from `limits::load` rather than reading Omarchy directly, so a script
+/// and the dashboard cannot disagree about one run: they previously ran two independent reads.
+pub(crate) fn limits_report_json(report: &crate::omarchy::LimitsReport) -> Vec<serde_json::Value> {
     report
         .snapshots
         .iter()
@@ -230,6 +249,64 @@ fn limits_json(roots: &SourceRoots) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// `--summary-json`: gather everything `summary::build` needs, and print the document compactly.
+///
+/// One line, not pretty-printed like the other exports: whitespace is about a fifth of a pretty
+/// document's tokens, and this one exists for a reader that pays for every token. `| jq .` is the
+/// human view.
+pub fn print_summary(cli: &Cli, budgets: &crate::budget::BudgetEngine) -> Result<()> {
+    let journal = cli
+        .journal_path
+        .clone()
+        .or_else(journal_path)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "could not determine a home directory; pass an explicit path (see --help)"
+            )
+        })?;
+    let roots = SourceRoots::from_cli(cli, journal.clone());
+    let now = crate::utils::now();
+    let (sources, usages) = crate::collector::diagnose_with_usage(&roots)?;
+    let filter = UsageFilter::new(cli);
+    let filtered: Vec<Usage> = usages
+        .iter()
+        .filter(|usage| filter.matches(usage))
+        .cloned()
+        .collect();
+    let engine = crate::pricing::PricingEngine::load();
+    let routing_events: Vec<_> = crate::collector::journal::load_routing(&journal)?
+        .into_iter()
+        .filter(|event| filter.in_range(event.created))
+        .collect();
+    let document = crate::summary::build(&crate::summary::Inputs {
+        schema_version: JSON_SCHEMA_VERSION,
+        now,
+        scope: crate::summary::Scope {
+            range: cli.range.label(),
+            since: filter.since(),
+            provider: cli.provider_filter.clone(),
+            model: cli.model_filter.clone(),
+            project: cli.project_filter.clone(),
+            session: cli.session_filter.clone(),
+        },
+        top: cli.top,
+        usages: &filtered,
+        sources: &sources,
+        pricing_models: engine.model_count(),
+        pricing_warnings: engine.warnings(),
+        // All usage, not the filtered rows: how fast tokens are going *now* does not depend on
+        // which month the rest of the document is about. The dashboard does the same.
+        burn: &crate::ui::aggregate::burn_rate(&usages, 3600, now),
+        // Budgets carry their own period, so they too are checked against everything.
+        budgets: &budgets.check(&usages),
+        limits: &crate::limits::load(&roots, now),
+        routing_events: &routing_events,
+        input_rate: &|model| engine.input_rate(model),
+    });
+    print_line(&serde_json::to_string(&document)?)?;
+    Ok(())
+}
+
 pub fn csv_field(value: &str) -> String {
     if value.contains(',') || value.contains('"') || value.contains('\n') {
         format!("\"{}\"", value.replace('"', "\"\""))
@@ -251,6 +328,8 @@ pub struct UsageFilter<'a> {
     is_all: bool,
     provider: Option<&'a str>,
     model: Option<&'a str>,
+    project: Option<&'a str>,
+    session: Option<&'a str>,
 }
 
 impl<'a> UsageFilter<'a> {
@@ -260,7 +339,19 @@ impl<'a> UsageFilter<'a> {
             is_all: cli.range == Range::All,
             provider: cli.provider_filter.as_deref(),
             model: cli.model_filter.as_deref(),
+            project: cli.project_filter.as_deref(),
+            session: cli.session_filter.as_deref(),
         }
+    }
+
+    /// When the range starts, or `None` for all history.
+    pub fn since(&self) -> Option<i64> {
+        (!self.is_all).then_some(self.cutoff)
+    }
+
+    /// Whether a timestamp falls in the range, for things that are not usage rows.
+    pub fn in_range(&self, created: i64) -> bool {
+        self.is_all || created >= self.cutoff
     }
 
     pub fn matches(&self, usage: &Usage) -> bool {
@@ -271,6 +362,18 @@ impl<'a> UsageFilter<'a> {
             && self
                 .model
                 .is_none_or(|model| usage.model.eq_ignore_ascii_case(model))
+            // Exact, and case-sensitive: these are a path and an id, copied from an export. The
+            // trailing separator is forgiven because the collectors strip it before storing.
+            && self.project.is_none_or(|project| {
+                let wanted = project.trim_end_matches(['/', '\\']);
+                match usage.project.as_deref() {
+                    Some(actual) => actual == wanted || actual == project,
+                    None => project == crate::summary::UNATTRIBUTED,
+                }
+            })
+            && self
+                .session
+                .is_none_or(|session| usage.session_id.as_deref() == Some(session))
     }
 }
 

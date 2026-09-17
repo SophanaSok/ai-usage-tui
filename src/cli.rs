@@ -51,8 +51,17 @@ pub struct Cli {
     pub range_set: bool,
     pub provider_filter: Option<String>,
     pub model_filter: Option<String>,
+    /// Keep only usage from this working directory, exactly as the exports spell it.
+    pub project_filter: Option<String>,
+    /// Keep only usage from this session id.
+    pub session_filter: Option<String>,
     pub once: bool,
     pub json: bool,
+    /// Print the compact, aggregated summary document and exit.
+    pub summary_json: bool,
+    /// How many projects and sessions the summary lists before folding the rest into `other`.
+    /// `0` lists them all.
+    pub top: usize,
     pub csv_path: Option<PathBuf>,
     pub record_ollama: bool,
     /// The provider to journal an OpenAI-compatible response under.
@@ -108,6 +117,10 @@ impl Default for Cli {
             range_set: false,
             provider_filter: None,
             model_filter: None,
+            project_filter: None,
+            session_filter: None,
+            summary_json: false,
+            top: DEFAULT_TOP,
             once: false,
             json: false,
             csv_path: None,
@@ -250,6 +263,12 @@ struct Args {
     /// Filter by model
     #[arg(long, value_name = "NAME")]
     model: Option<String>,
+    /// Filter by project: the working directory, exactly as --summary-json and --json spell it
+    #[arg(long, value_name = "PATH")]
+    project: Option<String>,
+    /// Filter by session id
+    #[arg(long, value_name = "ID")]
+    session: Option<String>,
 
     // --- dashboard and alerts -------------------------------------------------------------
     /// Refresh the dashboard every N seconds [default: 30]
@@ -266,9 +285,15 @@ struct Args {
     /// Collect once and print plain text
     #[arg(long, conflicts_with_all = COLLECTION_ACTIONS)]
     once: bool,
-    /// Collect once and print JSON
+    /// Collect once and print JSON, one object per request (large; see --summary-json)
     #[arg(long, group = "action")]
     json: bool,
+    /// Collect once and print a compact aggregated summary as JSON: totals and efficiency metrics by model, project, session and day, with budgets, limits and routing
+    #[arg(long, group = "action")]
+    summary_json: bool,
+    /// With --summary-json, list the N largest projects and sessions and fold the rest into `other` (0 = all) [default: 10]
+    #[arg(long, value_name = "N", requires = "summary_json")]
+    top: Option<usize>,
     /// Collect once and write CSV
     #[arg(long, value_name = "PATH", group = "action")]
     csv: Option<PathBuf>,
@@ -309,6 +334,9 @@ struct Args {
     #[arg(long, group = "action")]
     omarchy_record: bool,
 }
+
+/// How many projects and sessions `--summary-json` lists unless told otherwise.
+pub const DEFAULT_TOP: usize = 10;
 
 /// The actions that collect and exit, which `--once` cannot be combined with.
 ///
@@ -371,6 +399,7 @@ impl Cli {
         // required, so `--json` alone works.
         let once = args.once
             || args.json
+            || args.summary_json
             || args.csv.is_some()
             || args.routing_json
             || args.routing_csv.is_some();
@@ -433,8 +462,12 @@ impl Cli {
             range_set,
             provider_filter: args.provider,
             model_filter: args.model,
+            project_filter: args.project,
+            session_filter: args.session,
             once,
             json: args.json,
+            summary_json: args.summary_json,
+            top: args.top.unwrap_or(DEFAULT_TOP),
             csv_path: args.csv,
             record_ollama: args.record_ollama,
             record_usage: args.record_usage,

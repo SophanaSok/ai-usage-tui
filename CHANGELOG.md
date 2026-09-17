@@ -2,8 +2,38 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`--summary-json`: the whole picture in one compact document.** `--json` prints one object per
+  request -- 13.3 MB for the 25,000 requests on the machine this was written on, about a hundred
+  times what fits in a model's context window -- and no aggregated JSON existed at all: the
+  by-model, by-project, by-session and by-day rollups were computed for the dashboard and rendered
+  only there. The summary is those, as one line of about 33 KB for the same history: `totals`,
+  `by_category`, `by_model`, `by_project`, `by_session`, `by_day`, the trailing-hour `burn` rate,
+  every budget including the ones still `OK`, `limits`, `escalations`, `provenance` and `routing`,
+  plus what only `--doctor`'s text carried -- `sources` (rows found, status, the billing decision,
+  skipped data) and `pricing` warnings. `--top N` (default 10) lists the largest models, projects
+  and sessions and folds the rest into `other`, so a truncated list still adds up to the totals.
+  Every rollup carries derived figures nothing computed before: `cache_hit_pct`,
+  `tokens_per_request`, `cost_per_request`, `output_pct`, `reasoning_pct`, `share_of_tokens_pct`.
+  They are facts, not advice -- no thresholds, no verdicts -- and unknown stays unknown: a
+  percentage nothing recorded is `null`, not `0` (several sources never report cache or reasoning
+  tokens), and `cost` is `null` when nothing in a bucket could be priced.
+- **`--project PATH` and `--session ID`** filter every export, so a reader goes from the summary
+  to one project or session without pulling every row.
+- **`--csv -`** writes the CSV to stdout. It is the compact row format and could only be written
+  to a file.
+- **`billing` in each `--json` row** (`per_token` / `subscription`), which the data model
+  documented and no export carried, and **`success_rate` in `--routing-json`**, which the panel
+  showed and the export left to the reader to divide.
+
 ### Changed
 
+- **`--routing-json` honours a range flag when one is given.** It was all history or nothing.
+  Without a flag it still means all history: the default range elsewhere is a week, and applying
+  that unasked would have shrunk every existing script's output.
+- The dashboard's model table and the summary's `by_model` are grouped by one function
+  (`summary::model_rows`), with a test holding them to each other.
 - **Release assets are uploaded one at a time, each confirmed before the release goes public.**
   `softprops/action-gh-release` uploaded all fifteen at once, and on v0.17.0 GitHub left the
   multi-megabyte ones stuck half-finished (`state: starter`), which a same-name upload cannot

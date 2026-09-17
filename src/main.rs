@@ -151,6 +151,9 @@ fn dispatch() -> Result<()> {
     if cli.routing_json || cli.routing_csv_path.is_some() {
         return export_routing(&cli);
     }
+    if cli.summary_json {
+        return ai_usage_tui::export::print_summary(&cli, &budget_engine(&config));
+    }
     if cli.once || cli.json {
         return print_once(&cli);
     }
@@ -945,7 +948,14 @@ fn export_routing(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
             )
         })?;
 
-    let events = ai_usage_tui::collector::journal::load_routing(&journal)?;
+    let mut events = ai_usage_tui::collector::journal::load_routing(&journal)?;
+    // A range flag narrows the events -- but only one the caller actually gave. With none, this
+    // export has always meant all history, and the default range everywhere else is a week:
+    // applying that silently would have shrunk every existing script's output.
+    if cli.range_set {
+        let filter = ai_usage_tui::export::UsageFilter::new(cli);
+        events.retain(|event| filter.in_range(event.created));
+    }
     let aggregates = ai_usage_tui::routing::aggregate(&events);
 
     if let Some(path) = &cli.routing_csv_path {
@@ -990,43 +1000,7 @@ fn export_routing(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
     } else {
         let rows: Vec<_> = aggregates
             .iter()
-            .map(|agg| {
-                serde_json::json!({
-                    "agent": agg.agent,
-                    "model": agg.model,
-                    "provider": agg.provider,
-                    "tasks": agg.tasks,
-                    "tokens": agg.tokens,
-                    // `null` rather than `0` when nothing was priced, for the same reason the
-                    // usage export keeps an unknown cost null: a script that sums this column
-                    // must not be handed a zero it cannot distinguish from a free model.
-                    "cost": if agg.priced_tasks == 0 { None } else { Some(agg.cost) },
-                    "priced_tasks": agg.priced_tasks,
-                    "unpriced_tasks": agg.unpriced_tasks,
-                    "quota_tasks": agg.quota_tasks,
-                    "free_tasks": agg.free_tasks,
-                    // What `cost_per_success` is standing on, in the same words the panel uses,
-                    // so a script and the dashboard cannot disagree about one aggregate.
-                    "cost_per_success": ai_usage_tui::routing::cost_per_success_sort_key(agg),
-                    "cost_basis": ai_usage_tui::routing::cost_basis_label(agg),
-                    // `null`, not `0`, when no task reported the count — and the number of
-                    // tasks that did, so a script has the denominator the rate was taken over.
-                    // The rates are the share of those tasks affected: a percentage, bounded,
-                    // rather than `retries / tasks`, which exceeded 100% on the first task that
-                    // retried twice.
-                    "retries": agg.retries.sum(),
-                    "escalations": agg.escalations.sum(),
-                    "test_passes": agg.test_passes,
-                    "test_failures": agg.test_failures,
-                    "review_defects": agg.review_defects.sum(),
-                    "retries_observed": agg.retries.observed,
-                    "escalations_observed": agg.escalations.observed,
-                    "review_defects_observed": agg.review_defects.observed,
-                    "retry_rate": ai_usage_tui::routing::retry_rate(agg),
-                    "escalation_rate": ai_usage_tui::routing::escalation_rate(agg),
-                    "defect_rate": ai_usage_tui::routing::defect_rate(agg),
-                })
-            })
+            .map(ai_usage_tui::routing::aggregate_json)
             .collect();
         print_line(&serde_json::to_string_pretty(&serde_json::json!({
             "schema_version": ai_usage_tui::export::JSON_SCHEMA_VERSION,
