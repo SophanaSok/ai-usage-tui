@@ -131,6 +131,33 @@ impl SourceRoots {
         }
     }
 
+    /// Every root pinned at a path that does not exist, for a test that must read nothing.
+    ///
+    /// Spelled as a whole struct literal, with no `..Default::default()`, on purpose: a source
+    /// added later becomes a compile error *here* rather than a `None` that quietly resolves to
+    /// the developer's own home directory -- which is how the registry's reachability test came
+    /// to read a real `~/.copilot` and `~/.gemini`.
+    #[cfg(test)]
+    pub(crate) fn nowhere() -> Self {
+        let at = |name: &str| Some(PathBuf::from("/nonexistent").join(name));
+        Self {
+            db_path: at("opencode.db"),
+            journal: PathBuf::from("/nonexistent/journal.db"),
+            claude_dir: at("claude"),
+            claude_billing: BillingSetting::Auto,
+            claude_json: at("claude.json"),
+            codex_dir: at("codex"),
+            codex_billing: BillingSetting::Auto,
+            copilot_dir: at("copilot"),
+            copilot_billing: BillingSetting::Auto,
+            gemini_dir: at("gemini"),
+            gemini_billing: BillingSetting::Auto,
+            omarchy_dir: at("omarchy"),
+            limits_enabled: true,
+            source_enabled: Default::default(),
+        }
+    }
+
     /// Where Claude Code's config document is for these roots. Derived from an overridden
     /// session-log root, so a test that points at a fixture never resolves the developer's own.
     pub fn claude_json_path(&self) -> Option<PathBuf> {

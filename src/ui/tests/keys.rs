@@ -134,17 +134,22 @@ fn the_help_overlay_lists_every_panel_binding() {
         .collect();
 
     assert!(rendered.contains("KEYS"), "{rendered}");
-    for expected in [
-        "budgets",
-        "routing",
-        "project",
-        "spend over time",
-        "burn",
-        "sessions",
-        "subscription limits",
-    ] {
+    // Asked of the bindings table, not of a list of words kept here: the overlay renders the
+    // table, so what this guards is the rendering -- a row that is clipped, or a panel binding
+    // the overlay filters out. A prefix, because the longest description wraps at this width.
+    let panels: Vec<&crate::ui::keys::Binding> = crate::ui::keys::BINDINGS
+        .iter()
+        .filter(|binding| matches!(binding.action, crate::ui::keys::Action::Panel(_)))
+        .collect();
+    assert_eq!(
+        panels.len(),
+        crate::ui::app::Panel::ALL.len() - 1,
+        "every panel but the default one has a binding"
+    );
+    for binding in panels {
+        let expected: String = binding.what.chars().take(19).collect();
         assert!(
-            rendered.contains(expected),
+            rendered.contains(&expected),
             "the overlay does not mention {expected:?}:\n{rendered}"
         );
     }

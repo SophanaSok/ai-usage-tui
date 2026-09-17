@@ -110,17 +110,13 @@ fn doctor_reports_every_source_and_where_it_looked() {
     let text = String::from_utf8(output.stdout).expect("utf8");
 
     // Every source the collector actually reads, so a source added to the registry and left out
-    // of the diagnosis shows up here.
-    for id in [
-        "opencode",
-        "claude_code",
-        "codex",
-        "copilot",
-        "gemini",
-        "journal",
-        "zen_pricing",
-    ] {
-        assert!(text.contains(id), "--doctor never mentions {id}:\n{text}");
+    // of the diagnosis shows up here. Asked of the registry: this was a list of seven names, and
+    // a list kept in a test passes for the eighth source without ever looking for it.
+    for id in ai_usage_tui::collector::registry::ids() {
+        assert!(
+            source_line(&text, id).is_some(),
+            "--doctor has no line for {id}:\n{text}"
+        );
     }
 
     // The path searched, not just a verdict: "absent" without a path is not actionable.
@@ -147,6 +143,55 @@ fn doctor_reports_every_source_and_where_it_looked() {
     assert!(
         !text.contains("--refresh-zen"),
         "--doctor points at the catalog refresh, not the pricing one:\n{text}"
+    );
+}
+
+/// A source's own row in `--doctor`'s SOURCES block: the one that carries the path searched.
+fn source_line<'a>(doctor: &'a str, id: &str) -> Option<&'a str> {
+    doctor
+        .lines()
+        .skip_while(|line| line.trim() != "SOURCES")
+        .skip(1)
+        .take_while(|line| !line.trim().is_empty())
+        .find(|line| line.split_whitespace().next() == Some(id))
+}
+
+/// `hermetic()` pins every source the registry knows, asked of the binary rather than of a list.
+///
+/// Every test in this file trusts `hermetic()` to keep the developer's own data out of a
+/// fixture-only run, and it is a hand-written list of flags: Copilot and Gemini each shipped
+/// outside it, and a machine with their data printed real rows in tests. `--doctor` prints where
+/// each source resolved, so the question can be asked directly -- and asked this way it also
+/// catches a source reached through an environment variable, which no list of flags could.
+#[test]
+fn hermetic_pins_every_registered_source() {
+    let fixtures = format!("{}/tests/fixtures/", env!("CARGO_MANIFEST_DIR"));
+    let output = hermetic(bin().arg("--doctor"))
+        .output()
+        .expect("run --doctor");
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).expect("utf8");
+
+    let ids = ai_usage_tui::collector::registry::ids();
+    assert!(ids.len() >= 7, "the registry lost sources: {ids:?}");
+    for id in ids {
+        let line = source_line(&text, id)
+            .unwrap_or_else(|| panic!("--doctor has no line for {id}:\n{text}"));
+        assert!(
+            line.contains(&fixtures),
+            "{id} is not pinned by hermetic(): it resolved outside tests/fixtures, so every test \
+             here can read this machine's real data. Pin it in hermetic_with.\n{line}"
+        );
+    }
+    // The config file is read before any source is, and is pinned through the environment.
+    let config = text
+        .lines()
+        .skip_while(|line| line.trim() != "CONFIG")
+        .nth(1)
+        .expect("a CONFIG section");
+    assert!(
+        config.contains(&fixtures),
+        "the config file is not pinned:\n{config}"
     );
 }
 

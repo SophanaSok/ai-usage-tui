@@ -30,6 +30,18 @@
 
 ### Changed
 
+- **The guards a new source or panel trips now ask the code, not a list kept in a test.** Five
+  checks each carried a hand-written list -- of source ids, of billing-capable sources, of panels,
+  of overlay words, of actions `--once` refuses -- and a list in a test passes for the entry nobody
+  added to it: Gemini was billing-capable and outside the billing check; `--record-usage` and
+  `--statusline` were outside the `--once` check. They now iterate the registry, `Panel::ALL`
+  (generated beside the enum by one macro), the bindings table and the parser's own action list.
+  Two new ones: `--doctor` under the test harness must resolve *every* registered source inside
+  `tests/fixtures`, which catches a source the harness forgot to pin and one reached through an
+  environment variable; and `--schema`'s sentence listing the source ids must match the registry.
+  One leak closed on the way: the registry's reachability test defaulted the roots it did not
+  name, so it read the developer's real `~/.copilot` and `~/.gemini`.
+
 - **The bundled community rate table is refreshed from LiteLLM** (snapshot of 2026-09-17, the
   first opened from the monthly drift job's issue): 3,975 keys become 4,627 -- 713 added, 61
   removed, 182 repriced -- and the engine prices 4,370 models, up from 3,785. Of the repriced, 59

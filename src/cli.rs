@@ -730,20 +730,25 @@ mod tests {
     /// combination that has always worked.
     #[test]
     fn the_once_conflict_keeps_its_asymmetry() {
-        // Rejected: --once with a collection action.
-        for action in [
-            "--record-ollama",
-            "--refresh-zen",
-            "--check-update",
-            "--check-budgets",
-            "--record-routing",
-            "--claude-code-hook",
-            "--omarchy-record",
-            "--doctor",
-        ] {
+        // Rejected: --once with a collection action. Read from the list the parser itself uses,
+        // so an action added to it is tried here; the list written out in this test had already
+        // fallen two behind (`--record-usage`, `--statusline`).
+        assert!(COLLECTION_ACTIONS.len() >= 10);
+        for action in COLLECTION_ACTIONS {
+            let flag = format!("--{}", action.replace('_', "-"));
+            let takes_a_value = command()
+                .get_arguments()
+                .find(|arg| arg.get_id() == action)
+                .unwrap_or_else(|| panic!("{action} is not an argument"))
+                .get_action()
+                .takes_values();
+            let mut args = vec!["--once".to_string(), flag.clone()];
+            if takes_a_value {
+                args.push("llamacpp".to_string());
+            }
             assert!(
-                parse_cli(["--once", action]).is_err(),
-                "--once {action} should be rejected"
+                parse_cli(args.iter().map(String::as_str)).is_err(),
+                "--once {flag} should be rejected"
             );
         }
         // Accepted, and deliberately so: --refresh-pricing is not in that second list.
