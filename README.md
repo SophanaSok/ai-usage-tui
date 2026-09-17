@@ -264,9 +264,12 @@ attestation will do — and the tag, because the release workflow can also be ru
 by hand on a branch, and what that builds is attested as built from the branch.
 
 It covers every archive and every `.deb` and `.rpm`. The install script runs the
-same check when `gh` is installed and signed in, and reports the result either
-way; `install.sh --require-attestation` refuses to install without a confirmed
-one.
+same check whenever `gh` is there to run it. Nothing is refused for the lack of a
+tool — no `gh`, one too old, or not signed in is reported as "not checked" and
+the install goes on — but a check that *fails* refuses the download, because for
+an attested release that is the case the attestation exists to catch.
+`--require-attestation` makes "not checked" fatal too; `--no-attestation` skips
+the step.
 
 Each release also ships a bill of materials, `ai-usage-tui-<tag>.cdx.json`
 (CycloneDX): every crate any released target links, with its version, licence

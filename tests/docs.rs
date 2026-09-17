@@ -564,10 +564,14 @@ fn workflows() -> Vec<(String, String)> {
 fn every_action_is_pinned_to_a_commit() {
     let mut seen = 0;
     for (name, text) in workflows() {
-        for line in text.lines().map(str::trim) {
-            let Some(action) = line
-                .strip_prefix("- uses:")
-                .or_else(|| line.strip_prefix("uses:"))
+        for line in text.lines() {
+            // However the step spells it: `- uses:`, `-  uses:`, a quoted key. A scan that
+            // matched two exact prefixes would pass an unpinned action written a third way.
+            let key = line.trim_start_matches([' ', '-', '{', '"', '\'']);
+            let Some(action) = key
+                .strip_prefix("uses")
+                .map(|rest| rest.trim_start_matches(['"', '\'']))
+                .and_then(|rest| rest.strip_prefix(':'))
             else {
                 continue;
             };
@@ -606,7 +610,10 @@ fn every_workflow_declares_least_privilege() {
             panic!("{name} has no top-level `permissions:` block");
         };
         let block: Vec<&str> = std::iter::once(declared)
-            .chain(lines.take_while(|line| line.starts_with(' ') || line.trim().is_empty()))
+            // To the next top-level key. A comment at column zero does not end the block.
+            .chain(lines.take_while(|line| {
+                line.starts_with(' ') || line.starts_with('#') || line.trim().is_empty()
+            }))
             .collect();
         assert!(
             !block.iter().any(|line| line.contains("write")),

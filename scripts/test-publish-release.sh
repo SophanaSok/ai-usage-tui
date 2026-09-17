@@ -154,10 +154,10 @@ else
   [ ! -f "$STATE/release" ] || fail "a release was created although the asset list failed its check"
 fi
 
-# 3b. So does a missing bill of materials: its name carries the tag, so the list finds it by a
-# glob, and a glob that matches nothing must not quietly publish a release without one.
+# 3b. So does a missing bill of materials -- and one for another tag does not stand in for it.
 CASE_DIR="$(fresh_dir)"; STATE="$CASE_DIR/state"; mkdir -p "$STATE"
-workspace "$CASE_DIR/work"; install_fakes "$CASE_DIR/bin"; rm "$CASE_DIR/work"/sbom/*.cdx.json
+workspace "$CASE_DIR/work"; install_fakes "$CASE_DIR/bin"
+mv "$CASE_DIR/work/sbom/ai-usage-tui-v9.9.9.cdx.json" "$CASE_DIR/work/sbom/ai-usage-tui-v9.9.8.cdx.json"
 if (cd "$CASE_DIR/work" && PATH="$CASE_DIR/bin:$PATH" FAKE_STATE="$STATE" GITHUB_REPOSITORY=o/r \
   GH_TOKEN=t "$SCRIPT" --publish v9.9.9) >"$CASE_DIR/out" 2>&1; then
   fail "a run with no bill of materials succeeded"

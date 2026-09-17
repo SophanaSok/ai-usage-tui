@@ -17,11 +17,14 @@
   the same files. Both attestations are made before the release is created, so a failure there
   publishes nothing. Tried end to end on a dry run before merging: the tarball, the `.deb` and the
   bill-of-materials predicate verify; a tampered copy, another workflow and the wrong ref do not.
-- **`install.sh` checks the attestation when it can, and `--require-attestation` insists.** With
-  the GitHub CLI installed and signed in, the installer verifies the archive it just downloaded
-  and says what it found; without it, it says the check was not made. Nothing is refused for the
-  lack of a tool unless `--require-attestation` is given, which makes anything short of a
-  confirmed attestation fatal.
+- **`install.sh` checks the attestation when it can, and refuses a download that fails it.** With
+  a usable GitHub CLI -- installed, recent enough to tie a file to a tag, signed in -- the
+  installer verifies the archive it just downloaded. Nothing is refused for the lack of a tool:
+  that is reported as "not checked" and the install goes on. A check that *fails* on a release
+  that should be attested is different, and refuses; the first draft of this step printed "do not
+  use this download" and then installed it, which the review of this change caught.
+  `--require-attestation` makes "not checked" fatal as well, and `--no-attestation` skips the
+  step for whoever has a reason to.
 
 ### Changed
 

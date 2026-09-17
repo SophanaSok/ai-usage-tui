@@ -36,9 +36,9 @@ assets() {
   for archive in artifacts/*/ai-usage-tui-*; do
     [ -f "$archive" ] && printf '%s\n' "$archive"
   done
-  # The bill of materials, named for the tag. Expanded, not named: the tag is in the filename.
-  # Exactly one, or the glob stays a literal and `plan` refuses it as missing.
-  printf '%s\n' sbom/ai-usage-tui-*.cdx.json
+  # The bill of materials, named for the tag -- the same path the workflow attests. Named by the
+  # tag rather than globbed: a glob would also publish one left over from another tag.
+  printf '%s\n' "sbom/ai-usage-tui-${TAG}.cdx.json"
   printf '%s\n' \
     artifacts/checksums.txt \
     rendered/homebrew/ai-usage-tui.rb \

@@ -376,7 +376,8 @@ bindings table and the parser rather than a list kept in the test. Decisions wor
    version and digest). Actions are pinned by commit with a version comment; `release.yml` is
    read-only except the release job, the tap job holds no repository token, and every workflow
    declares `permissions:` -- two tests in `tests/docs.rs` hold both. `install.sh` verifies the
-   attestation when `gh` is there to do it, and `--require-attestation` makes it mandatory.
+   attestation when a usable `gh` is there to do it, lets the lack of one through with a notice,
+   refuses a check that fails, and `--require-attestation` refuses both.
    "Protect main" is enforced, rewritten first: as it stood it required checks named `build`,
    `test` and `lint`, none of which exist, and an approving code-owner review, which a project
    with one maintainer can never give -- enabling it would have stopped every merge. It now

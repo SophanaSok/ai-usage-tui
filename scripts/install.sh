@@ -25,12 +25,13 @@ BIN="ai-usage-tui"
 VERSION=""
 DEST=""
 REQUIRE_ATTESTATION=""
+NO_ATTESTATION=""
 
 usage() {
     cat <<EOF
 Install a prebuilt $BIN release.
 
-Usage: install.sh [--version vX.Y.Z] [--dir PATH] [--require-attestation]
+Usage: install.sh [--version vX.Y.Z] [--dir PATH] [--require-attestation | --no-attestation]
 
   --version   Release tag to install. Default: the latest release.
   --dir       Directory to install into. Default: \$HOME/.local/bin,
@@ -38,7 +39,10 @@ Usage: install.sh [--version vX.Y.Z] [--dir PATH] [--require-attestation]
   --require-attestation
               Refuse to install unless the GitHub CLI (gh) confirms the download
               was built by this project's release workflow. Without this flag the
-              same check runs when gh is available, and its result is reported.
+              same check runs when gh can make it: a failed check still refuses,
+              and only the lack of a usable gh is let through, and said.
+  --no-attestation
+              Skip that check and install on the checksum alone.
   --help      Show this message.
 EOF
 }
@@ -57,10 +61,14 @@ while [ $# -gt 0 ]; do
         --version) [ $# -ge 2 ] || die "--version requires a tag"; VERSION="$2"; shift 2 ;;
         --dir)     [ $# -ge 2 ] || die "--dir requires a path";    DEST="$2";    shift 2 ;;
         --require-attestation) REQUIRE_ATTESTATION=1; shift ;;
+        --no-attestation)      NO_ATTESTATION=1; shift ;;
         --help|-h) usage; exit 0 ;;
         *)         die "unknown option: $1 (try --help)" ;;
     esac
 done
+
+[ -z "$REQUIRE_ATTESTATION" ] || [ -z "$NO_ATTESTATION" ] ||
+    die "--require-attestation and --no-attestation contradict each other"
 
 # --- platform -------------------------------------------------------------------------------
 # Kept deliberately in step with the archive-name table in README.md and the build matrix in
@@ -194,20 +202,50 @@ fi
 # files: it says this exact archive was built by this repository's release.yml. Releases carry one
 # from the first release after v0.19.0.
 #
-# Checking it takes the GitHub CLI, signed in, which most machines do not have. So by default the
-# check runs when it can and its result is reported either way, and nothing is refused for the
-# lack of a tool; --require-attestation makes anything short of a confirmed attestation fatal.
-unattested() {
-    [ -z "$REQUIRE_ATTESTATION" ] || die "$1
+# Checking it takes the GitHub CLI, signed in and recent enough, which most machines do not have.
+# So nothing is refused for the lack of a tool: the check runs when it can, and says so when it
+# cannot. What is refused is a *failed* check. When a working gh says that a release which should
+# carry an attestation has none for this file, that is not a missing tool -- it is the case the
+# attestation exists to catch -- and the first version of this step printed "do not use this
+# download" and then installed it. --require-attestation makes "could not check" fatal as well;
+# --no-attestation skips the step, for the one who has read this and has a reason.
+ATTESTED_AFTER="0.19.0"
+
+# Whether $VERSION is a release newer than $ATTESTED_AFTER, by its three numbers. A suffix after
+# the patch number (`-rc.1`) is ignored; anything that does not parse counts as newer, because
+# the safe reading of an unfamiliar tag is that it should be attested.
+attested_release() {
+    have="${VERSION#v}"; have="${have%%[-+]*}"
+    old_ifs="$IFS"; IFS=.
+    # shellcheck disable=SC2086
+    set -- $have $ATTESTED_AFTER
+    IFS="$old_ifs"
+    [ $# -eq 6 ] || return 0
+    for part in "$1" "$2" "$3"; do
+        case "$part" in ''|*[!0-9]*) return 0 ;; esac
+    done
+    [ "$1" -gt "$4" ] && return 0; [ "$1" -lt "$4" ] && return 1
+    [ "$2" -gt "$5" ] && return 0; [ "$2" -lt "$5" ] && return 1
+    [ "$3" -gt "$6" ]
+}
+
+unchecked() {
+    [ -z "$REQUIRE_ATTESTATION" ] || die "build provenance not checked: $1
 --require-attestation was given, so nothing was installed."
-    echo "    $1"
+    echo "    not checked: $1"
 }
 
 echo "==> checking build provenance"
-if ! need gh; then
-    unattested "not checked: the GitHub CLI (gh) is not installed"
+if [ -n "$NO_ATTESTATION" ]; then
+    echo "    skipped (--no-attestation)"
+elif ! need gh; then
+    unchecked "the GitHub CLI (gh) is not installed"
+elif ! gh attestation verify --help 2>/dev/null | grep -q -- '--source-ref'; then
+    # An older gh has no `attestation` command, or one without the flag that ties a file to a
+    # tag. Its usage error is not a verdict on the download.
+    unchecked "this gh is too old to verify an attestation against a tag (upgrade gh)"
 elif ! gh auth status >/dev/null 2>&1; then
-    unattested "not checked: gh is not signed in (gh auth login)"
+    unchecked "gh is not signed in (gh auth login)"
 # Three things are pinned, and each closes a door: the repository; the workflow, so that no other
 # workflow's attestation will do; and the tag, because the release workflow can also be run by
 # hand on any branch, and that run's artifacts are attested too -- as built from that branch.
@@ -215,12 +253,14 @@ elif verdict="$(gh attestation verify "$WORK/$ARCHIVE" --repo "$REPO" \
         --signer-workflow "$REPO/.github/workflows/release.yml" \
         --source-ref "refs/tags/$VERSION" 2>&1)"; then
     echo "    ok  built by $REPO's release workflow at $VERSION"
+elif attested_release; then
+    echo "$verdict" | grep -v '^[[:space:]]*$' | tail -n 2 | sed 's/^/    gh: /' >&2
+    die "gh could not confirm that $REPO's release workflow built $ARCHIVE at $VERSION.
+Every release after v$ATTESTED_AFTER is attested, so this download is not what that workflow built --
+or the check itself failed; gh's own words are above. Nothing was installed.
+Re-run to try again, or pass --no-attestation to install on the checksum alone."
 else
-    # No attestation for this exact file. For a release that predates attestations that is
-    # expected; for a later one it means the archive is not what the workflow built.
-    echo "$verdict" | grep -v '^[[:space:]]*$' | tail -n 2 | sed 's/^/    gh: /'
-    unattested "NOT CONFIRMED: gh found no attestation that $REPO's release workflow built this archive.
-    Releases after v0.19.0 carry one; for those, do not use this download."
+    unchecked "$VERSION predates build attestations (they start after v$ATTESTED_AFTER)"
 fi
 
 # --- install --------------------------------------------------------------------------------

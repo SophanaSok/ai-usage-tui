@@ -454,14 +454,13 @@ jobs:
           # silently ignored — the runner's own value wins.
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
-      # The asset list the publish step would upload, checked the same way: every file present
-      # and non-empty, no two with one name, every archive vouched for by checksums.txt.
-      - name: Dry run — check the release assets, skip publishing
-        if: github.event_name != 'push'
-        run: |
-          scripts/publish-release.sh --plan "$RELEASE_TAG"
-          echo "::notice::Dry run complete. Artifacts, packages, checksums and rendered"
-          echo "::notice::manifests were all built and verified; nothing was published."
+      # The asset list the publish step will upload, checked before anything is made public: every
+      # file present and non-empty, no two with one name, every archive vouched for by
+      # checksums.txt. On every run, and ahead of the attestations on purpose -- this ran only on a
+      # dry run, so on a real tag the same check first happened inside the publish step, *after*
+      # the attestations were already permanent, for a release that would then never exist.
+      - name: Check the release assets
+        run: scripts/publish-release.sh --plan "$RELEASE_TAG"
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
@@ -483,6 +482,12 @@ jobs:
         with:
           subject-checksums: artifacts/checksums.txt
           sbom-path: sbom/ai-usage-tui-${{ inputs.tag || github.ref_name }}.cdx.json
+
+      - name: Dry run — nothing is published
+        if: github.event_name != 'push'
+        run: |
+          echo "::notice::Dry run complete. Artifacts, packages, checksums, the bill of materials and"
+          echo "::notice::the rendered manifests were all built and verified; nothing was published."
 
       # One upload at a time, each confirmed against the API, the release a draft until all are.
       # This was `softprops/action-gh-release`, which uploads everything at once; on v0.17.0 GitHub

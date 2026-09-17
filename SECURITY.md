@@ -51,8 +51,9 @@ What a release is built from, and how to check that a download is one:
   SophanaSok/ai-usage-tui/.github/workflows/release.yml --source-ref refs/tags/<tag>` -- the last
   flag matters, because a hand-run dry run of the workflow attests what it builds too, as built
   from its branch. `scripts/install.sh` runs the
-  check when the GitHub CLI is available and `--require-attestation` makes it mandatory. A file
-  that fails it was not built by this project's workflow, whatever its checksum says.
+  check whenever a usable GitHub CLI is there: the lack of one is reported and let through, a
+  failed check refuses the download, and `--require-attestation` refuses both. A file that fails
+  it was not built by this project's workflow, whatever its checksum says.
 - **A bill of materials.** `ai-usage-tui-<tag>.cdx.json` (CycloneDX 1.5) lists every crate any
   released target links, from `Cargo.lock`, and is attested against the same files.
 - **Actions are pinned by commit**, not by tag, with the version in a comment for Dependabot to
