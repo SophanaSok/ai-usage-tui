@@ -4,6 +4,26 @@
 
 ### Fixed
 
+- **A `kill`, a closed terminal window or a logout no longer leaves the terminal broken.** The
+  panic hook restored raw mode and the alternate screen; a signal never reached that code, so
+  SIGTERM, SIGHUP or an outside SIGINT ended the dashboard with the shell still on the alternate
+  screen and echo off. All three now set a flag the event loop checks every 250ms and leave through
+  the same exit as `q`; a second signal exits at once. Checked in a real pseudo-terminal against
+  the v0.16.0 binary, which died on each signal without leaving the alternate screen.
+- **Quitting no longer freezes a raw-mode terminal behind a poll in flight.** The dashboard owned
+  the collector handle, and dropping it joined every collector thread *before* the terminal was
+  restored -- with no bound, and a poll cannot be interrupted, so pressing `q` during a
+  rate-limited `zen_pricing` fetch held a frozen screen for most of a minute. The terminal is now
+  restored first, and the join waits at most two seconds before leaving a stuck poll to the
+  process exit (`CollectorHandle::join_within`).
+- **The `zen_pricing` collector no longer prints into the dashboard.** Its rate-limit retry notice
+  went to stderr from a background thread, which lands in the middle of the frame. The collector
+  logs it; the one-shot `--refresh-pricing` still prints it.
+- **`--record-ollama`, `--record-usage`, `--record-routing` and `--claude-code-hook` survive a
+  closed stdout.** Each confirmed with a bare `println!` after journaling, so a caller that closed
+  the pipe got a written row, a panic, and a failing exit status that said the recording had not
+  happened.
+
 - **Data a collector reads around now shows on the dashboard.** Every tailing reader skipped an
   unreadable file with `Err(_) => continue` and a line that was not JSON as "no usage here", and
   counted neither: a transcript with a bad byte, a Codex rollout written in a new encoding or a
