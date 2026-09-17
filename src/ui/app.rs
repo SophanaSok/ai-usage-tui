@@ -3,6 +3,7 @@
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::budget::{Alert, BudgetEngine};
@@ -51,7 +52,10 @@ pub struct App {
     pub(super) limits_absence_logged: bool,
     pub provider_filter: Option<String>,
     pub model_filter: Option<String>,
-    pub collector: Option<CollectorHandle>,
+    /// Shared with the caller, which restores the terminal *before* dropping the last reference:
+    /// the final drop joins the collector threads, and a poll in flight (a pricing fetch, say)
+    /// would otherwise hold a raw-mode, alternate-screen terminal until it finished.
+    pub collector: Option<Arc<CollectorHandle>>,
     /// Which view occupies the right-hand pane. This was two independent booleans, so
     /// "budgets on" and "routing on" could both be true and one silently won.
     pub panel: Panel,
@@ -359,7 +363,7 @@ impl App {
         refresh_interval: Duration,
         provider_filter: Option<String>,
         model_filter: Option<String>,
-        collector: Option<CollectorHandle>,
+        collector: Option<Arc<CollectorHandle>>,
         budget_engine: BudgetEngine,
         alert_sink: Option<Sender<Vec<Alert>>>,
     ) -> Self {

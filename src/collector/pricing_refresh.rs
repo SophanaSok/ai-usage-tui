@@ -18,7 +18,17 @@ pub fn pricing_cache_path() -> Option<PathBuf> {
 const MAX_RETRIES: u32 = 3;
 const INITIAL_BACKOFF_MS: u64 = 2000;
 
+/// Fetch the Zen pricing page and write the cache, telling stderr when it has to wait out a rate
+/// limit. For the one-shot `--refresh-pricing`, where stderr is the user's terminal.
 pub fn refresh_pricing() -> Result<PathBuf> {
+    refresh_pricing_with(&|notice| eprintln!("{notice}"))
+}
+
+/// As `refresh_pricing`, with retry notices sent to `notify`.
+///
+/// The background collector cannot print: its thread runs while the dashboard owns the alternate
+/// screen, and a line written to stderr there lands in the middle of the frame.
+fn refresh_pricing_with(notify: &dyn Fn(&str)) -> Result<PathBuf> {
     let path = pricing_cache_path().ok_or_else(|| {
         anyhow::anyhow!("could not determine a home directory; pass an explicit path (see --help)")
     })?;
@@ -31,7 +41,7 @@ pub fn refresh_pricing() -> Result<PathBuf> {
         .timeout(Duration::from_secs(15))
         .build()?;
 
-    let html = fetch_with_backoff(&client)?;
+    let html = fetch_with_backoff(&client, notify)?;
 
     let toml_content = parse_pricing_html(&html)
         .context("failed to parse Zen pricing page; page structure may have changed")?;
@@ -41,7 +51,7 @@ pub fn refresh_pricing() -> Result<PathBuf> {
     Ok(path)
 }
 
-fn fetch_with_backoff(client: &reqwest::blocking::Client) -> Result<String> {
+fn fetch_with_backoff(client: &reqwest::blocking::Client, notify: &dyn Fn(&str)) -> Result<String> {
     let mut backoff = INITIAL_BACKOFF_MS;
     let mut last_error = None;
 
@@ -64,12 +74,12 @@ fn fetch_with_backoff(client: &reqwest::blocking::Client) -> Result<String> {
                 }
 
                 if is_rate_limited {
-                    eprintln!(
+                    notify(&format!(
                         "Zen pricing fetch rate-limited (attempt {}/{}); retrying in {:?} ...",
                         attempt,
                         MAX_RETRIES,
                         Duration::from_millis(backoff)
-                    );
+                    ));
                 }
                 std::thread::sleep(Duration::from_millis(backoff));
                 last_error = Some(err);
@@ -384,7 +394,7 @@ impl Collector for ZenPricingCollector {
         Duration::from_secs(self.interval_secs)
     }
     fn poll(&mut self) -> Result<Vec<Usage>> {
-        refresh_pricing()?;
+        refresh_pricing_with(&|notice| crate::logging::warn(ID, notice))?;
         Ok(Vec::new())
     }
 

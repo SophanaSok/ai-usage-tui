@@ -4,6 +4,46 @@
 
 ### Fixed
 
+- **A `kill`, a closed terminal window or a logout no longer leaves the terminal broken.** The
+  panic hook restored raw mode and the alternate screen; a signal never reached that code, so
+  SIGTERM, SIGHUP or an outside SIGINT ended the dashboard with the shell still on the alternate
+  screen and echo off. All three now set a flag the event loop checks every 250ms and leave through
+  the same exit as `q`; a second signal exits at once. Checked in a real pseudo-terminal against
+  the v0.16.0 binary, which died on each signal without leaving the alternate screen.
+- **Quitting no longer freezes a raw-mode terminal behind a poll in flight.** The dashboard owned
+  the collector handle, and dropping it joined every collector thread *before* the terminal was
+  restored -- with no bound, and a poll cannot be interrupted, so pressing `q` during a
+  rate-limited `zen_pricing` fetch held a frozen screen for most of a minute. The terminal is now
+  restored first, and the join waits at most two seconds before leaving a stuck poll to the
+  process exit (`CollectorHandle::join_within`).
+- **The `zen_pricing` collector no longer prints into the dashboard.** Its rate-limit retry notice
+  went to stderr from a background thread, which lands in the middle of the frame. The collector
+  logs it; the one-shot `--refresh-pricing` still prints it.
+- **`--record-ollama`, `--record-usage`, `--record-routing` and `--claude-code-hook` survive a
+  closed stdout.** Each confirmed with a bare `println!` after journaling, so a caller that closed
+  the pipe got a written row, a panic, and a failing exit status that said the recording had not
+  happened.
+
+- **Data a collector reads around now shows on the dashboard.** Every tailing reader skipped an
+  unreadable file with `Err(_) => continue` and a line that was not JSON as "no usage here", and
+  counted neither: a transcript with a bad byte, a Codex rollout written in a new encoding or a
+  corrupt OpenCode row made the totals smaller while the header stayed green. Claude Code, Codex,
+  OpenCode, Gemini CLI and Copilot's legacy logs now record both through one `collector::skipped`
+  type and implement `Collector::warning` -- which until now only the local-model journal did --
+  so the live status line reads, say, `claude_code: 1 file(s) unreadable, 2 malformed record(s)
+  skipped` and the header is marked degraded. The one-shot status carries the same note plus the
+  first unreadable path and error into `--once`, `--json` and `--doctor`, and the log records each
+  change. An unreadable file is a current state (it is retried every poll and drops out once it
+  reads); a skipped line is permanent for the process, and is counted exactly once -- including
+  OpenCode's deliberately re-read boundary row, which would otherwise have grown by one per poll.
+  Gemini's existing count had lived only inside a single read, so the incremental dashboard
+  reported it for one poll at most.
+- **Subscription windows this build does not recognise are reported, not dropped.** The
+  `~/.claude.json` reader counted entries of an unknown `kind`, and nothing read the count, so a
+  window Claude Code added upstream vanished from the Limits panel, `--json` and `--doctor` alike.
+  It is now a limits problem -- on the status line, and in a `problem` row under `--doctor`'s LIMITS
+  section, which had never printed the problems the panel flags at all.
+
 - **Concurrent hooks no longer fail on an unmigrated journal.** Opening the journal to write ran
   probe-then-`ALTER` with no lock held between the two, so writers that opened a journal from
   before `event_id` together -- parallel subagents fire parallel hooks -- all saw the column
