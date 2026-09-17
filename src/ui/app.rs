@@ -84,6 +84,13 @@ pub struct App {
     /// `pub` so the screenshot renderer can clear it, as it pins the clock: it is a fact about
     /// the machine that built the image, and it does not belong in a README.
     pub update_notice: Option<String>,
+    /// What the pricing engine had to say when it was loaded -- a cache it refused, or bundled
+    /// tables past their age -- as one clause for the status line, and whether it is a fault.
+    /// These were printed by `--doctor` and nowhere a running dashboard could show them, so a
+    /// dashboard pricing from a table it had silently fallen back to looked exactly like one that
+    /// was not. Taken once at startup, like the engine itself; `pub` so the screenshot renderer
+    /// can clear it, for the reason it clears the update notice.
+    pub pricing_note: Option<(String, bool)>,
     /// `NO_COLOR` was set when the dashboard started: every frame is drawn without colour. Read
     /// once here, like the update notice, so the render path reads no environment; `pub` so the
     /// screenshot renderer can clear it on a machine that has it set.
@@ -389,6 +396,7 @@ impl App {
             search: Search::default(),
             sorts: std::collections::HashMap::new(),
             show_help: false,
+            pricing_note: None,
             pricing: PricingEngine::load(),
             update_notice: crate::update::header_notice(),
             no_color: crate::utils::no_color_in(&crate::utils::system_env),
@@ -396,6 +404,10 @@ impl App {
             alert_sink,
             view: DerivedView::default(),
         };
+        app.pricing_note = app
+            .pricing
+            .status_note()
+            .map(|note| (note, app.pricing.has_fault()));
         app.refresh();
         app
     }
@@ -948,6 +960,7 @@ impl App {
             }
             self.view.limits = report;
         }
+
         if !self.budget_engine.is_empty() {
             self.alerts = self.budget_engine.check(&self.usages);
             if let Some(sink) = &self.alert_sink {
@@ -966,6 +979,25 @@ impl App {
     pub fn filtered(&self) -> &[Usage] {
         &self.view.filtered
     }
+    /// The status line as the header shows it: the collectors' status, then the pricing note.
+    ///
+    /// Joined here and not in `refresh`, which would bake the note into `status`: the screenshot
+    /// renderer clears `pricing_note` after `App::new` has already refreshed once. Two strings
+    /// joined, so nothing the render path may not do.
+    pub fn status_line(&self) -> String {
+        match &self.pricing_note {
+            Some((note, _)) => format!("{} | {note}", self.status),
+            None => self.status.clone(),
+        }
+    }
+
+    /// Whether the header should be red: a collector is degraded, or the pricing engine refused a
+    /// cache and rows are priced from a table the user did not expect. Tables that are merely old
+    /// are said and no more -- the rates were right when they were cut.
+    pub fn is_degraded(&self) -> bool {
+        self.degraded || self.pricing_note.as_ref().is_some_and(|(_, fault)| *fault)
+    }
+
     pub fn rows(&self) -> &[Usage] {
         &self.view.rows
     }

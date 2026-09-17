@@ -67,9 +67,9 @@ fn spans<'a>(app: &App, subtitle: bool) -> Vec<Span<'a>> {
             "{}  {}  {} ",
             app.range.label(),
             app.last_refresh,
-            app.status
+            app.status_line()
         ),
-        if app.degraded {
+        if app.is_degraded() {
             Style::default().fg(RED).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(MUTED)

@@ -20,6 +20,10 @@ One line of JSON, roughly 25-35 KB: `totals`, then the same bucket shape `by_cat
 **Do not start with `--json`.** It prints one object per request -- megabytes, often more than
 your context window. Use it only after narrowing (step 2).
 
+`pricing` says what every dollar figure rests on: the currency (USD, list price), the dates the
+bundled rate tables were cut, and `warnings` when a refreshed cache was refused or the tables are
+over 90 days old. If they are old, say the estimates use rates as of those dates.
+
 Check `sources` first. A source with `present: false` was not found; `status` says when data had
 to be skipped, when records were missing a token count (they are kept and left unpriced, so
 `unpriced_requests` rises and token totals are a minimum) and when records had no timestamp (they

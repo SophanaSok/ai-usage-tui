@@ -593,6 +593,17 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
     let engine = ai_usage_tui::pricing::PricingEngine::load();
     // The count is the loaded table's: the bundled one, plus the cache below when it is in use.
     let _ = writeln!(out, "  models       {} priced", engine.model_count());
+    // A rate is a fact as of a date. These are the dates, and the currency nothing else states.
+    let (community, curated) = ai_usage_tui::pricing::bundled_table_dates();
+    let spell = |date: Option<chrono::NaiveDate>| {
+        date.map_or_else(|| "undated".to_string(), |date| date.to_string())
+    };
+    let _ = writeln!(
+        out,
+        "  bundled      community table {}, curated table {} (USD list rates per million tokens)",
+        spell(community),
+        spell(curated)
+    );
     match ai_usage_tui::collector::pricing_refresh::pricing_cache_path() {
         Some(path) if path.exists() => {
             let days = std::fs::metadata(&path)

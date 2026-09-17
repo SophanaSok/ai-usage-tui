@@ -24,6 +24,60 @@ pub(crate) const LITELLM_PRICING: &str = include_str!("../pricing/litellm.tsv");
 const PRICING_CACHE_MAX_AGE: std::time::Duration =
     std::time::Duration::from_secs(30 * 24 * 60 * 60);
 
+/// How old the tables compiled into the binary may be before the engine says so.
+///
+/// Rates ship in the binary and nothing compared them to the clock: only the *refreshed cache* was
+/// dated, so an install six months old priced at six-month-old rates without a word, which is a
+/// confident number resting on a fact nobody checked. Ninety days because providers reprice and
+/// launch models on roughly that rhythm, and this project releases far more often than that -- an
+/// install that old has usually just not been upgraded. It is a notice, not a fault: the rates in
+/// the table were right when it was cut, and `estimate_cost` still dates historical events by the
+/// curated table's `period` records.
+pub const BUNDLED_PRICING_MAX_AGE_DAYS: i64 = 90;
+
+/// The `# Updated: YYYY-MM-DD` line both pricing tables carry in their header.
+pub fn table_date(table: &str) -> Option<chrono::NaiveDate> {
+    table
+        .lines()
+        .take_while(|line| line.starts_with('#'))
+        .find_map(|line| line.strip_prefix("# Updated:"))
+        .and_then(|date| chrono::NaiveDate::parse_from_str(date.trim(), "%Y-%m-%d").ok())
+}
+
+/// When the two bundled tables were cut: the community (LiteLLM) snapshot and the curated table.
+pub fn bundled_table_dates() -> (Option<chrono::NaiveDate>, Option<chrono::NaiveDate>) {
+    (table_date(LITELLM_PRICING), table_date(BUNDLED_PRICING))
+}
+
+/// The notice for bundled tables older than `BUNDLED_PRICING_MAX_AGE_DAYS`, or `None`.
+///
+/// `curated_superseded` is whether a fresh refreshed cache is overlaid: `--refresh-pricing`
+/// rewrites the curated (Zen) rates and nothing at runtime rewrites the community table, so with a
+/// fresh cache only the community snapshot's age still matters. Pure over `today`, so a test does
+/// not start failing on its own ninety days after a table is regenerated.
+pub fn bundled_age_notice(today: chrono::NaiveDate, curated_superseded: bool) -> Option<String> {
+    let (community, curated) = bundled_table_dates();
+    let oldest = if curated_superseded {
+        community
+    } else {
+        [community, curated].into_iter().flatten().min()
+    }?;
+    let days = (today - oldest).num_days();
+    if days <= BUNDLED_PRICING_MAX_AGE_DAYS {
+        return None;
+    }
+    let spell = |date: Option<chrono::NaiveDate>| {
+        date.map_or_else(|| "undated".to_string(), |date| date.to_string())
+    };
+    Some(format!(
+        "bundled pricing is {days} days old (community table {}, curated table {}): rates and \
+         models published since are not in this build. Upgrade ai-usage-tui to refresh both; \
+         --refresh-pricing updates the curated Zen rates only.",
+        spell(community),
+        spell(curated)
+    ))
+}
+
 /// A rate is `None` when the source table does not publish one. That is distinct from a
 /// published rate of `0.0`, and the two must never be conflated: an absent rate means we do
 /// not know the price, and unknown cost is never rendered as zero cost.
@@ -78,6 +132,8 @@ pub struct PricingEngine {
     /// the curated table carries. Layer wins first, specificity decides within a layer.
     curated: std::collections::HashSet<String>,
     warnings: Vec<String>,
+    /// Whether the last of `warnings` is the bundled tables' age notice rather than a fault.
+    aged: bool,
 }
 
 impl PricingEngine {
@@ -119,15 +175,44 @@ impl PricingEngine {
             .and_then(|meta| meta.modified())
             .ok()
             .and_then(|modified| modified.elapsed().ok());
-        match std::fs::read_to_string(&path) {
+        let applied = match std::fs::read_to_string(&path) {
             Ok(contents) => engine.apply_cache(&contents, age, &path.display().to_string()),
-            Err(error) => engine.warnings.push(format!(
-                "cached pricing table at {} is unreadable ({}); using bundled rates",
-                path.display(),
-                error
-            )),
-        }
+            Err(error) => {
+                engine.warnings.push(format!(
+                    "cached pricing table at {} is unreadable ({}); using bundled rates",
+                    path.display(),
+                    error
+                ));
+                false
+            }
+        };
+        engine.note_bundled_age(chrono::Utc::now().date_naive(), applied);
         engine
+    }
+
+    /// Append the age notice, last, so `has_fault` can tell it from the faults before it.
+    fn note_bundled_age(&mut self, today: chrono::NaiveDate, curated_superseded: bool) {
+        if let Some(notice) = bundled_age_notice(today, curated_superseded) {
+            self.warnings.push(notice);
+            self.aged = true;
+        }
+    }
+
+    /// Whether anything went wrong loading rates, as opposed to the tables merely being old.
+    /// A fault marks the dashboard degraded; age is only said.
+    pub fn has_fault(&self) -> bool {
+        self.warnings.len() > usize::from(self.aged)
+    }
+
+    /// One short clause for the dashboard's status line, or `None` when there is nothing to say.
+    /// The sentences themselves are in `--doctor` and `--summary-json`.
+    pub fn status_note(&self) -> Option<String> {
+        if self.has_fault() {
+            let faults = self.warnings.len() - usize::from(self.aged);
+            return Some(format!("pricing: {faults} problem(s), see --doctor"));
+        }
+        self.aged
+            .then(|| "pricing: bundled rates over 90 days old, see --doctor".to_string())
     }
 
     /// Apply a refreshed pricing cache, unless it is too old to trust.
@@ -138,7 +223,14 @@ impl PricingEngine {
     /// The bundled table ships with the binary and is at least as current as the release, so
     /// falling back to it is the safe direction. Some models may become `UNKNOWN COST` as a
     /// result — that is the intended trade, and the whole point of the provenance model.
-    fn apply_cache(&mut self, contents: &str, age: Option<std::time::Duration>, label: &str) {
+    ///
+    /// Returns whether the cache was overlaid.
+    fn apply_cache(
+        &mut self,
+        contents: &str,
+        age: Option<std::time::Duration>,
+        label: &str,
+    ) -> bool {
         if let Some(age) = age {
             if age > PRICING_CACHE_MAX_AGE {
                 self.warnings.push(format!(
@@ -147,15 +239,21 @@ impl PricingEngine {
                     label,
                     age.as_secs() / 86_400
                 ));
-                return;
+                return false;
             }
         }
         match Self::parse(contents) {
-            Ok(overlay) => self.overlay(overlay),
-            Err(error) => self.warnings.push(format!(
-                "cached pricing table at {} is invalid ({}); using bundled rates",
-                label, error
-            )),
+            Ok(overlay) => {
+                self.overlay(overlay);
+                true
+            }
+            Err(error) => {
+                self.warnings.push(format!(
+                    "cached pricing table at {} is invalid ({}); using bundled rates",
+                    label, error
+                ));
+                false
+            }
         }
     }
 
@@ -244,6 +342,7 @@ impl PricingEngine {
             periods,
             curated: Default::default(),
             warnings,
+            aged: false,
         })
     }
 
@@ -352,6 +451,7 @@ impl PricingEngine {
             periods: HashMap::new(),
             curated: Default::default(),
             warnings,
+            aged: false,
         }
     }
 
@@ -786,6 +886,69 @@ pub fn apply_estimated_pricing(usages: &mut [Usage], engine: &PricingEngine) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The tables ship in the binary and were never compared to the clock, so an install six
+    /// months old priced at six-month-old rates in silence. Every date here is injected: a test
+    /// that read the clock would start failing by itself ninety days after a table is regenerated.
+    #[test]
+    fn bundled_tables_older_than_ninety_days_say_so() {
+        let (community, curated) = bundled_table_dates();
+        let community = community.expect("pricing/litellm.tsv carries `# Updated: YYYY-MM-DD`");
+        let curated = curated.expect("pricing/zen.toml carries `# Updated: YYYY-MM-DD`");
+        let oldest = community.min(curated);
+        let days = chrono::Duration::days;
+
+        assert_eq!(bundled_age_notice(oldest, false), None);
+        assert_eq!(
+            bundled_age_notice(oldest + days(BUNDLED_PRICING_MAX_AGE_DAYS), false),
+            None,
+            "ninety days is the limit, not past it"
+        );
+        let notice = bundled_age_notice(oldest + days(BUNDLED_PRICING_MAX_AGE_DAYS + 1), false)
+            .expect("ninety-one days is past it");
+        assert!(notice.contains("91 days old"), "{notice}");
+        assert!(notice.contains(&community.to_string()), "{notice}");
+        assert!(notice.contains(&curated.to_string()), "{notice}");
+        assert!(notice.contains("Upgrade"), "it says what to do: {notice}");
+
+        // A fresh refreshed cache replaces the curated rates, so only the community table's age
+        // still matters -- the day it matters is the day *it* passes the limit.
+        let community_limit = community + days(BUNDLED_PRICING_MAX_AGE_DAYS);
+        assert_eq!(bundled_age_notice(community_limit, true), None);
+        assert!(bundled_age_notice(community_limit + days(1), true).is_some());
+    }
+
+    /// Age is said; it is not a fault. A corrupt cache is. The dashboard goes red for one only.
+    #[test]
+    fn an_old_table_is_a_notice_and_a_bad_cache_is_a_fault() {
+        let far_future = chrono::NaiveDate::from_ymd_opt(2099, 1, 1).unwrap();
+
+        let mut old = PricingEngine::bundled();
+        old.note_bundled_age(far_future, false);
+        assert!(!old.has_fault());
+        assert_eq!(old.warnings().len(), 1);
+        assert_eq!(
+            old.status_note().as_deref(),
+            Some("pricing: bundled rates over 90 days old, see --doctor")
+        );
+
+        let mut broken = PricingEngine::bundled();
+        assert!(!broken.apply_cache("this is not = [toml", None, "/tmp/zen-pricing.toml"));
+        broken.note_bundled_age(far_future, false);
+        assert!(broken.has_fault());
+        assert_eq!(
+            broken.status_note().as_deref(),
+            Some("pricing: 1 problem(s), see --doctor")
+        );
+
+        let fresh = PricingEngine::bundled();
+        assert_eq!(fresh.status_note(), None);
+        assert!(table_date("# Updated: not-a-date\n").is_none());
+        assert!(
+            table_date("[model.x]\n# Updated: 2026-01-01\n").is_none(),
+            "header only"
+        );
+    }
 
     /// Restore the bug by deleting the `incomplete` guard in `estimate_cost`: the row is priced
     /// from its input alone, at a third of what the same request costs with its output counted.

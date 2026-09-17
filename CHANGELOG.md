@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Bundled pricing says when it is old.** Rates ship in the binary, and only the *refreshed cache*
+  was ever compared to the clock -- so an install six months old priced at six-month-old rates
+  without a word, which is a confident number resting on a fact nobody checked. Both tables carry an
+  `# Updated:` date; past 90 days the engine now says so, naming both dates and what to do
+  (upgrade: `--refresh-pricing` updates the curated Zen rates only). A fresh refreshed cache
+  supersedes the curated table's date, so then only the community snapshot's age counts.
+- **Pricing warnings reach the dashboard.** A refused cache -- stale, unreadable, invalid -- and the
+  age notice were printed by `--doctor` and nowhere a running dashboard could show them, so a
+  dashboard pricing from a table it had silently fallen back to looked exactly like one that was
+  not. The status line now carries one clause (`pricing: 1 problem(s), see --doctor`, or
+  `pricing: bundled rates over 90 days old`); a fault turns the header red, age alone does not.
+- **The currency and the table dates are stated.** `--doctor` prints when each bundled table was
+  cut, and `--summary-json`'s `pricing` block gains `currency` (`USD`, list price, nothing
+  converted), `community_table_date` and `curated_table_date`. No figure anywhere had a unit.
+
 ### Fixed
 
 - **A token count a source stopped reporting is no longer read as zero.** The counts are plain

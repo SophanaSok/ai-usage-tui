@@ -305,7 +305,19 @@ and an `AGENTS.md` snippet. Two decisions worth keeping:
    the change moved no figure on 25,659 real requests. It exists for the day a format changes.
    Deliberately not done: `incomplete_requests` in every summary bucket. It would be zero in
    nearly all of them, and the source's `status` and `unpriced_requests` already say it.
-2. **Bundled pricing has no age check.** Only the refreshed cache is dated (30 days); the tables
+2. **Half resolved: bundled pricing now has an age check, and its warnings reach the screen.**
+   The tables' `# Updated:` dates are read at load, and past 90 days
+   (`BUNDLED_PRICING_MAX_AGE_DAYS`) the engine says so; a fresh refreshed cache supersedes the
+   curated table's date, so then only the community snapshot's age counts. The notice and the
+   engine's faults reach the dashboard's status line (`App::pricing_note`; only a fault turns the
+   header red), `--doctor` and `--summary-json`, which also carry the table dates and `USD`.
+   Every date in the tests is injected -- a test reading the clock would start failing by itself
+   ninety days after `just pricing`. **Still open:** `--refresh-pricing` refreshes Zen only. The
+   community table can only be updated by a release; doing it at runtime means fetching this
+   repository's own generated `pricing/litellm.tsv` (a new host for that command to contact) and
+   a scheduled job to regenerate it, both of which want a decision rather than a rider.
+
+   *As filed:* **Bundled pricing has no age check.** Only the refreshed cache is dated (30 days); the tables
    compiled into the binary are never compared to the clock, so a six-month-old install prices at
    six-month-old rates without a word. `--refresh-pricing` refreshes Zen only, not the LiteLLM
    table. Engine warnings reach `--doctor` only. Figures are USD list rates and nothing says so.

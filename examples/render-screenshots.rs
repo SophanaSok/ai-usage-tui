@@ -195,6 +195,9 @@ fn main() -> ExitCode {
     app.update_notice = None;
     // A developer's own `NO_COLOR` is a fact about their terminal, not about the README.
     app.no_color = false;
+    // And the pricing engine's note: regenerating the images from a checkout whose tables have
+    // passed their age would otherwise write "bundled rates over 90 days old" into every header.
+    app.pricing_note = None;
 
     if app.usages.is_empty() {
         eprintln!("no usage loaded — the images would all be empty; check --claude-dir");
