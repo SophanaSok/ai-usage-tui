@@ -683,7 +683,7 @@ See [`docs/omarchy.md`](docs/omarchy.md).
 
 ## Ask an LLM about your usage
 
-The dashboard is for you. `--summary-json` is for whatever you ask *about* your usage — Claude
+The dashboard is for you. `--summary-json` is for whatever you ask about your usage — Claude
 Code, Codex, Cursor, a script — and is built so a model can take it whole:
 
 ```sh
