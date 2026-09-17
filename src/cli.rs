@@ -19,7 +19,8 @@ pub struct Cli {
     pub print_config: bool,
     /// Print the glossary of every JSON key and enum value, as JSON, and exit.
     pub schema: bool,
-    /// Print the guide to reading this tool's output from an LLM agent, and exit.
+    /// Print one of the guides for an LLM agent, and exit: `None` when the flag was not given,
+    /// the reading guide when it was given bare.
     pub agent_guide: Option<crate::schema::GuideTopic>,
     /// `[collectors.<id>] enabled` overrides, by source id. Absent means the registry default.
     pub source_enabled: std::collections::BTreeMap<String, bool>,
