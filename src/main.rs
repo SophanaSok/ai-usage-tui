@@ -52,6 +52,15 @@ fn dispatch() -> Result<()> {
         ai_usage_tui::cli::print_man()?;
         return Ok(());
     }
+    // Before the config too: the user asking for an example config is often the user whose
+    // config does not parse.
+    if parsed_cli.print_config {
+        use std::io::Write;
+        let mut out = stdout().lock();
+        out.write_all(ai_usage_tui::config::EXAMPLE_CONFIG.as_bytes())?;
+        out.flush()?;
+        return Ok(());
+    }
     if parsed_cli.version {
         print_line(&format!("ai-usage-tui {}", env!("CARGO_PKG_VERSION")))?;
         return Ok(());
@@ -467,9 +476,17 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
         }
         Some(path) => {
             let _ = writeln!(out, "  none         {} (not present)", path.display());
+            // Not "copy examples/config.toml": no binary install channel ships that file. The
+            // example is in the binary, so this works wherever the tool came from. And not a
+            // `> path` redirect either: the example's budgets are live samples, and budgets are
+            // what the webhook and `--check-budgets` act on.
             let _ = writeln!(
                 out,
-                "               copy examples/config.toml there to configure budgets and collectors"
+                "               `ai-usage-tui --print-config` prints an annotated example to start from"
+            );
+            let _ = writeln!(
+                out,
+                "               (its [[budgets.entry]] limits are samples: edit or remove them)"
             );
         }
         None => {

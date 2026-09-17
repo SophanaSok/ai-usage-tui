@@ -820,7 +820,9 @@ An entry that could never fire is refused when the config loads rather than
 shown as `OK` forever: a `provider` or `model` scope needs a `name`, `global`
 takes none, `limit` must be above zero, and `warn` must sit below `critical`.
 The complete annotated example — including data paths, filters, collectors, and
-budget scopes — is in [`examples/config.toml`](examples/config.toml).
+budget scopes — is in [`examples/config.toml`](examples/config.toml), and every
+install carries it: `ai-usage-tui --print-config` prints it. Its budgets are live
+samples, so edit or remove them before saving it as your config.
 
 ## Budget checks
 
@@ -964,6 +966,7 @@ does not load it automatically.
 | `--doctor` | Report where each data source was looked for, what was found there, and how billing was decided, then exit |
 | `--completions SHELL` | Print a shell completion script (`bash`, `zsh`, `fish`, `elvish`, `powershell`) and exit |
 | `--man` | Print the man page in roff and exit |
+| `--print-config` | Print the annotated example `config.toml` and exit (its budgets are samples to edit) |
 | `--db PATH` | Override the OpenCode database path |
 | `--journal PATH` | Override the local journal path |
 | `--claude-dir PATH` | Override the Claude Code session-log directory |
@@ -1012,6 +1015,7 @@ Environment variables:
 | `COPILOT_HOME` | Copilot home; its CLI store and `session-state/` logs are read beneath it |
 | `GEMINI_TELEMETRY_OUTFILE` | Gemini CLI's own telemetry output path; when set, it is read from there rather than `~/.gemini/telemetry.json` |
 | `AI_USAGE_LOG` | Write diagnostics to a file — `1` for the default location, or a path. Off when unset. |
+| `NO_COLOR` | Any non-empty value draws the dashboard without colour ([no-color.org](https://no-color.org)); the selected row is shown in reverse video instead |
 | `XDG_CONFIG_HOME` | Base directory for the default config path |
 | `XDG_DATA_HOME` | Base directory for default database, journal, and cache paths |
 | `XDG_STATE_HOME` | Base directory for Omarchy's agents-panel records (`omarchy/agents/usage` beneath it) |

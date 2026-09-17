@@ -15,6 +15,8 @@ pub struct Cli {
     pub completions: Option<clap_complete::Shell>,
     /// Print the man page in roff and exit.
     pub man: bool,
+    /// Print the annotated example configuration and exit.
+    pub print_config: bool,
     /// `[collectors.<id>] enabled` overrides, by source id. Absent means the registry default.
     pub source_enabled: std::collections::BTreeMap<String, bool>,
     pub config_path: Option<PathBuf>,
@@ -81,6 +83,7 @@ impl Default for Cli {
             doctor: false,
             completions: None,
             man: false,
+            print_config: false,
             source_enabled: Default::default(),
             config_path: None,
             db_path: None,
@@ -174,6 +177,10 @@ struct Args {
     /// Print the man page (roff) and exit
     #[arg(long, group = "action")]
     man: bool,
+
+    /// Print the annotated example config.toml and exit
+    #[arg(long, group = "action")]
+    print_config: bool,
 
     // --- data sources ---------------------------------------------------------------------
     /// Override the OpenCode SQLite database path
@@ -402,6 +409,7 @@ impl Cli {
             doctor: args.doctor,
             completions: args.completions,
             man: args.man,
+            print_config: args.print_config,
             config_path: args.config,
             db_path: args.db,
             journal_path: args.journal,

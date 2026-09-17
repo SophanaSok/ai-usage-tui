@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`NO_COLOR`.** Any non-empty value draws the dashboard without colour, per no-color.org. Every
+  colour was a hard-coded RGB value, backgrounds included, with no way to turn it off. The colour is
+  removed from the finished frame in one pass rather than branched in every panel, so a panel added
+  later cannot ignore the setting; bold and the rest stay, and the selected row -- which colour
+  alone had marked -- is drawn in reverse video.
+- **`--print-config`** prints the annotated example configuration, which is now in the binary.
+  `--doctor` used to tell a user without a config to "copy examples/config.toml there", a file no
+  binary install channel ships. It works before the config is read, so a broken config does not
+  stop it. The example's budgets are live samples, so the hint says to edit them rather than
+  suggesting a `> config.toml` redirect.
+
+### Fixed
+
+- **A new install no longer opens on a blank table.** With no rows the default panel drew a header
+  over nothing beside tiles reading `0` -- a working dashboard with nothing to report, the least
+  likely reading of an empty screen. It now says no usage was collected and names
+  `ai-usage-tui --doctor`, or, when data exists outside the range or filter, says so and how to widen
+  it.
+- **A pane shorter than 20 rows says so.** Below the height the layout needs, ratatui squeezed the
+  panels to zero height one by one without complaint. The dashboard now shows the rows it needs and
+  has, with the key hints -- and how to quit -- still on the last line.
+
 ## [0.16.0] - 2026-09-17
 
 ### Added

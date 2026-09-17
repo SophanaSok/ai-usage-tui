@@ -1851,3 +1851,41 @@ fn a_statusline_payload_becomes_one_line_and_a_row_in_the_limits_export() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `--doctor` told a user without a config to "copy examples/config.toml there" -- a file no binary
+/// install channel ships. The example is in the binary now, and the hint names the command.
+#[test]
+fn the_example_config_ships_in_the_binary_and_doctor_points_at_it() {
+    let output = bin().arg("--print-config").output().expect("run");
+    assert!(output.status.success());
+    let example = std::fs::read_to_string(format!(
+        "{}/examples/config.toml",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("read example");
+    assert_eq!(String::from_utf8(output.stdout).expect("utf8"), example);
+
+    // It works before the config is read: a user asking for an example is often one whose own
+    // config does not parse.
+    let dir = scratch("print-config-broken");
+    let broken = dir.join("config.toml");
+    std::fs::write(&broken, "this is not = [toml").expect("write");
+    let output = bin()
+        .args(["--print-config", "--config"])
+        .arg(&broken)
+        .output()
+        .expect("run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let doctor = hermetic(bin().arg("--doctor"))
+        .output()
+        .expect("run --doctor");
+    let text = String::from_utf8(doctor.stdout).expect("utf8");
+    assert!(text.contains("--print-config"), "{text}");
+    assert!(!text.contains("copy examples/config.toml"), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -77,6 +77,7 @@ fn rows_do_not_mix_cost_provenance() {
         show_help: false,
         budget_engine: BudgetEngine::empty(),
         update_notice: None,
+        no_color: false,
         // Bundled, not loaded: a refreshed cache on the developer's machine must not change
         // how a test ranks two models.
         pricing: crate::pricing::PricingEngine::bundled(),

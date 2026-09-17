@@ -156,9 +156,43 @@ pub fn run(
     Ok(())
 }
 
+/// The fewest rows the dashboard lays out in: header 3, metric tiles 7, body 8, footer 2.
+///
+/// Below it ratatui does not complain -- it squeezes the constraints, and panels collapse to zero
+/// height one after another in silence, which on a short pane reads as a dashboard with nothing in
+/// it rather than a dashboard with no room. Width has no such floor: the footer is measured and
+/// reflows down to 16 columns, and a test sweeps every width.
+pub const MIN_HEIGHT: u16 = 20;
+
 /// Lay out one frame and dispatch to the panel renderers.
 pub(super) fn draw(frame: &mut Frame, app: &App) {
+    draw_in_colour(frame, app);
+    if app.no_color {
+        strip_colour(frame.buffer_mut());
+    }
+}
+
+/// Everything colour is, removed after the frame is drawn -- one pass here rather than a branch
+/// in every panel's styles, which is how a new panel would have come to ignore `NO_COLOR`.
+/// Bold, reverse and the rest stay: they are not colour. The one thing colour alone carried is
+/// the selected row, drawn as a background, so that becomes reverse video.
+fn strip_colour(buffer: &mut ratatui::buffer::Buffer) {
+    use ratatui::style::Color;
+    for cell in buffer.content.iter_mut() {
+        if cell.bg == theme::SELECTED {
+            cell.modifier.insert(Modifier::REVERSED);
+        }
+        cell.fg = Color::Reset;
+        cell.bg = Color::Reset;
+    }
+}
+
+fn draw_in_colour(frame: &mut Frame, app: &App) {
     let area = frame.area();
+    if area.height < MIN_HEIGHT {
+        draw_too_short(frame, area, app);
+        return;
+    }
     let alert_banner_height = if app.alerts.iter().any(|a| a.is_actionable()) {
         1u16
     } else {
@@ -198,6 +232,27 @@ pub(super) fn draw(frame: &mut Frame, app: &App) {
     if app.show_help {
         draw_help(frame, area);
     }
+}
+
+/// What a pane shorter than `MIN_HEIGHT` shows: why nothing else is there, and -- on the last
+/// line, as always -- how to leave.
+fn draw_too_short(frame: &mut Frame, area: Rect, app: &App) {
+    let message = Paragraph::new(vec![
+        Line::from(Span::styled(
+            "Terminal too short for the dashboard",
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            format!("needs {MIN_HEIGHT} rows, has {}", area.height),
+            Style::default().fg(MUTED),
+        )),
+    ]);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(area);
+    frame.render_widget(message, rows[0]);
+    frame.render_widget(footer(area.width, app.search_status()), rows[1]);
 }
 
 /// Key hints, sized to the terminal.

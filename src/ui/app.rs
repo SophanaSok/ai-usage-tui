@@ -82,6 +82,10 @@ pub struct App {
     /// `pub` so the screenshot renderer can clear it, as it pins the clock: it is a fact about
     /// the machine that built the image, and it does not belong in a README.
     pub update_notice: Option<String>,
+    /// `NO_COLOR` was set when the dashboard started: every frame is drawn without colour. Read
+    /// once here, like the update notice, so the render path reads no environment; `pub` so the
+    /// screenshot renderer can clear it on a machine that has it set.
+    pub no_color: bool,
     pub alerts: Vec<Alert>,
     /// Alerts are handed to a worker thread; the webhook POST is blocking and must never
     /// happen on the render path.
@@ -385,6 +389,7 @@ impl App {
             show_help: false,
             pricing: PricingEngine::load(),
             update_notice: crate::update::header_notice(),
+            no_color: crate::utils::no_color_in(&crate::utils::system_env),
             alerts: Vec::new(),
             alert_sink,
             view: DerivedView::default(),

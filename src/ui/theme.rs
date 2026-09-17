@@ -13,6 +13,9 @@ use crate::model::{CostStatus, Usage};
 
 pub const MUTED: Color = Color::Rgb(125, 145, 160);
 pub const PANEL: Color = Color::Rgb(18, 28, 37);
+/// The selected row's background. Named because `NO_COLOR` has to recognise it: stripped of
+/// colour, a selection drawn only as a background is no selection at all.
+pub const SELECTED: Color = Color::Rgb(37, 57, 67);
 
 pub fn panel<'a>(title: &'a str, color: Color) -> Block<'a> {
     Block::default()
