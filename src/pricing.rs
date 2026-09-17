@@ -835,16 +835,31 @@ pub fn bundled_free_models() -> &'static std::collections::HashSet<String> {
     })
 }
 
-/// Whether the bundled table lists a non-free input rate for `model`.
+/// Whether the bundled table says `model` costs money: it resolves, and a rate it lists is
+/// above zero.
 ///
 /// For classification, which must not call a model `FREE` on the strength of its name when the
 /// table says what it costs. The bundled engine, built once: classification runs per row.
+///
+/// **Above zero, not merely listed.** The community table publishes free tiers as an explicit
+/// `input=0.0 output=0.0` -- `llama-3.3-70b-instruct-turbo-free`, OpenRouter's `...:free` ids --
+/// and a published rate of zero is the table *agreeing* that the model is free. The first version
+/// asked only whether an input rate was listed, so every free model the table knew about became
+/// `PAID`, priced at an "estimated" $0.00 and counted as billable. It was found by the
+/// pricing-drift job's first dry run: a regenerated table added `glm-5.2:free` at 0.0, and the
+/// classification test that pins that id failed against it.
 pub fn bundled_lists_a_rate(model: &str) -> bool {
     static ENGINE: std::sync::OnceLock<PricingEngine> = std::sync::OnceLock::new();
     ENGINE
         .get_or_init(PricingEngine::bundled)
-        .input_rate(model)
-        .is_some()
+        .resolve("", model)
+        .is_some_and(|(_, pricing)| {
+            pricing.free != Some(true)
+                && [pricing.input, pricing.output]
+                    .into_iter()
+                    .flatten()
+                    .any(|rate| rate > 0.0)
+        })
 }
 
 /// Price everything still unpriced, and normalise the status of what deliberately cannot be.
