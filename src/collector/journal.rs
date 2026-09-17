@@ -349,11 +349,11 @@ pub fn record_ollama(path: &Path) -> Result<()> {
     if invalid_lines > 0 {
         eprintln!("Skipped {} malformed Ollama JSON line(s)", invalid_lines);
     }
-    println!(
+    crate::helpers::print_line(&format!(
         "Recorded {} Ollama usage event(s) in {}",
         recorded,
         path.display()
-    );
+    ))?;
     Ok(())
 }
 
@@ -376,12 +376,12 @@ pub fn record_usage(path: &Path, provider: &str) -> Result<()> {
     if invalid_lines > 0 {
         eprintln!("Skipped {invalid_lines} malformed JSON line(s)");
     }
-    println!(
+    crate::helpers::print_line(&format!(
         "Recorded {} {} usage event(s) in {}",
         recorded,
         provider,
         path.display()
-    );
+    ))?;
     Ok(())
 }
 
@@ -552,11 +552,11 @@ pub fn record_routing(path: &Path) -> Result<()> {
     io::stdin().read_to_string(&mut input)?;
     let json: Value = serde_json::from_str(&input)?;
     let inserted = record_routing_event(path, &json)?;
-    println!(
+    crate::helpers::print_line(&format!(
         "Recorded {} routing event(s) in {}",
         inserted,
         path.display()
-    );
+    ))?;
     Ok(())
 }
 

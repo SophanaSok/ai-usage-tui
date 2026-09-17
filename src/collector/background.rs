@@ -473,6 +473,46 @@ impl CollectorHandle {
             let _ = handle.join();
         }
     }
+
+    /// Signal shutdown and wait at most `grace` for the collector threads to exit, then detach any
+    /// still running. Returns how many were left behind.
+    ///
+    /// For a process that is about to exit, where `join`'s unbounded wait is the wrong trade: a
+    /// poll cannot be interrupted, and a pricing fetch retrying a rate-limited page takes most of
+    /// a minute. A detached thread ends with the process. After this, `Drop` has nothing left to
+    /// wait for.
+    pub fn join_within(&self, grace: Duration) -> usize {
+        self.shutdown();
+        let deadline = Instant::now() + grace;
+        let mut handles: Vec<JoinHandle<()>> = {
+            let mut threads = self.threads.lock().unwrap_or_else(|p| p.into_inner());
+            std::mem::take(&mut *threads)
+        };
+        loop {
+            let (finished, running): (Vec<_>, Vec<_>) =
+                handles.into_iter().partition(JoinHandle::is_finished);
+            for handle in finished {
+                let _ = handle.join();
+            }
+            handles = running;
+            if handles.is_empty() || Instant::now() >= deadline {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let abandoned = handles.len();
+        if abandoned > 0 {
+            logging::warn(
+                "collector",
+                &format!(
+                    "{} collector thread(s) still polling after {}ms; leaving them to exit with the process",
+                    abandoned,
+                    grace.as_millis()
+                ),
+            );
+        }
+        abandoned
+    }
 }
 
 /// Exponential backoff, capped. `restarts` is 1-based.
@@ -563,6 +603,66 @@ mod tests {
         .expect("both collectors should have produced a row");
         handle.join();
         assert_eq!(snap.len(), 2);
+    }
+
+    /// A poll that does not return until released -- the shape of a pricing fetch mid-retry.
+    struct BlockedCollector {
+        entered: std::sync::mpsc::Sender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    }
+
+    impl Collector for BlockedCollector {
+        fn name(&self) -> &str {
+            "blocked"
+        }
+        fn interval(&self) -> Duration {
+            Duration::from_secs(999)
+        }
+        fn poll(&mut self) -> Result<Vec<Usage>> {
+            let _ = self.entered.send(());
+            let _ = self.release.recv_timeout(Duration::from_secs(30));
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn join_within_does_not_wait_out_a_poll_in_flight() {
+        let (entered, polling) = std::sync::mpsc::channel();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let handle = CollectorHandle::spawn(vec![Box::new(BlockedCollector {
+            entered,
+            release: blocked,
+        })]);
+        polling
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the collector should have started polling");
+
+        let started = Instant::now();
+        let abandoned = handle.join_within(Duration::from_millis(100));
+        // Dropping the handle joins what is left. Quitting the dashboard used to be exactly this
+        // drop, taken while the terminal was still in raw mode.
+        drop(handle);
+        let waited = started.elapsed();
+        let _ = release.send(());
+
+        assert_eq!(
+            abandoned, 1,
+            "the blocked poll is left behind, not waited for"
+        );
+        assert!(
+            waited < Duration::from_secs(5),
+            "quitting waited {waited:?} on a poll that cannot be interrupted"
+        );
+    }
+
+    #[test]
+    fn join_within_joins_collectors_that_stop_in_time() {
+        let handle = CollectorHandle::spawn(vec![Box::new(StubCollector {
+            name: "test".into(),
+            interval_secs: 999,
+            usages: vec![],
+        })]);
+        assert_eq!(handle.join_within(Duration::from_secs(10)), 0);
     }
 
     #[test]
