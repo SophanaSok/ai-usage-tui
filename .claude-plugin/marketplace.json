@@ -1,0 +1,14 @@
+{
+  "name": "ai-usage-tui",
+  "description": "The ai-usage-tui project's own Claude Code plugin: ask Claude about your AI token usage and model routing.",
+  "owner": {
+    "name": "Sophana Sok"
+  },
+  "plugins": [
+    {
+      "name": "ai-usage",
+      "source": "./contrib/claude-code/plugin",
+      "description": "Ask Claude about your AI token usage, cost, cache efficiency and model routing, read locally by the ai-usage-tui CLI."
+    }
+  ]
+}

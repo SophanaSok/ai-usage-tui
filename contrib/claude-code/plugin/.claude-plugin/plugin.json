@@ -1,0 +1,11 @@
+{
+  "name": "ai-usage",
+  "version": "1.0.0",
+  "description": "Ask Claude about your AI token usage, cost, cache efficiency and model routing, read locally by the ai-usage-tui CLI.",
+  "author": {
+    "name": "Sophana Sok"
+  },
+  "homepage": "https://sophanasok.github.io/ai-usage-tui-site/",
+  "repository": "https://github.com/SophanaSok/ai-usage-tui",
+  "license": "MIT"
+}
