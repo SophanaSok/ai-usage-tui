@@ -5,7 +5,7 @@
 
 use ratatui::{
     layout::{Constraint, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::Span,
     widgets::{Cell, Paragraph, Row, Table, TableState},
     Frame,
@@ -47,7 +47,7 @@ pub fn draw_sessions(frame: &mut Frame, area: Rect, app: &App) {
 
     let rows = sessions.iter().enumerate().map(|(index, session)| {
         let style = if index == app.selected {
-            Style::default().bg(Color::Rgb(37, 57, 67))
+            Style::default().bg(crate::ui::theme::SELECTED)
         } else {
             Style::default()
         };

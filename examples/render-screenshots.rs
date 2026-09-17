@@ -193,6 +193,8 @@ fn main() -> ExitCode {
     // read as a claim about the release being documented. Cleared for the same reason the clock
     // is pinned.
     app.update_notice = None;
+    // A developer's own `NO_COLOR` is a fact about their terminal, not about the README.
+    app.no_color = false;
 
     if app.usages.is_empty() {
         eprintln!("no usage loaded — the images would all be empty; check --claude-dir");

@@ -5,7 +5,7 @@
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Cell, Paragraph, Row, Table, TableState},
     Frame,
@@ -54,7 +54,7 @@ pub fn draw_routing(frame: &mut Frame, area: Rect, app: &App) {
         // The same highlight as the other tables: a cursor that is not drawn is a cursor the
         // user cannot know is on the row past the fold.
         let style = if index == app.selected {
-            Style::default().bg(Color::Rgb(37, 57, 67))
+            Style::default().bg(crate::ui::theme::SELECTED)
         } else {
             Style::default()
         };

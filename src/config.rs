@@ -152,6 +152,15 @@ pub fn config_path() -> Option<PathBuf> {
     )
 }
 
+/// The annotated example configuration, as shipped in the binary.
+///
+/// `--doctor` used to tell a user without a config to "copy examples/config.toml there" -- a file
+/// that exists in a source checkout and the crates.io tarball, and in no binary install channel.
+/// Carrying it in the binary is what makes `--print-config` the one instruction that works
+/// wherever the tool was installed from. The tests below parse this same text, so the example
+/// cannot drift out of what the loader accepts.
+pub const EXAMPLE_CONFIG: &str = include_str!("../examples/config.toml");
+
 /// Read the config file once, or report why it could not be read.
 ///
 /// The file used to be parsed three separate times with three different error policies:
@@ -394,7 +403,7 @@ mod tests {
         // `collectors.zen_pricing.webhook` — dropped silently, because no struct here uses
         // `deny_unknown_fields`. The example must parse, and the webhook must land where the
         // README says it does.
-        let uncommented: String = include_str!("../examples/config.toml")
+        let uncommented: String = EXAMPLE_CONFIG
             .lines()
             .map(|line| match line.trim_start().strip_prefix("# webhook") {
                 Some(rest) => format!("webhook{rest}"),
