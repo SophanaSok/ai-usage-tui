@@ -438,6 +438,55 @@ fn the_glossary_names_every_source_id() {
     );
 }
 
+/// A skill copied into `~/.claude/skills`, or a block pasted into someone's `AGENTS.md`, outlives
+/// the binary it was written beside -- and `--agent-guide setup` is an error on a release that
+/// predates topics. So what gets installed only ever says "run `--agent-guide`", and the guide
+/// that prints, which always matches the binary, is what lists the topics.
+#[test]
+fn installed_integrations_name_no_guide_topic() {
+    use clap::ValueEnum;
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for relative in [
+        "contrib/claude-code/plugin/skills/ai-usage/SKILL.md",
+        "contrib/agents/README.md",
+    ] {
+        let text = std::fs::read_to_string(root.join(relative)).expect(relative);
+        assert!(text.contains("--agent-guide"), "{relative}");
+        for topic in ai_usage_tui::schema::GuideTopic::value_variants() {
+            let name = topic
+                .to_possible_value()
+                .expect("named")
+                .get_name()
+                .to_string();
+            assert!(
+                !text.contains(&format!("--agent-guide {name}"))
+                    && !text.contains(&format!("--agent-guide={name}")),
+                "{relative} names the `{name}` topic, which an older install rejects"
+            );
+        }
+    }
+}
+
+/// The extend guide sends an agent to an issue template by name and to the repository by URL.
+#[test]
+fn the_extend_guide_names_an_issue_template_that_exists() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let guide = ai_usage_tui::schema::AGENT_EXTEND;
+    let template =
+        std::fs::read_to_string(root.join(".github/ISSUE_TEMPLATE/provider_support.yml"))
+            .expect("the provider-support issue template");
+    let name = template
+        .lines()
+        .find_map(|line| line.strip_prefix("name:"))
+        .expect("the template has a name")
+        .trim();
+    assert!(
+        guide.contains(&format!("\"{name}\"")),
+        "docs/agent-extend.md does not name the issue template {name:?}"
+    );
+    assert!(guide.contains(env!("CARGO_PKG_REPOSITORY")));
+}
+
 /// The setup guide carries the files under `contrib/` inside it, because no install channel
 /// ships `contrib/` and the guide is what an agent on a binary install actually has. A copy is
 /// a second place for the hook's command or a unit's schedule to be changed and the first
@@ -901,6 +950,8 @@ fn the_agent_integration_names_only_flags_that_exist() {
         // systemctl's, in the setup guide's timer instructions.
         "--user",
         "--now",
+        // jq's, in the recipes.
+        "--argjson",
     ];
     // What an agent is handed, and whether it is an *entry point* -- a file installed or pasted
     // somewhere, which must send its reader to the guide that matches the installed version.
@@ -909,6 +960,8 @@ fn the_agent_integration_names_only_flags_that_exist() {
         ("contrib/agents/README.md", true),
         ("docs/agent-guide.md", false),
         ("docs/agent-setup.md", false),
+        ("docs/agent-recipes.md", false),
+        ("docs/agent-extend.md", false),
         ("AGENTS.md", true),
         (".claude/skills/add-data-source/SKILL.md", false),
     ] {

@@ -237,14 +237,10 @@ WantedBy=timers.target
 
 ## 6. A tool this one does not read
 
-`ai-usage-tui --summary-json` lists what it reads under `sources`. For anything else that logs
-its own token counts, `--record-event` takes usage on stdin as one JSON object per line: `provider`,
-`model`, `input_tokens`, `output_tokens` and one of `event_id` or `created` (unix seconds) are
-required; `reasoning_tokens`, `cache_read_tokens`, `cache_write_tokens`, `project`, `session_id`,
-`cost` (only a figure the tool itself recorded) and `"billing": "subscription"` are optional. It
-refuses anything else by name, so its error message is your documentation. Two rules: never record a tool that is already in `sources` (it would be
-counted twice), and **never estimate a token count** -- if the tool does not measure them, there
-is nothing to record, and saying so is the right answer.
+`ai-usage-tui --summary-json` lists what it reads under `sources`. Anything else that logs its own
+token counts can be fed in through `--record-event`; `ai-usage-tui --agent-guide extend` has the
+keys, a worked adapter and the rule that matters most: **never estimate a token count**. If the
+tool does not measure them, there is nothing to record, and saying so is the right answer.
 
 ## 7. Undoing all of it
 

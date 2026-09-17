@@ -112,6 +112,15 @@ project is eating my quota?" or "is Opus worth it on this repo?", and Claude rea
 instructions always match the version you have installed, and the skill itself never needs
 updating. It pre-approves `ai-usage-tui` commands and nothing else.
 
+It also answers "set me a monthly budget", "track the tool I use that this does not read" and
+"put my rate limit in my status bar". Those go the same way: the guide Claude is sent to names a
+further guide for setting the tool up, for building on its data and for extending it, all printed
+by the binary. For those requests note what the pre-approval covers: every `ai-usage-tui`
+command, including the few that write — the recorders into the journal, `--refresh-pricing` and
+`--check-update` to a cache, over the network. Claude is told to show you any change to a file
+outside the tool's own config before making it, and its edits to other files go through Claude
+Code's usual permission prompts.
+
 What Claude reads is the compact summary, not your transcripts: token counts, models, costs,
 project paths and session ids. Those go to your model provider as part of the conversation, like
 anything else Claude reads; `ai-usage-tui` itself sends nothing anywhere.

@@ -22,6 +22,12 @@ pub const AGENT_GUIDE: &str = include_str!("../docs/agent-guide.md");
 /// How to set the tool up on someone's behalf. Printed by `--agent-guide setup`.
 pub const AGENT_SETUP: &str = include_str!("../docs/agent-setup.md");
 
+/// Scripts over the JSON and CSV outputs. Printed by `--agent-guide recipes`.
+pub const AGENT_RECIPES: &str = include_str!("../docs/agent-recipes.md");
+
+/// Covering a tool or a view this one lacks. Printed by `--agent-guide extend`.
+pub const AGENT_EXTEND: &str = include_str!("../docs/agent-extend.md");
+
 /// Which of the agent's guides `--agent-guide` prints.
 ///
 /// Reading came first and is what the bare flag has always printed, so it stays the default:
@@ -36,6 +42,10 @@ pub enum GuideTopic {
     Read,
     /// Set it up for someone: config, budgets, the Claude Code hook and status line, timers
     Setup,
+    /// Build on the data: a status-bar module, an alert, a digest, a report, a spreadsheet
+    Recipes,
+    /// Cover a tool or a view it lacks: an adapter into --record-event, or a change to the source
+    Extend,
 }
 
 impl GuideTopic {
@@ -43,6 +53,8 @@ impl GuideTopic {
         match self {
             Self::Read => AGENT_GUIDE,
             Self::Setup => AGENT_SETUP,
+            Self::Recipes => AGENT_RECIPES,
+            Self::Extend => AGENT_EXTEND,
         }
     }
 }

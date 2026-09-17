@@ -270,6 +270,187 @@ fn documented_fixture_commands_pin_every_source() {
     }
 }
 
+/// A Claude Code session-log root holding one request dated *now*.
+///
+/// The committed fixtures are years old, so nothing in them falls inside `--today`, a budget's
+/// period or a burn window. Anything that has to see current data brings this.
+fn recent_claude_home(dir: &Path) -> PathBuf {
+    let recent = dir.join("recent").join(".claude").join("projects");
+    std::fs::create_dir_all(recent.join("p")).expect("recent claude home");
+    std::fs::write(
+        recent.join("p").join("s.jsonl"),
+        format!(
+            "{{\"type\":\"assistant\",\"uuid\":\"u-now\",\"requestId\":\"req_now\",\
+             \"timestamp\":\"{}\",\"sessionId\":\"s-now\",\"cwd\":\"/work/app\",\"message\":{{\"id\":\"msg_now\",\
+             \"role\":\"assistant\",\"model\":\"claude-sonnet-4-5-20250929\",\
+             \"usage\":{{\"input_tokens\":100000,\"output_tokens\":5000}}}}}}\n",
+            chrono::Utc::now().to_rfc3339()
+        ),
+    )
+    .expect("write recent session");
+    recent
+}
+
+/// Every fenced block of a guide, as `(language, body)`.
+#[cfg(unix)]
+fn fences(text: &str) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    let mut open: Option<(String, String)> = None;
+    for line in text.lines() {
+        match (&mut open, line.strip_prefix("```")) {
+            (None, Some(language)) => open = Some((language.trim().to_string(), String::new())),
+            (Some(_), Some(_)) => found.extend(open.take()),
+            (Some((_, body)), None) => {
+                body.push_str(line);
+                body.push('\n');
+            }
+            (None, None) => {}
+        }
+    }
+    found
+}
+
+/// The recipes an agent is handed are run, as written, against fixture data.
+///
+/// `--agent-guide recipes` and `extend` hand an agent shell to adapt. A recipe that names a key
+/// the summary no longer has, or pipes `null` into arithmetic, would be copied into a user's
+/// status bar by something that cannot tell. So each block that needs only `sh` and `jq` is
+/// executed with `ai-usage-tui` on its `PATH` replaced by a shim that pins every source -- the
+/// recipe's own flags still apply, because a range flag given later wins.
+///
+/// What this catches: a recipe that does not parse, that fails on real output, or that prints
+/// `null` where it promised a value. What it cannot: a misspelt key whose `null` the recipe then
+/// handles politely. The schema guard covers the keys; this covers the scripts.
+#[cfg(unix)]
+#[test]
+fn every_runnable_recipe_runs_against_the_fixture() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let Some(jq) = std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path)
+            .map(|dir| dir.join("jq"))
+            .find(|candidate| candidate.is_file())
+    }) else {
+        // CI has `jq`; a contributor's machine may not, and a test that needs an extra program
+        // to pass is a worse trade than one that says loudly it did not run.
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "jq is not installed, so the recipes in --agent-guide were not run"
+        );
+        eprintln!("SKIPPED: jq is not installed, so the recipes in --agent-guide were not run");
+        return;
+    };
+
+    let dir = scratch("recipes");
+    let fixtures = format!("{}/tests/fixtures", env!("CARGO_MANIFEST_DIR"));
+    let recent = recent_claude_home(&dir);
+    let config = dir.join("config.toml");
+    std::fs::write(
+        &config,
+        "[budgets]\n[[budgets.entry]]\nscope = \"global\"\nperiod = \"monthly\"\nlimit = 0.0001\n",
+    )
+    .expect("write config");
+
+    let tools = dir.join("bin");
+    std::fs::create_dir_all(&tools).expect("bin");
+    let shim = tools.join("ai-usage-tui");
+    std::fs::write(
+        &shim,
+        format!(
+            "#!/bin/sh\nexec '{bin}' --config '{config}' --db '{fixtures}/opencode_test.db' \
+             --claude-dir '{recent}' --claude-billing api --codex-dir '{fixtures}/codex_home' \
+             --copilot-dir '{fixtures}/copilot_home' --gemini-dir /nonexistent \
+             --omarchy-dir '{fixtures}/omarchy' --journal '{journal}' \"$@\"\n",
+            bin = env!("CARGO_BIN_EXE_ai-usage-tui"),
+            config = config.display(),
+            recent = recent.display(),
+            journal = dir.join("usage.db").display(),
+        ),
+    )
+    .expect("write shim");
+    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    std::os::unix::fs::symlink(&jq, tools.join("jq")).expect("link jq");
+
+    // A recipe that names a source root or a config would override the pins -- and would be a
+    // recipe that only works on its author's machine.
+    let pinned: Vec<String> = ai_usage_tui::cli::command()
+        .get_arguments()
+        .filter_map(|arg| arg.get_long())
+        .filter(|long| {
+            long.ends_with("-dir") || ["db", "journal", "config", "claude-json"].contains(long)
+        })
+        .map(|long| format!("--{long}"))
+        .collect();
+    assert!(pinned.len() >= 8, "{pinned:?}");
+
+    let mut ran = 0;
+    for (guide, text) in [
+        ("recipes", ai_usage_tui::schema::AGENT_RECIPES),
+        ("extend", ai_usage_tui::schema::AGENT_EXTEND),
+    ] {
+        for (language, body) in fences(text) {
+            let first = body.lines().next().unwrap_or_default();
+            let needs = first
+                .trim_start_matches(['#', '/', ' '])
+                .strip_prefix("needs:");
+            if guide == "recipes" {
+                assert!(
+                    needs.is_some(),
+                    "a block in the recipes guide does not open with what it needs:\n{body}"
+                );
+            }
+            let runnable = language == "sh"
+                && needs.is_some_and(|needs| needs.split(',').all(|need| need.trim() == "jq"));
+            if !runnable {
+                continue;
+            }
+            for flag in &pinned {
+                assert!(
+                    !body.split_whitespace().any(|word| word == flag),
+                    "a recipe passes {flag}, which belongs to the user's setup:\n{body}"
+                );
+            }
+            let output = Command::new("sh")
+                .arg("-c")
+                .arg(&body)
+                .current_dir(&dir)
+                .env("PATH", format!("{}:/usr/bin:/bin", tools.display()))
+                .env("XDG_CONFIG_HOME", "/nonexistent/config-home")
+                .env("XDG_DATA_HOME", "/nonexistent/data-home")
+                .env_remove("CLAUDE_CONFIG_DIR")
+                .env_remove("CLAUDE_PROJECTS_DIR")
+                .output()
+                .expect("run sh");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // A recipe whose exit status is its answer says so on a line of its own.
+            let answers_by_exit = body.lines().any(|line| line.starts_with("# exit:"));
+            let code = output.status.code();
+            assert!(
+                code == Some(0) || (answers_by_exit && code == Some(1)),
+                "a recipe in --agent-guide {guide} exited {code:?}:\n{body}\n{stderr}"
+            );
+            assert!(stderr.trim().is_empty(), "{guide}:\n{body}\n{stderr}");
+            if !answers_by_exit {
+                assert!(
+                    !stdout.trim().is_empty(),
+                    "{guide}: printed nothing:\n{body}"
+                );
+            }
+            assert!(
+                !stdout.contains("null"),
+                "{guide}: a recipe printed `null` where it promised a value:\n{body}\n{stdout}"
+            );
+            ran += 1;
+        }
+    }
+    assert!(
+        ran >= 5,
+        "only {ran} recipes ran; the guides lost their runnable blocks"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `--agent-guide` takes an optional topic, and bare it prints what it always printed: every
 /// installed skill and pasted `AGENTS.md` block says "run `--agent-guide`", and they outlive the
 /// binary they were written for.
@@ -2650,19 +2831,7 @@ fn every_json_document_is_fully_described_by_the_schema() {
 
     // The committed fixtures are years old, so nothing in them is inside a budget's period. One
     // request dated now, priced per token, is what puts the global budget over its limit.
-    let recent = dir.join("recent").join(".claude").join("projects");
-    std::fs::create_dir_all(recent.join("p")).expect("recent claude home");
-    std::fs::write(
-        recent.join("p").join("s.jsonl"),
-        format!(
-            "{{\"type\":\"assistant\",\"uuid\":\"u-now\",\"requestId\":\"req_now\",\
-             \"timestamp\":\"{}\",\"sessionId\":\"s-now\",\"message\":{{\"id\":\"msg_now\",\
-             \"role\":\"assistant\",\"model\":\"claude-sonnet-4-5-20250929\",\
-             \"usage\":{{\"input_tokens\":100000,\"output_tokens\":5000}}}}}}\n",
-            chrono::Utc::now().to_rfc3339()
-        ),
-    )
-    .expect("write recent session");
+    let recent = recent_claude_home(&dir);
     let fixture_claude = PathBuf::from(format!("{fixtures}/claude_home/.claude/projects"));
 
     let run_with = |flag: &str, claude_dir: &Path| -> serde_json::Value {

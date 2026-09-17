@@ -137,5 +137,10 @@ for that too, printed by the same flag with a topic:
 
 - `ai-usage-tui --agent-guide setup` -- set it up for them: the config file and budgets, the
   Claude Code hook and status line, timers, and what each command writes or sends.
+- `ai-usage-tui --agent-guide recipes` -- build on the data: a status-bar module, a budget or
+  rate-limit alert, a weekly digest, a per-project report, rows into SQLite; what is stable enough
+  to script against and what is not.
+- `ai-usage-tui --agent-guide extend` -- cover what it lacks: usage from a tool it does not read,
+  through `--record-event`, or a change to the source.
 
 If the flag rejects a topic, the installed version predates it: say so, and that upgrading adds it.
