@@ -839,27 +839,42 @@ fn every_channel_points_at_the_homepage() {
 #[test]
 fn the_agent_integration_names_only_flags_that_exist() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let help = ai_usage_tui::cli::command().render_long_help().to_string();
-    for relative in [
-        "contrib/claude-code/plugin/skills/ai-usage/SKILL.md",
-        "contrib/agents/README.md",
-        "docs/agent-guide.md",
+    // The parser's own list, matched exactly. This was `--help` searched for a substring, which
+    // accepted `--record` because `--record-ollama` exists.
+    let flags = parser_long_flags();
+    // Flags of other programs these files quote in their commands. Named, so that a typo in one
+    // of ours cannot hide as "probably cargo's".
+    const FOREIGN: &[&str] = &[
+        "--locked",
+        "--all-targets",
+        "--all-features",
+        "--check",
+        "--no-deps",
+    ];
+    // What an agent is handed, and whether it is an *entry point* -- a file installed or pasted
+    // somewhere, which must send its reader to the guide that matches the installed version.
+    for (relative, entry_point) in [
+        ("contrib/claude-code/plugin/skills/ai-usage/SKILL.md", true),
+        ("contrib/agents/README.md", true),
+        ("docs/agent-guide.md", false),
+        ("AGENTS.md", true),
+        (".claude/skills/add-data-source/SKILL.md", false),
     ] {
         let text = std::fs::read_to_string(root.join(relative))
             .unwrap_or_else(|e| panic!("read {relative}: {e}"));
         assert!(
-            text.contains("--agent-guide") || relative == "docs/agent-guide.md",
+            !entry_point || text.contains("--agent-guide"),
             "{relative} does not send the agent to --agent-guide"
         );
         for word in text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-')) {
             // A flag starts with a letter; `---` is a frontmatter delimiter and `--` a dash.
-            if let Some(flag) = word
+            if word
                 .strip_prefix("--")
-                .filter(|f| f.starts_with(|c: char| c.is_ascii_lowercase()))
+                .is_some_and(|f| f.starts_with(|c: char| c.is_ascii_lowercase()))
             {
                 assert!(
-                    help.contains(&format!("--{flag}")),
-                    "{relative} names --{flag}, which --help does not list"
+                    flags.contains(word) || FOREIGN.contains(&word),
+                    "{relative} names {word}, which is not a flag of this tool"
                 );
             }
         }

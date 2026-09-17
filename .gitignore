@@ -23,3 +23,6 @@ dist/
 
 # Worktrees the Claude Code harness creates for isolated agents; never part of the tree.
 .claude/worktrees/
+# One developer's permission allowlist for this checkout. Project skills under .claude/skills/ are
+# committed; this is not.
+.claude/settings.local.json

@@ -195,6 +195,81 @@ fn hermetic_pins_every_registered_source() {
     );
 }
 
+/// The arguments of a documented `cargo run --locked -- …` command, continuation lines joined.
+fn documented_run_args(text: &str, opening: &str) -> Vec<String> {
+    let start = text
+        .find(opening)
+        .unwrap_or_else(|| panic!("no command starting {opening:?}"));
+    let mut command = String::new();
+    for line in text[start..].lines() {
+        let line = line.trim();
+        command.push_str(line.trim_end_matches('\\'));
+        command.push(' ');
+        if !line.ends_with('\\') {
+            break;
+        }
+    }
+    command
+        .split_whitespace()
+        .skip_while(|word| *word != "--")
+        .skip(1)
+        .filter(|word| !word.starts_with("{{"))
+        .map(str::to_string)
+        .collect()
+}
+
+/// The two commands the project tells a contributor to run against the fixture pin every source.
+///
+/// `CONTRIBUTING.md` and `just run` each carry a hand-written list of root flags and call the
+/// result hermetic. Both predate Copilot and Gemini and neither was updated for them, so the
+/// documented "fixture-only" run printed the reader's own rows. The commands are run as written,
+/// with the action swapped for `--doctor`, which says where each source resolved.
+#[test]
+fn documented_fixture_commands_pin_every_source() {
+    let root = env!("CARGO_MANIFEST_DIR");
+    let read = |name: &str| std::fs::read_to_string(format!("{root}/{name}")).expect(name);
+    for (name, opening) in [
+        ("CONTRIBUTING.md", "cargo run --locked -- --json"),
+        ("justfile", "cargo run --locked -- --db"),
+    ] {
+        let args: Vec<String> = documented_run_args(&read(name), opening)
+            .into_iter()
+            .filter(|arg| arg != "--json")
+            .collect();
+        assert!(
+            args.len() >= 10,
+            "{name}: did not find the command: {args:?}"
+        );
+        let output = bin()
+            .current_dir(root)
+            .arg("--doctor")
+            .args(&args)
+            // The config file and the pricing cache are not sources a flag names; pinned here
+            // so the run is about the flags.
+            .env("XDG_CONFIG_HOME", "/nonexistent/config-home")
+            .env("XDG_DATA_HOME", "/nonexistent/data-home")
+            .env_remove("CLAUDE_CONFIG_DIR")
+            .env_remove("CLAUDE_PROJECTS_DIR")
+            .output()
+            .expect("run --doctor");
+        assert!(
+            output.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8(output.stdout).expect("utf8");
+        for id in ai_usage_tui::collector::registry::ids() {
+            let line = source_line(&text, id)
+                .unwrap_or_else(|| panic!("{name}: --doctor has no line for {id}:\n{text}"));
+            assert!(
+                line.contains("/nonexistent") || line.contains("tests/fixtures/"),
+                "{name}: the documented fixture command does not pin {id}, so it reads the \
+                 reader's own data:\n{line}"
+            );
+        }
+    }
+}
+
 /// A refreshed pricing cache the engine refuses is named, with why, where the user looks.
 #[test]
 fn doctor_reports_a_pricing_cache_it_could_not_use() {

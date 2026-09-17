@@ -1,6 +1,6 @@
 # AGENTS.md
 
-## Cursor Cloud specific instructions
+## Working in this repository
 
 `ai-usage-tui` is a single Rust (edition 2021) CLI/TUI product — a btop-style dashboard for AI token usage. There is no server, no web frontend, and no external service to run; it is a client-side binary that reads local SQLite data sources. Standard dev commands live in the `justfile` (`just check` runs exactly what CI runs, in CI's order); the raw equivalents are in `CONTRIBUTING.md` and `.github/workflows/ci.yml` — plain `cargo` (`cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features --locked -- -D warnings`, `cargo test --all-targets --locked`, `cargo build --locked`).
 
@@ -15,3 +15,19 @@ Non-obvious caveats:
 - `ai-usage-tui --doctor` prints what every data source resolved to — path searched, rows found, billing decision — without starting the dashboard. Fastest way to check a collector change, and the first thing to ask a bug reporter for.
 - Data sources are registered once in `src/collector/registry.rs`; both the one-shot read and the background collectors iterate it, and a test fails the build if a source is reachable from only one.
 - `AI_USAGE_LOG=1` (or a path) writes collector diagnostics to a file. The dashboard holds the alternate screen, so stderr is invisible while it runs.
+
+## Extending it
+
+Someone asking you to "make it support X" or "make it show Y" wants one of three things, cheapest first. Pick the cheapest that does the job.
+
+- **No code here at all.** A tool that logs its own token counts goes through `ai-usage-tui --record-event` and a few lines of `jq`; a status bar, a digest or an alert is a script over `--summary-json`. `ai-usage-tui --agent-guide` is the entry point for both and matches the installed version.
+- **A new data source, panel or price.** `CONTRIBUTING.md` ("Common contributions") has the file-by-file list, and `.claude/skills/add-data-source/` the order to work in. Most of the list is enforced: make the change, run the tests, and let what fails tell you what is missing.
+- **A change to a stable surface** — a flag, a JSON key, a config key, a journal column, an exit code. Read `docs/stability.md` first; additive is a minor release, anything else is breaking.
+
+Rules that outrank the request:
+
+- **Never invent a number.** No token count derived from message length, no absent count read as `0`, no unknown cost rendered as `$0.00`. If the tool does not measure it, there is no row — the README's "Why there is no Cursor collector" is the worked example, and refusing is a complete answer.
+- **Work from bytes the tool really wrote.** A parser written from documentation has been wrong every time here. Capture real output, redact it, commit it under `tests/fixtures/`, and measure your rule against it before relying on it. Never commit an unredacted capture: transcripts hold source code and secrets, and only the usage block may be parsed.
+- **A test must fail against the bug it is for.** Restore the bug in a scratch copy and watch it fail before you trust it. A guard that iterates the registry, the bindings table or the parser beats a list written into the test.
+- **A failure must be visible.** `unwrap_or_default()` on a read, `Err(_) => continue`, a skipped row nobody counts: each renders "broken" as "nothing to report". Count what was skipped and surface it (`collector::skipped`).
+- **New work gets an entry under `## [Unreleased]` in `CHANGELOG.md`**, saying what was wrong or missing and why it matters, not only what changed.

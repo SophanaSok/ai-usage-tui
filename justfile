@@ -66,11 +66,13 @@ deny:
 
 # Run the dashboard against the committed fixture, hermetically.
 #
-# Without these overrides the dashboard reads your real ~/.claude/projects, ~/.codex, Omarchy
-# records and usage journal. The fixture's timestamps are from 2023, so --all is the range that shows anything.
+# Without these overrides the dashboard reads your real ~/.claude/projects, ~/.codex, ~/.copilot,
+# ~/.gemini, Omarchy records and usage journal. The fixture's timestamps are from 2023, so --all is
+# the range that shows anything. A test holds this list to the source registry.
 run *ARGS:
     cargo run --locked -- --db tests/fixtures/opencode_test.db --all \
-        --claude-dir /nonexistent --codex-dir /nonexistent --omarchy-dir /nonexistent \
+        --claude-dir /nonexistent --codex-dir /nonexistent --copilot-dir /nonexistent \
+        --gemini-dir /nonexistent --omarchy-dir /nonexistent \
         --journal /nonexistent/journal.db {{ARGS}}
 
 # What every data source resolved to on this machine. Reads your real paths, on purpose.

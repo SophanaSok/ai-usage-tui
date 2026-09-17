@@ -1,5 +1,5 @@
 name: Support another tool's usage data
-description: Ask for a new collector — Codex, Gemini CLI, Aider, or anything else.
+description: Ask for a new collector — Aider, Cline, Goose, or anything else not yet read.
 labels: [enhancement, collector]
 body:
   - type: markdown
@@ -15,7 +15,7 @@ body:
     id: tool
     attributes:
       label: Which tool
-      placeholder: OpenAI Codex CLI
+      placeholder: Aider
     validations:
       required: true
   - type: textarea
@@ -23,7 +23,7 @@ body:
     attributes:
       label: Where does it store usage data
       description: Paths, and whether it is SQLite, JSONL, JSON, or something else.
-      placeholder: "~/.codex/sessions/*.jsonl — one JSON object per line"
+      placeholder: "~/.mytool/usage.jsonl — one JSON object per line"
     validations:
       required: true
   - type: textarea

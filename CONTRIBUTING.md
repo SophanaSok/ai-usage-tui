@@ -5,9 +5,10 @@ readable end to end in an afternoon.
 
 ## What this project is
 
-A terminal dashboard that reads AI token usage from local sources — OpenCode's SQLite database,
-Claude Code's session logs, Codex CLI's session logs, a local journal — and reports what it cost. It is a **read-only,
-local-first** tool: no server, no telemetry, no account.
+A terminal dashboard that reads AI token usage from local sources — the stores and logs that
+OpenCode, Claude Code, Codex CLI, GitHub Copilot and Gemini CLI keep, and a local journal for
+everything else — and reports what it cost. It is a **read-only, local-first** tool: no server,
+no telemetry, no account.
 
 Two things make it different from the several similar tools, and both are worth preserving:
 
@@ -49,13 +50,15 @@ another. CI passes it on every command above, which also makes a dependency PR t
 
 ```sh
 cargo run --locked -- --json --db tests/fixtures/opencode_test.db --all \
-  --claude-dir /nonexistent --codex-dir /nonexistent --omarchy-dir /nonexistent \
-  --journal /nonexistent/journal.db
+  --claude-dir /nonexistent --codex-dir /nonexistent --copilot-dir /nonexistent \
+  --gemini-dir /nonexistent --omarchy-dir /nonexistent --journal /nonexistent/journal.db
 ```
 
 The fixture database has 2023-era timestamps, so `--today` and `--week` show nothing. Use
-`--all`. Pass `--claude-dir`, `--codex-dir`, `--omarchy-dir` and `--journal` explicitly or you
-will read your own `~/.claude/projects`, `~/.codex`, Omarchy records and usage journal.
+`--all`. Every source root is passed explicitly, or the run reads your own `~/.claude/projects`,
+`~/.codex`, `~/.copilot`, `~/.gemini`, Omarchy records and usage journal. `just run` passes the
+same set, and a test holds both to the registry: a source added without being pinned here fails
+`documented_fixture_commands_pin_every_source`.
 
 `--doctor` prints what every source resolved to — path searched, rows found, billing decision —
 without starting the dashboard. It is the fastest way to check that a collector change reads
@@ -81,7 +84,27 @@ what you think it reads, and the first thing to ask a bug reporter for.
 
 ### Add support for another tool's usage data
 
-The most valuable contribution, and it is two files.
+The most valuable contribution. Before any Rust, two questions decide whether it is one at all.
+
+**Does the tool record its own token counts?** Look at what it actually writes. If the counts
+are absent, zero, or "best effort", there is nothing to collect, and the answer is the one the
+README gives for Cursor: no row is better than an invented one. Never derive a count from
+message length, and never fill an absent one with `0`.
+
+**Does it need a collector?** A tool whose log a few lines of `jq` can read goes through
+`ai-usage-tui --record-event` today, with no change here (README, "Local models"). A collector
+earns its place when the tool is widely used and keeps a store worth reading incrementally.
+
+If it does, **start from bytes the tool really wrote**, not from its documentation. Capture a
+session, redact it, and commit it under `tests/fixtures/`; the Gemini and Copilot collectors
+were each written from the docs first, and each rested on assumptions that only a real
+capture exposed (`docs/provider-support.md` and `docs/roadmap.md` record them: a shared
+`prompt_id` that would have merged six requests into one, a `turn_index` that was `0` on every
+row). Then measure your parsing rule
+against the capture before you write it down as a rule.
+
+The code is one module and one registry entry, plus the plumbing for a path override, which
+every real source has needed:
 
 **1. `src/collector/yours.rs`** exposing four things:
 
@@ -99,47 +122,67 @@ impl Collector for YoursCollector {
     fn name(&self) -> &str { ID }
     fn interval(&self) -> Duration;
     fn poll(&mut self) -> Result<Vec<Usage>>;
+    fn warning(&self) -> Option<String>;   // what the last poll had to skip
 }
 ```
 
-**2. One entry in `SOURCES`** in [`src/collector/registry.rs`](src/collector/registry.rs).
+The trait is in `src/collector/background.rs`. Three helpers carry the conventions, so use them
+rather than re-deriving them: `helpers::required` for a count the tool always reports (an absent
+one marks the row `Usage::incomplete`, which keeps it and refuses to price it);
+`collector::skipped::Skipped` for everything a read had to pass over, whose `warning()` and
+`detail()` are what reach the status line and `--doctor`; and an `event_id` built from the
+tool's own identity for the request — token counts are not an identity. `read` must return `Ok`
+when the tool is simply not installed.
 
-That is the whole list. Both the one-shot path and the background collectors iterate that
-registry, so registering once wires both, and `every_source_is_reachable_from_both_paths` fails
-the build if a source is only half wired. `[collectors.yours]` needs no code: the config table is
-keyed off the registry, and an id that is not a source is rejected with the real ones named.
+**2. One entry in `SOURCES`** in [`src/collector/registry.rs`](src/collector/registry.rs). Both
+the one-shot path and the background collectors iterate it, so registering once wires both.
+`[collectors.yours]` needs no code: the config table is keyed off the registry. The *position*
+matters twice over — it is the order of the header's status line, and the order rows are
+de-duplicated in, first entry winning.
 
-If your source needs a path override, it is more than two files. The full list, in the order it
-is easiest to work through — adding GitHub Copilot in v0.12.0 touched every one of them:
+**3. The path override and what hangs off it.** In the order it is easiest to work through:
 
 | Where | What |
 | --- | --- |
-| `src/collector/mod.rs` | the field on `SourceRoots`, plus its `Default` and `from_cli` arms |
-| `src/cli.rs` | the field on `Cli`, its `Default` arm, the `Args` field clap derives the flag from, the line in `from_parts` (including the `*_set` boolean, which `apply_config` reads to decide whether config may fill it), and the hand-written `ENVIRONMENT:` block in `after_help` |
+| `src/collector/mod.rs` | `pub mod yours;`; the fields on `SourceRoots`, with their `Default`, `from_cli` and `nowhere()` arms; a `yours_decision()` if the tool can be billed two ways |
+| `src/collector/billing.rs` | an arm in `api_env_vars` — the variables whose presence means per-token billing, or an explicit empty arm plus a `SEAT_ONLY` entry in the registry's test if it has no API-key mode |
+| `src/classify.rs` | the provider ids the source emits, in `PAID_PROVIDERS`, if they are billable and not already there |
+| `src/cli.rs` | the fields on `Cli`, their `Default` arms, the `Args` fields clap derives the flags from (the `///` is the `--help` text), the lines in `from_parts` including the `*_set` boolean `apply_config` reads, and the hand-written `ENVIRONMENT:` block in `after_help` |
 | `src/config.rs` | the key on `ConfigFile`, and the `apply_config` block that copies it into `Cli` |
 | `src/main.rs` | an arm in `absence_hint`, or `--doctor` says "absent" with no way to act on it |
+| `src/lib.rs` | the `pub use` of the collector type |
+| `Cargo.toml` | the label in `description`, and its slug in `[package.metadata.identity] topics` |
+| `README.md` | the tagline (it must equal the description), the opening, a `### Label` section under "Data sources", a CLI-reference row per flag, an environment-table row per variable |
+| `tests/cli.rs`, `src/lib.rs`, `src/ui/tests/` | pin the new root wherever a `Cli` or `SourceRoots` is built: `hermetic_with`, `pinned_cli`, and the panel tests' constructors |
+| `examples/render-screenshots.rs`, `scripts/render-readme-screenshots.sh` | require the root, and pass it — three times now something left unpinned has put the author's real data into a README image |
+| `examples/config.toml`, `docs/json-glossary.json`, `docs/provider-support.md`, `docs/agent-guide.md`, the skill's description | the places that name the sources in prose |
 
-Only some of that is enforced. `tests/docs.rs` requires a row in the README's CLI reference table
-for every flag clap parses, and — because it scans all of `src/` for `var`/`var_os` calls — a row
-in the environment table for every variable you read. The `after_help` block and `absence_hint`
-are checked by nothing; a missing arm there is silent.
+**Let the failing tests lead.** Most of that table is enforced, and the suite says what is
+missing in the order you need it: `every_source_is_reachable_from_both_paths` (half-wired, or
+`read` errors on an absent source), `billing_capable_sources_resolve_their_api_key_variables`,
+`hermetic_pins_every_registered_source` (the test harness would read this machine's real data),
+`documented_fixture_commands_pin_every_source`, and in `tests/docs.rs` the README's CLI and
+environment tables, its "Data sources" sections, the tagline, the topics and the glossary's list
+of source ids. `SourceRoots::nowhere()` is a whole struct literal, so a new root is a compile
+error there. What nothing checks: the `after_help` block, `absence_hint`, the screenshot
+scripts, and the prose in the last row.
 
-Two more that are easy to forget and have both gone wrong before. `hermetic_with` in
-`tests/cli.rs` must pin your source at a `no-such-…` fixture path, or the suite reads the
-developer's real data and CI never notices, because a fresh runner has nothing to read.
-`examples/render-screenshots.rs` must require your root for the same reason — twice now, an
-unpinned source put real spend into a README image.
-
-Read `src/collector/claude_code.rs` first — it is the fullest example, including incremental
-tailing and how to parse a file that contains things you must not read.
+Read `src/collector/gemini.rs` first for the shape of a small source, then
+`src/collector/claude_code.rs` for incremental tailing and for how to parse a file that contains
+things you must not read. Your module needs the same test that one has: plant a fake credential
+in the fixture's message content and fail if it reaches a `Usage`.
 
 ### Add a dashboard panel
 
-Write `src/ui/panels/yours.rs` with a single `draw_yours(frame, area, app)`, add a variant to
-`Panel` in `src/ui/app.rs`, a `Binding` to `BINDINGS` in `src/ui/keys.rs` with a
-`hint: Some((key, word))` for the footer, a match arm in `draw`, and a row in the README's panel
-table. That is everything: the event loop, the `?` overlay, `--help` and the footer all read the
-table, `ui::keys::tests` fails without the hint, and `tests/docs.rs` fails without the README row.
+Write `src/ui/panels/yours.rs` with a single `draw_yours(frame, area, app)` and declare it in
+`src/ui/panels/mod.rs`; add a variant to `Panel` in `src/ui/app.rs` (inside the `panels!` list,
+which also generates `Panel::ALL`), a `Binding` to `BINDINGS` in `src/ui/keys.rs` with a
+`hint: Some((key, word))` for the footer, a match arm in `draw` in `src/ui/mod.rs`, and a row in
+the README's panel table. That is everything: the event loop, the `?` overlay, `--help` and the
+footer all read the table. `ui::keys::tests` fails for a panel with no key or no hint, the overlay
+test for one the overlay does not show, the footer tests if the new hint no longer fits 80
+columns, and `tests/docs.rs` without the README row. `Panel::sort_columns` and `default_sort`
+have catch-all arms, so they are optional.
 Anything the panel needs should be computed once per refresh into `DerivedView`, never inside
 the draw call.
 
@@ -149,8 +192,8 @@ Two tables ship in the binary, and only one of them is hand-edited.
 
 | File | What it is | Edit it? |
 | --- | --- | --- |
-| `pricing/litellm.tsv` | ~3,450 keys generated from [LiteLLM's community table](https://github.com/BerriAI/litellm) | **No** — regenerate with `just pricing` |
-| `pricing/zen.toml` | ~60 curated models: Zen-specific ids, stealth models, and anything the community table gets wrong | Yes |
+| `pricing/litellm.tsv` | ~4,600 keys generated from [LiteLLM's community table](https://github.com/BerriAI/litellm) | **No** — regenerate with `just pricing` |
+| `pricing/zen.toml` | ~70 curated models: Zen-specific ids, stealth models, and anything the community table gets wrong | Yes |
 
 `zen.toml` is applied *on top of* `litellm.tsv`, and a refreshed cache on top of that — so a rate
 you write by hand always wins over a community one, whichever is the more specific key. That
@@ -187,16 +230,18 @@ that looked right.
 
 ## Testing
 
-- **Tests must be hermetic.** Anything going through `load_usage` or `print_once` needs an
-  explicit `claude_dir` and `codex_dir`, or it reads the developer's real `~/.claude/projects` and
-  `~/.codex` — and their real `~/.claude.json` for the billing decision. The config document is
+- **Tests must be hermetic.** Anything going through `load_usage` or `print_once` needs *every*
+  source root set explicitly — `claude_dir`, `codex_dir`, `copilot_dir`, `gemini_dir` — or it reads
+  the developer's real `~/.claude/projects`, `~/.codex`, `~/.copilot` and `~/.gemini`, and their
+  real `~/.claude.json` for the billing decision. The config document is
   derived from `claude_dir`, so a fixture root resolves to a file that does not exist; pass
   `claude_json` to plant one. Codex reads no config document; `--codex-dir /nonexistent` suffices.
   The billing decision also reads Omarchy's records, so pass `--omarchy-dir /nonexistent` too,
   and `--journal` — the journal defaults to your own `$XDG_DATA_HOME/ai-usage-tui/usage.db`,
   so without it a machine with any journaled Ollama usage sees `ollama` rows in a run meant
-  to be fixture-only (`tests/cli.rs` `hermetic()` pins all four; lib tests set them on
-  `SourceRoots`).
+  to be fixture-only. `tests/cli.rs` `hermetic()` pins all of it, and
+  `hermetic_pins_every_registered_source` asks the binary whether it missed a source; lib tests
+  use `pinned_cli`, or `SourceRoots::nowhere()` when nothing should be read at all.
 - **`tests/docs.rs` is part of the build.** It fails when the README's CLI, panel or environment
   tables disagree with the code, when the README pins a release other than `Cargo.toml`'s, or when
   anything states the project's identity differently from `Cargo.toml` — the README tagline, the
