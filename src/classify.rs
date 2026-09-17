@@ -319,8 +319,19 @@ mod tests {
         assert_eq!(classify("openrouter", "z-ai/glm-5.2:free"), Category::Free);
         assert_eq!(classify("opencode", "north-mini-code-free"), Category::Free);
 
-        // A model the bundled table lists a rate for is not free whatever else is true of its id.
+        // A model the bundled table says costs money is not free whatever else is true of its id.
         assert!(crate::pricing::bundled_lists_a_rate("claude-sonnet-5"));
+
+        // A rate of 0.0 is the table agreeing the model is free, not contradicting it. The
+        // community table lists this one as `input=0.0 output=0.0`; asking only "is a rate
+        // listed" made it PAID, priced at an estimated $0.00 and counted as billable.
+        assert!(!crate::pricing::bundled_lists_a_rate(
+            "llama-3.3-70b-instruct-turbo-free"
+        ));
+        assert_eq!(
+            classify("together_ai", "llama-3.3-70b-instruct-turbo-free"),
+            Category::Free
+        );
         assert!(
             !crate::pricing::bundled_lists_a_rate("big-pickle"),
             "free in the table"

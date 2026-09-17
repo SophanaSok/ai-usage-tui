@@ -1,0 +1,147 @@
+name: Pricing drift
+
+# The community rate table (`pricing/litellm.tsv`) ships in the binary and is refreshed only when
+# someone runs `just pricing`. The tool now tells a user when their *install's* rates are over 90
+# days old; this is the other end of that promise -- that the table a release is cut from is not
+# stale by neglect.
+#
+# What it does when upstream has moved: regenerates the table, checks that the engine still
+# parses and prices with it, pushes the result to one branch, and opens (or updates) one issue
+# with what changed and a link that opens the pull request.
+#
+# What it deliberately does not do:
+#   - Fail. Upstream changes constantly; `just pricing-check` is kept out of CI for exactly that
+#     reason -- a red build on someone else's commit is noise, not signal.
+#   - Open the pull request itself. A pull request opened with the workflow token gets no CI run
+#     and no review, and creating one needs a repository setting this project leaves off. A human
+#     opening it from the issue's link gets both.
+#   - Touch `pricing/zen.toml`. That table is curated by hand and carries dated `period` records.
+
+on:
+  schedule:
+    # Monthly, the first at 07:00 UTC: well inside the 90 days a user is warned at.
+    - cron: "0 7 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pricing-drift
+  cancel-in-progress: true
+
+env:
+  BRANCH: bot/pricing-refresh
+  LABEL: pricing-drift
+
+jobs:
+  refresh:
+    name: Regenerate the community table
+    # Forks have no business opening issues about this repository's table.
+    if: github.repository == 'SophanaSok/ai-usage-tui'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the refreshed table to one branch
+      issues: write # open or update the one issue
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Is the committed table current?
+        id: check
+        run: |
+          if scripts/refresh-litellm-pricing.py --check; then
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::pricing/litellm.tsv matches upstream; nothing to do."
+          else
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Regenerate and summarise
+        if: steps.check.outputs.stale == 'true'
+        run: |
+          set -euo pipefail
+          cp pricing/litellm.tsv "$RUNNER_TEMP/old.tsv"
+          scripts/refresh-litellm-pricing.py
+          scripts/pricing-drift-summary.py "$RUNNER_TEMP/old.tsv" pricing/litellm.tsv \
+            | tee "$RUNNER_TEMP/summary.md"
+
+      # A table the engine cannot parse, or that stops pricing a model a test pins, must not be
+      # offered for merging. These are the pricing engine's own tests, which include "the
+      # generated community table parses cleanly" and the dated-header check.
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.check.outputs.stale == 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.check.outputs.stale == 'true'
+      - name: The engine still parses and prices with it
+        id: validate
+        if: steps.check.outputs.stale == 'true'
+        # Not fatal here: a table that breaks a test is exactly what someone needs to hear about,
+        # so the issue is still written -- saying so, with no branch to merge -- and the job fails
+        # at the end. Its first dry run is why: a regenerated table exposed a classification bug.
+        continue-on-error: true
+        # A block scalar: `pricing:: classify::` holds a colon-space, which plain YAML reads as a key.
+        run: |
+          cargo test --locked --lib -- pricing:: classify::
+
+      - name: Push the branch
+        if: steps.check.outputs.stale == 'true' && steps.validate.outcome == 'success'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$BRANCH"
+          git add pricing/litellm.tsv
+          git commit -m "chore(pricing): refresh the community table from LiteLLM"
+          # One branch, replaced each run: last month's unmerged refresh is superseded, not stacked.
+          git push --force origin "$BRANCH"
+
+      - name: Open or update the issue
+        if: steps.check.outputs.stale == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATED: ${{ steps.validate.outcome }}
+        run: |
+          set -euo pipefail
+          {
+            echo "\`pricing/litellm.tsv\` has drifted from LiteLLM's table."
+            echo
+            if [ "$VALIDATED" = "success" ]; then
+              echo "The refreshed file is on"
+              echo "[\`$BRANCH\`](https://github.com/$GITHUB_REPOSITORY/tree/$BRANCH), and the pricing"
+              echo "engine's tests pass against it."
+              echo
+              echo "**[Open the pull request](https://github.com/$GITHUB_REPOSITORY/compare/main...$BRANCH?expand=1)**"
+              echo "-- opened by a person so that CI and review run on it, which they would not on one"
+              echo "opened by this workflow. Add a line under \`## [Unreleased]\` in the changelog."
+            else
+              echo "**The pricing engine's tests fail against the regenerated table, so no branch was"
+              echo "pushed.** That is a finding, not noise: either upstream changed shape or the table now"
+              echo "contains a case the code gets wrong. Reproduce with \`just pricing\` and then"
+              echo "\`cargo test --lib -- pricing:: classify::\`; the failing test is in"
+              echo "[this run](https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+            fi
+            echo
+            echo "### What changed"
+            echo
+            cat "$RUNNER_TEMP/summary.md"
+            echo
+            echo "_Run ${GITHUB_RUN_ID}, $(date -u +%Y-%m-%d). The branch is replaced on every run._"
+          } > "$RUNNER_TEMP/body.md"
+
+          gh label create "$LABEL" --color FBCA04 \
+            --description "The bundled community rate table has drifted from upstream" 2>/dev/null || true
+          existing="$(gh issue list --label "$LABEL" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body-file "$RUNNER_TEMP/body.md"
+            echo "::notice::updated issue #$existing"
+          else
+            gh issue create --label "$LABEL" \
+              --title "Pricing: the community rate table has drifted from upstream" \
+              --body-file "$RUNNER_TEMP/body.md"
+          fi
+
+      - name: Fail when the regenerated table broke the engine's tests
+        if: steps.check.outputs.stale == 'true' && steps.validate.outcome != 'success'
+        run: |
+          echo "::error::the pricing engine's tests fail against the regenerated table; see the issue"
+          exit 1

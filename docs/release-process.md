@@ -46,6 +46,17 @@ large ones stuck in `state: starter` -- a state `gh release view` does not show;
 
 Release artifacts must include the binary, README, and LICENSE. The project should not require Rust to run a published binary.
 
+## Keeping the rates fresh
+
+The community rate table (`pricing/litellm.tsv`) ships in the binary and changes only when
+someone regenerates it. `.github/workflows/pricing-drift.yml` checks monthly (and on
+`workflow_dispatch`): when upstream has moved it regenerates the table, runs the pricing engine's
+tests against it, pushes `bot/pricing-refresh` and opens or updates one issue labelled
+`pricing-drift` with what changed and a link that opens the pull request. Open it yourself -- a
+pull request opened by the workflow token would get no CI run -- add a changelog line, and merge
+before cutting a release. If the issue says the tests **failed**, no branch was pushed: run
+`just pricing` and `cargo test --lib -- pricing:: classify::` locally and fix what it found.
+
 ## First publish
 
 Three one-time steps that need accounts and tokens rather than code. Everything in the repository

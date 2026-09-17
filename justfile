@@ -93,7 +93,8 @@ pricing:
     scripts/refresh-litellm-pricing.py
 
 # Fail if the committed pricing snapshot has drifted from upstream. Not in CI: upstream changes
-# constantly and a red build on someone else's commit is noise, not signal.
+# constantly and a red build on someone else's commit is noise, not signal. The monthly
+# `pricing-drift.yml` job does the asking instead, and opens an issue rather than going red.
 pricing-check:
     scripts/refresh-litellm-pricing.py --check
 
