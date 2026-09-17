@@ -11,7 +11,7 @@
   "enums": {
     "category": {
       "LOCAL": "Ran on a local endpoint. Genuinely zero cost.",
-      "FREE": "A model explicitly identified as free. Genuinely zero cost.",
+      "FREE": "A model the pricing table marks free, or whose id ends in a provider's documented free suffix (-free, :free) and that the table lists no rate for. Genuinely zero cost.",
       "PAID": "A provider that bills per token, including aggregators and clouds. Whether a rate is known is cost_status.",
       "CLOUD": "Hosted or cloud-routed usage without an authoritative cost.",
       "UNKNOWN": "Provider not recognised as billing per token."
@@ -23,7 +23,7 @@
       "free": "Explicitly free. Cost is a real 0.",
       "local": "Local model. Cost is a real 0.",
       "quota": "Billed against a subscription plan. Real cost, no per-request figure: cost is null.",
-      "unavailable": "Should carry a price and no rate is known: cost is null."
+      "unavailable": "Should carry a price and has none: no rate is known for the model, or the record was missing a token count and was not priced from the rest. cost is null."
     },
     "billing": {
       "per_token": "Paid per token (an API key).",
@@ -242,7 +242,7 @@
             "present": { "type": "boolean", "meaning": "Whether anything was there to read." },
             "rows": { "type": "integer", "meaning": "Rows read, before cross-source deduplication." },
             "path": { "type": "string|null", "meaning": "Where it was looked for." },
-            "status": { "type": "string", "meaning": "One-line status, including data that had to be skipped." },
+            "status": { "type": "string", "meaning": "One-line status, including data that was skipped, records missing a token count (kept, unpriced) and records with no timestamp (in no range but --all)." },
             "detail": { "type": "string|null", "meaning": "How billing was decided for this source, or why it is off." }
           }
         },
@@ -387,6 +387,7 @@
             "category": { "type": "string", "enum": "category", "meaning": "The category." },
             "cost_status": { "type": "string", "enum": "cost_status", "meaning": "The cost status." },
             "billing": { "type": "string", "enum": "billing", "meaning": "How the request was paid for." },
+            "incomplete": { "type": "boolean", "meaning": "true when the source record lacked a token count it always carries (a format change upstream). The zero beside it is then not recorded, not zero, and the row is never priced." },
             "requests": { "type": "integer", "meaning": "Usually 1." },
             "input_tokens": { "type": "integer", "meaning": "Uncached prompt tokens." },
             "output_tokens": { "type": "integer", "meaning": "Completion tokens." },

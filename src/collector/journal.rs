@@ -131,6 +131,8 @@ fn usage_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Usage> {
             created: row.get(11)?,
             session_id: None,
             project: None,
+            // The recorders refuse a response with no usage, so a journaled row is whole.
+            incomplete: false,
         })
     }
 }
@@ -187,6 +189,24 @@ fn read_json_events(input: &str) -> Result<(Vec<Value>, usize)> {
         invalid_lines = 0;
     }
     Ok((events, invalid_lines))
+}
+
+/// The time of recording, for an event that carries no time of its own -- and a note saying so.
+///
+/// A recorder is piped a response as it completes, so "now" is a fair reading of when it
+/// happened, and it is what these three paths have always stamped. But it was stamped in silence,
+/// and it is not the same fact: a file of old responses replayed through a recorder lands, all of
+/// it, on today. Said once per process on stderr, which for a recorder is the caller's terminal
+/// or its hook log, never the dashboard.
+fn recorded_now() -> i64 {
+    static NOTED: std::sync::Once = std::sync::Once::new();
+    NOTED.call_once(|| {
+        eprintln!(
+            "note: no timestamp in the input; stamped with the time of recording. \
+             Replaying old responses this way dates them today."
+        );
+    });
+    now()
 }
 
 /// The journal schema this build writes, stored in SQLite's `PRAGMA user_version`.
@@ -387,7 +407,7 @@ pub fn record_ollama(path: &Path) -> Result<()> {
         let created = created_at
             .as_deref()
             .and_then(parse_created_at)
-            .unwrap_or_else(now);
+            .unwrap_or_else(recorded_now);
         recorded += insert_event(
             &conn,
             &JournalEvent {
@@ -470,7 +490,7 @@ pub(crate) fn record_usage_events(path: &Path, provider: &str, events: &[Value])
     let prompt = number(usage, &["prompt_tokens"]);
     let cache_read = number(&usage["prompt_tokens_details"], &["cached_tokens"]);
     let created = match number(json, &["created"]) {
-        0 => now(),
+        0 => recorded_now(),
         seconds => crate::collector::opencode::timestamp_seconds(seconds as i64),
     };
     // `id` is the server's own idempotency key. Without one, the shape of the response has to
@@ -627,7 +647,7 @@ pub(crate) fn record_routing_event(path: &Path, json: &Value) -> Result<usize> {
     let created = json
         .get("created")
         .and_then(Value::as_i64)
-        .unwrap_or_else(now);
+        .unwrap_or_else(recorded_now);
 
     // The emitter's identity if it gave one. The derived form collapses two events for the same
     // task in the same second into one, and an emitter had no way around that before. An empty

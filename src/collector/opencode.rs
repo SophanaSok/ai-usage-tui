@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::classify::classify;
 use crate::collector::background::Collector;
 use crate::collector::skipped::Skipped;
-use crate::helpers::{number, string};
+use crate::helpers::{number, required, string};
 use crate::model::{Category, CostStatus, Usage};
 use crate::utils::db_path;
 use std::path::PathBuf;
@@ -169,14 +169,19 @@ pub fn load_opencode_since(
         } else {
             cost
         };
+        // An assistant message's `tokens` always carries `input` and `output`; absent is a format
+        // change, not a zero. OpenCode's own `cost`, when it reports one, is still its fact.
+        let mut incomplete = false;
+        let input = required(tokens, &["input", "inputTokens"], &mut incomplete);
+        let output = required(tokens, &["output", "outputTokens"], &mut incomplete);
         let usage = Usage {
             event_id: string(info, &["id", "messageID", "message_id"]),
             provider: provider.clone(),
             model: model.clone(),
             category,
             requests: 1,
-            input: number(tokens, &["input", "inputTokens"]),
-            output: number(tokens, &["output", "outputTokens"]),
+            input,
+            output,
             reasoning: number(tokens, &["reasoning", "reasoningTokens"]),
             cache_read: number(cache, &["read", "readTokens"]),
             cache_write: number(cache, &["write", "writeTokens"]),
@@ -187,7 +192,13 @@ pub fn load_opencode_since(
             created: timestamp_seconds(created),
             session_id: string(info, &["sessionID", "session_id"]),
             project: None,
+            incomplete,
         };
+        // The boundary row is re-read every poll on purpose; count it the once, as for a
+        // malformed one.
+        if previous_high_water.is_none_or(|mark| created > mark) {
+            cursor.skipped.note(&usage);
+        }
         usages.push(usage);
     }
     let mut status = format!("OpenCode: {}", path.display());
@@ -426,6 +437,49 @@ mod tests {
         assert!(
             status.ends_with("· 1 malformed record(s) skipped"),
             "{status}"
+        );
+    }
+
+    /// A message whose `tokens` lacks `output` is kept and flagged, once -- the boundary row is
+    /// re-read every poll -- and OpenCode's own reported cost on it is still OpenCode's fact.
+    #[test]
+    fn a_message_missing_a_token_count_is_flagged_once() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = dir.path().join("opencode.db");
+        seed_db(&db, &[("m1", 1_700_000_000)]);
+        rusqlite::Connection::open(&db)
+            .unwrap()
+            .execute(
+                "INSERT INTO message (data, time_created) VALUES (?1, 1700000060)",
+                [r#"{"info":{"id":"m2","role":"assistant","providerID":"opencode","modelID":"claude-sonnet-4.6","cost":0.02,"cost_source":"provider_reported","tokens":{"input":100,"cache":{"read":0,"write":0}}}}"#],
+            )
+            .unwrap();
+
+        let mut collector = OpenCodeCollector {
+            db_path: Some(db),
+            interval_secs: 30,
+            cursor: Cursor::start(),
+        };
+        let rows = collector.poll().unwrap();
+        let flagged = rows
+            .iter()
+            .find(|u| u.event_id.as_deref() == Some("m2"))
+            .unwrap();
+        assert!(flagged.incomplete);
+        assert_eq!(
+            flagged.cost,
+            Some(0.02),
+            "a provider's reported cost is not ours to discard"
+        );
+        assert!(!rows
+            .iter()
+            .any(|u| u.event_id.as_deref() == Some("m1") && u.incomplete));
+        for _ in 0..3 {
+            collector.poll().unwrap();
+        }
+        assert_eq!(
+            collector.warning().as_deref(),
+            Some("1 record(s) missing a token count, left unpriced")
         );
     }
 

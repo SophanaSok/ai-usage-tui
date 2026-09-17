@@ -46,7 +46,7 @@ use crate::collector::billing::{detect, resolve_sticky, BillingSetting, Signals}
 use crate::collector::claude_code::{normalize_project_path, session_files};
 use crate::collector::opencode::parse_created_at;
 use crate::collector::skipped::Skipped;
-use crate::helpers::{number, string};
+use crate::helpers::{number, required, string};
 use crate::model::{CostStatus, Usage};
 use crate::utils::home_dir;
 use std::time::Duration;
@@ -198,6 +198,9 @@ fn read_rollout(path: &Path, cursors: &mut Cursors, decision: &Decision) -> Resu
     for _ in 0..malformed {
         cursors.skipped.malformed();
     }
+    for usage in &usages {
+        cursors.skipped.note(usage);
+    }
     Ok(usages)
 }
 
@@ -278,12 +281,17 @@ fn parse_value(
         cursor.last_total = Some(total);
     }
 
+    // `input_tokens` and `output_tokens` are on every `last_token_usage` the CLI writes --
+    // including the post-compaction estimate, which carries them as zeros. Absent is a format
+    // change, not a zero.
+    let mut incomplete = false;
     let cache_read = number(last, &["cached_input_tokens"]);
-    let input = number(last, &["input_tokens"]).saturating_sub(cache_read);
+    let input = required(last, &["input_tokens"], &mut incomplete).saturating_sub(cache_read);
     let reasoning = number(last, &["reasoning_output_tokens"]);
-    let output = number(last, &["output_tokens"]).saturating_sub(reasoning);
-    // A post-compaction estimate has a total and nothing else; it is not a billed call.
-    if input == 0 && output == 0 && reasoning == 0 && cache_read == 0 {
+    let output = required(last, &["output_tokens"], &mut incomplete).saturating_sub(reasoning);
+    // A post-compaction estimate has a total and nothing else; it is not a billed call. One whose
+    // fields are gone is a call of unknown size, and is kept and flagged.
+    if input == 0 && output == 0 && reasoning == 0 && cache_read == 0 && !incomplete {
         return None;
     }
 
@@ -325,6 +333,7 @@ fn parse_value(
             .clone()
             .or_else(|| session_id_from_filename(path)),
         project: cursor.cwd.as_deref().map(normalize_project_path),
+        incomplete,
     })
 }
 
@@ -634,6 +643,25 @@ mod tests {
             Some("1 file(s) unreadable, 1 malformed record(s) skipped"),
             "a retry must not count the malformed line twice"
         );
+    }
+
+    /// `output_tokens` gone from `last_token_usage` is a format change: the call is kept and
+    /// flagged. The post-compaction estimate carries the fields as zeros and is still dropped.
+    #[test]
+    fn a_call_missing_a_token_count_is_flagged_and_a_compaction_estimate_is_still_dropped() {
+        let renamed = COUNT_1.replacen(
+            r#""output_tokens":340,"reasoning_output_tokens":100,"total_tokens":1540},"model_context_window""#,
+            r#""completion_tokens":340,"reasoning_output_tokens":100,"total_tokens":1540},"model_context_window""#,
+            1,
+        );
+        assert_ne!(renamed, COUNT_1, "the fixture line changed shape");
+        let rows = parse_all(&[META, TURN, &renamed]);
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].incomplete);
+        assert!(parse_all(&[META, TURN, COUNT_1])
+            .iter()
+            .all(|u| !u.incomplete));
+        assert!(parse_all(&[META, TURN, COMPACTION_ESTIMATE]).is_empty());
     }
 
     #[test]

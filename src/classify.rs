@@ -114,8 +114,17 @@ fn is_free_model(model: &str) -> bool {
     if crate::pricing::bundled_free_models().contains(model) {
         return true;
     }
-    // Zen names its free tier with a trailing `-free` segment.
-    model.ends_with("-free") || has_token(model, "free")
+    // The pricing table outranks a name. `FREE` means `$0.00` with no lookup at all, so a model
+    // the table lists a rate for is not free however it is spelled -- a free SKU that starts
+    // billing keeps its id.
+    if crate::pricing::bundled_lists_a_rate(model) {
+        return false;
+    }
+    // What is left is a name, and a name is evidence only where a provider has made it a
+    // contract: Zen's free tier ends in `-free`, OpenRouter's in `:free`. It used to be any
+    // `free` token anywhere in the id, which called `free-tier-preview` on an unrecognised
+    // provider zero-cost with nothing but its spelling to go on.
+    model.ends_with("-free") || model.ends_with(":free")
 }
 
 pub fn category_from_label(label: &str) -> Category {
@@ -295,6 +304,28 @@ mod tests {
         // Being wrongly marked FREE excludes a model from every cost total: invisible spend.
         assert_ne!(classify("openai", "freeform-writer"), Category::Free);
         assert_eq!(classify("opencode", "north-mini-code-free"), Category::Free);
+    }
+
+    /// `FREE` asserts `$0.00` with no lookup, so the name has to be a provider's documented
+    /// convention and the pricing table has to agree. Restore `has_token(model, "free")` and the
+    /// first assertion fails; remove the table check and the last one does.
+    #[test]
+    fn a_name_is_evidence_of_free_only_as_a_documented_suffix_the_table_does_not_contradict() {
+        assert_ne!(
+            classify("some-startup", "free-tier-preview"),
+            Category::Free
+        );
+        assert_ne!(classify("some-startup", "gpt-free-form-2"), Category::Free);
+        assert_eq!(classify("openrouter", "z-ai/glm-5.2:free"), Category::Free);
+        assert_eq!(classify("opencode", "north-mini-code-free"), Category::Free);
+
+        // A model the bundled table lists a rate for is not free whatever else is true of its id.
+        assert!(crate::pricing::bundled_lists_a_rate("claude-sonnet-5"));
+        assert!(
+            !crate::pricing::bundled_lists_a_rate("big-pickle"),
+            "free in the table"
+        );
+        assert!(!crate::pricing::bundled_lists_a_rate("no-such-model-free"));
     }
 
     #[test]

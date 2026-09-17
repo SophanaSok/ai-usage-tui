@@ -21,7 +21,9 @@ One line of JSON, roughly 25-35 KB: `totals`, then the same bucket shape `by_cat
 your context window. Use it only after narrowing (step 2).
 
 Check `sources` first. A source with `present: false` was not found; `status` says when data had
-to be skipped; `detail` says how billing was decided. If the summary looks empty or wrong,
+to be skipped, when records were missing a token count (they are kept and left unpriced, so
+`unpriced_requests` rises and token totals are a minimum) and when records had no timestamp (they
+appear only under `--all`); `detail` says how billing was decided. If the summary looks empty or wrong,
 `ai-usage-tui --doctor` prints the same diagnosis for a human.
 
 ## 2. Drill down instead of pulling rows

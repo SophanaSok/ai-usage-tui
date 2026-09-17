@@ -168,6 +168,10 @@ pub fn parse_record(value: &Value, decision_billing: Billing) -> Option<Usage> {
     // disjoint, so pricing a cache read at the cache rate does not also bill it as fresh input.
     // Saturating, because a record that reports more cache than prompt is malformed and must
     // not wrap into an enormous input count.
+    // Every `api_response` record carries both counts; absent is a format change, not a zero.
+    let incomplete = ["input_token_count", "output_token_count"]
+        .iter()
+        .any(|key| attributes.get(*key).and_then(Value::as_i64).is_none());
     let prompt = count("input_token_count");
     let cache_read = count("cached_content_token_count").min(prompt);
     let input = prompt.saturating_sub(cache_read);
@@ -203,6 +207,7 @@ pub fn parse_record(value: &Value, decision_billing: Billing) -> Option<Usage> {
         // available for this source. Left `None` rather than guessed from the process's cwd,
         // which is where the *dashboard* is running, not where the work happened.
         project: None,
+        incomplete,
     };
 
     if usage.input == 0 && usage.output == 0 && usage.reasoning == 0 && usage.cache_read == 0 {
@@ -277,6 +282,7 @@ pub fn load_gemini(
         match serde_json::from_str::<Value>(object) {
             Ok(value) => {
                 if let Some(usage) = parse_record(&value, billing) {
+                    offsets.skipped.note(&usage);
                     usages.push(usage);
                 }
             }
@@ -650,6 +656,23 @@ mod tests {
             offsets.skipped.warning().as_deref(),
             Some("1 malformed record(s) skipped")
         );
+    }
+
+    /// An `api_response` without `output_token_count` is kept and flagged, not read as a
+    /// response that produced nothing.
+    #[test]
+    fn a_response_missing_a_token_count_is_flagged() {
+        let whole: Value =
+            serde_json::from_str(&record("p-1", "2026-08-24T10:00:00.000Z", "")).unwrap();
+        assert!(!parse_record(&whole, Billing::PerToken).unwrap().incomplete);
+
+        let mut renamed = whole.clone();
+        let attributes = renamed["attributes"].as_object_mut().unwrap();
+        let count = attributes.remove("output_token_count").unwrap();
+        attributes.insert("candidates_token_count".into(), count);
+        let usage = parse_record(&renamed, Billing::PerToken).expect("kept");
+        assert!(usage.incomplete);
+        assert_eq!(usage.output, 0);
     }
 
     #[test]

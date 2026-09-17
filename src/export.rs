@@ -108,6 +108,9 @@ pub fn print_once(cli: &Cli) -> Result<()> {
                     // How the request was paid for. Decided per source and until now visible only
                     // in `--doctor`'s text, although it is what makes a row `quota`.
                     "billing": usage.billing.label(),
+                    // True when the source record lacked a token count it always carries: the
+                    // zeros beside it are then "not recorded", and the row is never priced.
+                    "incomplete": usage.incomplete,
                     "created": usage.created,
                     "project": usage.project,
                     "session_id": usage.session_id,
