@@ -21,7 +21,11 @@
      because the build had no `--target`)
    - Windows: `-x86_64-windows.zip`
    - Packages: `-amd64.deb`, `-arm64.deb`, `-amd64.rpm`, `-arm64.rpm`
-7. CI generates `checksums.txt` (SHA256) and creates a GitHub Release with all artifacts.
+7. CI generates `checksums.txt` (SHA256) and publishes the GitHub Release through
+   `scripts/publish-release.sh`: it creates the release as a draft, uploads the fifteen assets one
+   at a time, confirms each against the API (`state: uploaded`, and the size on disk), retries one
+   that is stuck, and makes the release public only once every asset is confirmed. The dry run
+   runs the same script's `--plan`, which checks the asset list without uploading.
 8. Packaging manifests (Homebrew, Scoop, Chocolatey) are **rendered by the release job** from the
    real artifact names and checksums and attached to the release. They are not hand-edited; a
    missing checksum fails the job rather than shipping a placeholder. The Chocolatey pair keeps
@@ -31,6 +35,14 @@
    *First publish* below.
 9. Verify the published artifacts independently: architecture with `file`, checksums, `.deb`/`.rpm`
    contents with `bsdtar`, and the Homebrew sha256 against the downloaded tarball.
+
+**If the publish step fails**, nothing downstream has run: `publish-crate` and `update-taps` need
+the release job to succeed, and the release is still a draft. Re-run the failed jobs
+(`gh run rerun <run-id> --failed`); the script reuses the draft and replaces its assets. It was
+written after v0.17.0, when the previous action uploaded every asset at once and GitHub left the
+large ones stuck in `state: starter` -- a state `gh release view` does not show; list them with
+`gh api repos/SophanaSok/ai-usage-tui/releases/<id>/assets`. Should that ever recur past the retries,
+`gh release delete vX.Y.Z --yes` removes the draft and keeps the tag, and a re-run starts clean.
 
 Release artifacts must include the binary, README, and LICENSE. The project should not require Rust to run a published binary.
 

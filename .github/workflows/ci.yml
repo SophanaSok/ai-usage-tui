@@ -96,6 +96,13 @@ jobs:
         # used to be a 20-line Python heredoc here, which `just check` did not run at all.
         run: python3 scripts/check-markdown-links.py .
 
+      - name: Release scripts
+        # The release job's publish step is a shell script, and a tag push is its only real run.
+        # This is where it is tested -- against a fake `gh` and `curl` -- before a release needs it.
+        run: |
+          shellcheck scripts/*.sh
+          scripts/test-publish-release.sh
+
   audit:
     name: Advisories
     runs-on: ubuntu-latest

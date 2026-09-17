@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Release assets are uploaded one at a time, each confirmed before the release goes public.**
+  `softprops/action-gh-release` uploaded all fifteen at once, and on v0.17.0 GitHub left the
+  multi-megabyte ones stuck half-finished (`state: starter`), which a same-name upload cannot
+  replace -- each re-run deleted and re-uploaded everything and left more stuck, one then three then
+  five, until the draft was deleted by hand. `scripts/publish-release.sh` now creates a draft,
+  uploads serially through the REST endpoint, checks every asset's state and size against the API,
+  deletes a stuck one before retrying with backoff, and publishes only when all are confirmed. The
+  dry run checks the same asset list. It is tested against a fake `gh` and `curl` in CI, where
+  removing the stuck-asset deletion or letting a failed asset check fall through both fail the test.
+
 ## [0.17.0] - 2026-09-17
 
 ### Added
