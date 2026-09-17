@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-09-17
+
 ### Added
 
 - **Releases are attested, and ship a bill of materials.** A checksum proves a download is the
