@@ -341,6 +341,11 @@ subscription; otherwise per-token, with a visible "billing unknown" hint. Per-to
 priced `estimated` as before. Subscription rows carry `cost_status = quota`,
 `cost = null`, and the list-rate figure as `api_equivalent_cost`.
 
+The decision is printed wherever the rows are: on the source line, in `--doctor`, as `billing` on
+each `--json` row, and — for anything reading the tool rather than the screen — in
+`--summary-json`'s `sources[]`, whose `detail` for each source says how billing was decided and
+whose `status` names any data that had to be skipped.
+
 ### GitHub Copilot
 
 There is nothing to detect. Copilot is sold as a seat — Pro, Business or Enterprise — and bills

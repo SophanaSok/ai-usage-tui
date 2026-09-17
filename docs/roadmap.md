@@ -263,6 +263,29 @@ unstable, so refactors never force a 2.0.
 **Suggested path:** cut a minor release once those are merged, let it run, then tag 1.0.0. Items 1–3
 below are the first 1.x work. **v0.17.0, the 1.0 candidate, shipped 2026-09-17** with all five merged.
 
+**Readable by an LLM -- added 2026-09-17, after v0.17.0.** Asked before returning to this list:
+can an agent read the data and help optimise usage and routing? It could not. `--json` is one
+object per request (13 MB here, ~130 tokens a row), no aggregated JSON existed, no efficiency
+figure was computed, nothing described the keys, and `contrib/` only fed data in. Shipped in
+answer: `--summary-json` (`src/summary.rs`: one compact document, ~33 KB for the same history,
+with `cache_hit_pct`, `tokens_per_request`, `cost_per_request`, `list_input_rate` and the rest per
+model, project, session and day), `--project`/`--session` drill-down, `--csv -`, `--schema`
+(`docs/json-glossary.json`, held to real output by a test), `--agent-guide`
+(`docs/agent-guide.md`), a Claude Code skill with the repository as its own plugin marketplace,
+and an `AGENTS.md` snippet. Two decisions worth keeping:
+
+- **The tool gives facts; the reader advises.** No thresholds, no verdicts, no "you would save
+  $X". A savings estimate prices a hypothetical, which is the thing this project refuses to do,
+  and on a subscription there is no per-request money to save. The judgement is coached in the
+  guide instead -- and an end-to-end run against a real account is what wrote half of it: a model
+  given only names called an escalation to a newer, pricier model a "downgrade", which is why the
+  list rates are now in the data, and one wrote "actual cost: $0 (quota)", which is why the guide
+  says never to.
+- **No MCP server in V1.** Every agent this is for can run a shell command, the CLI surface is
+  already under the stability contract, and an MCP server is a second stable surface to test and
+  version. The summary document is what one would serve; revisit if a client without shell access
+  (Claude Desktop, an IDE assistant) turns out to matter.
+
 **Found and not yet done, ranked.** Each has its evidence; none blocks the contract above.
 
 1. **Unknown stays unknown, four places it does not.** An absent token field reads as `0`
@@ -294,7 +317,10 @@ below are the first 1.x work. **v0.17.0, the 1.0 candidate, shipped 2026-09-17**
    formats; no coverage measurement. `.jsonl.zst` Codex rollouts are not read.
 7. **Scripting surface.** One non-zero exit code covers both "a budget is over" and "the tool
    failed", so a monitor cannot tell them apart; a distinct code is a breaking change and belongs
-   before 1.0.0 if it is wanted at all. No `--csv -`, no `--doctor --json`, no absolute reset time in
+   before 1.0.0 if it is wanted at all. ~~No `--csv -`~~ (shipped with `--summary-json`). No
+   `--doctor --json` -- though what it was wanted for is now in `--summary-json`'s `sources` and
+   `pricing` blocks: per-source rows, status, billing decision, skipped data and pricing warnings.
+   What remains text-only is the install channel and the update check. No absolute reset time in
    the Limits panel. CSV has no formula-injection guard. The journal and caches are written at the
    default umask, and the webhook accepts plain `http://`.
 8. **Distribution.** The Windows zip carries no completions (PowerShell is never generated); no musl

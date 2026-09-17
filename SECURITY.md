@@ -27,9 +27,11 @@ them is a security bug, not a feature request:
   line is read. A test plants a fake `AWS_SECRET_ACCESS_KEY` in a transcript and fails if it
   reaches a usage record.
 - **No prompt or completion content is persisted or transmitted**, ever.
-- **Working directory paths are recorded** for per-project attribution, and appear in `--json`
-  and `--csv` exports. This is the one identifying value the tool stores; it is local-only and
-  never transmitted, but review an export before sharing it.
+- **Working directory paths are recorded** for per-project attribution, and appear in
+  `--summary-json`, `--json` and `--csv` exports. This is the one identifying value the tool
+  stores; it is local-only and never transmitted, but review an export before sharing it — and
+  know that an LLM agent you ask to read one (the shipped Claude Code skill does) sends what it
+  reads to its own model provider. That flow is the agent's; this tool makes no request for it.
 - **The user's OpenCode database is opened read-only** (`SQLITE_OPEN_READ_ONLY`).
 - **No telemetry.** Outbound network calls happen only when explicitly requested:
   `--refresh-zen` and `--refresh-pricing` (and the `zen_pricing` collector, off unless enabled),

@@ -166,11 +166,33 @@ records `tokens: 0` and `unavailable`, and does not advance the cursor.
 
 ## Exporting Analytics
 
-Export the aggregates as JSON — `{source, events: <count>, aggregates: [...]}`. Individual
-events are not exported:
+Export the aggregates as JSON — `{schema_version, source, events: <count>, aggregates: [...]}`.
+Individual events are not exported:
 ```sh
-ai-usage-tui --routing-json
+ai-usage-tui --routing-json            # all history
+ai-usage-tui --routing-json --month    # a range flag narrows it, when one is given
 ```
+
+Without a range flag this has always meant all history, and still does: the default range
+everywhere else is a week, and applying that unasked would have shrunk every existing script's
+output. Each aggregate carries `cost_per_success` with the `cost_basis` it rests on, the three
+counters with their `_observed` denominators and rates, and `success_rate` — the share of tasks
+with a recorded test result that passed, `null` when none recorded one. `ai-usage-tui --schema`
+defines every key, and every `cost_basis` value:
+
+| `cost_basis` | `cost_per_success` | why |
+| --- | --- | --- |
+| `exact` | a figure | every contributing task carried a price |
+| `free` | `0` | every task was free or local: a real zero |
+| `floor` | `null` | some spend was priced and some was not; a minimum is not printed as the figure (`cost` holds the priced part) |
+| `plus_quota` | `null` | some tasks were priced, the rest billed against a plan |
+| `quota` | `null` | every task was billed against a plan, which has no per-request figure |
+| `unpriced` | `null` | nothing was priced and something should have been |
+| `no_successes` | `null` | nothing passed, so there is no denominator |
+
+The same aggregates, narrowed to the summary's range, are the `routing` block of
+`--summary-json` — beside the usage they are about, which is where an LLM agent reads them (see
+[`agent-guide.md`](agent-guide.md)).
 
 Export as CSV:
 ```sh

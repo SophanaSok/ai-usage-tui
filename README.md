@@ -46,6 +46,7 @@ this repository's own documents at the latest release. `ai-usage-tui --help` pri
 - [Data sources](#data-sources)
 - [Why there is no Cursor collector](#why-there-is-no-cursor-collector)
 - [Interactive dashboard](#interactive-dashboard)
+- [Ask an LLM about your usage](#ask-an-llm-about-your-usage)
 - [Non-interactive output](#non-interactive-output)
 - [Configuration](#configuration)
 - [Budget checks](#budget-checks)
@@ -61,6 +62,9 @@ this repository's own documents at the latest release. `ai-usage-tui --help` pri
 
 - Routing aggregates: cost per passing test, with retries, escalations, and review defects per model
 - Derived escalations: which sessions reached for a pricier model, and what it cost afterwards
+- A compact summary an LLM can read whole — cache-hit rate, tokens and cost per request, and the
+  model mix by project, session and day — with a shipped Claude Code skill, so you can simply ask
+  how to cut your token usage or whether your routing is earning its cost
 - Usage grouped by provider and model, across OpenCode, Claude Code, Codex CLI, GitHub Copilot, Gemini CLI, and Local models
 - Input, output, reasoning, cache-read, and cache-write tokens
 - Today (local calendar day), trailing 7-day, trailing 30-day, all-time, or custom-day ranges
@@ -677,6 +681,73 @@ for.
 
 See [`docs/omarchy.md`](docs/omarchy.md).
 
+## Ask an LLM about your usage
+
+The dashboard is for you. `--summary-json` is for whatever you ask about your usage — Claude
+Code, Codex, Cursor, a script — and is built so a model can take it whole:
+
+```sh
+ai-usage-tui --summary-json            # the last 7 days, as one line of JSON
+ai-usage-tui --summary-json --month --top 20
+ai-usage-tui --agent-guide             # how to read it, and what to look for
+ai-usage-tui --schema                  # every key and every enum value, defined
+```
+
+`--json` prints one object per request: 13 MB for the 25,000 requests on the machine this was
+written on, far more than a context window holds. The summary is the same history in about 33 KB
+— `totals`, then the same rollup `by_category`, `by_model`, `by_project`, `by_session` and
+`by_day`, with `sources`, `pricing`, `burn`, every budget (including the ones still `OK`),
+`limits`, `escalations`, `provenance` and `routing`. `--top N` (default 10) lists the largest
+models, projects and sessions and folds the rest into `other`, so a shortened list still adds up.
+
+Every rollup carries figures nothing computed before — `cache_hit_pct`, `tokens_per_request`,
+`cost_per_request`, `output_pct`, `reasoning_pct`, `share_of_tokens_pct` — and each model its
+`list_input_rate`, so which model is the expensive one is a number rather than a guess from its
+name:
+
+```json
+{ "provider": "opencode", "model": "claude-sonnet-5", "category": "PAID",
+  "cost_status": "reported", "list_input_rate": 3.0, "sessions": 0,
+  "requests": 1, "tokens": 335000,
+  "input_tokens": 200000, "output_tokens": 100000, "reasoning_tokens": 20000,
+  "cache_read_tokens": 10000, "cache_write_tokens": 5000,
+  "cost": 0.5, "cost_is_floor": false,
+  "priced_requests": 1, "unpriced_requests": 0, "quota_requests": 0,
+  "api_equivalent_cost": null,
+  "metrics": { "share_of_tokens_pct": 23.85, "cache_hit_pct": 4.65, "output_pct": 29.85,
+               "reasoning_pct": 5.97, "tokens_per_request": 335000.0, "cost_per_request": 0.5 } }
+```
+
+**Facts, not advice.** There are no thresholds, no verdicts and no "you would save $X": the tool
+does not price hypotheticals, and what a cache-hit percentage *means* for a project is a
+judgement. That judgement is coached in `--agent-guide`, which also tells the model what not to
+claim. And unknown stays unknown here too: a percentage nothing recorded is `null`, not `0` —
+several sources never report cache or reasoning tokens — and `cost` is `null` when nothing in a
+rollup could be priced, which on a subscription plan is most of them.
+
+To look closer without pulling every row, pass a value from the summary back as a filter —
+`--project PATH`, `--session ID`, `--model NAME`, `--provider NAME` — and take rows only when you
+need them, as `--csv -`, which is a quarter of the JSON's size.
+
+**With Claude Code**, install the skill and just ask — "how can I cut my token usage?", "which
+project is eating my quota?", "is Opus worth it on this repo?":
+
+```
+/plugin marketplace add SophanaSok/ai-usage-tui
+/plugin install ai-usage@ai-usage-tui
+```
+
+or `cp -r contrib/claude-code/plugin/skills/ai-usage ~/.claude/skills/`. The skill is three lines
+long on purpose: it sends Claude to `--agent-guide` and `--summary-json`, so the instructions
+always match the version you have installed. **With any other agent**, paste the block in
+[`contrib/agents/README.md`](contrib/agents/README.md) into `AGENTS.md`, `.cursorrules` or a
+system prompt. Details, verification and uninstall are in
+[`contrib/claude-code/README.md`](contrib/claude-code/README.md#skill).
+
+What the model reads — token counts, model names, costs, project paths and session ids — goes to
+whichever provider it runs on, as anything in its context does. Your prompts and transcripts are
+never read, and `ai-usage-tui` itself still sends nothing anywhere.
+
 ## Non-interactive output
 
 Use one-shot mode in scripts and scheduled jobs:
@@ -685,21 +756,30 @@ Use one-shot mode in scripts and scheduled jobs:
 # Human-readable rows
 ai-usage-tui --once
 
-# JSON to stdout
+# One compact aggregated document (see "Ask an LLM about your usage" above)
+ai-usage-tui --summary-json --month
+
+# Every request as JSON to stdout -- large; narrow it first
 ai-usage-tui --json --week
 
-# CSV to a file
+# CSV to a file, or to stdout with `-`
 ai-usage-tui --csv usage.csv --days 14
+ai-usage-tui --csv - --week | head
 
-# Exact, case-insensitive provider and model filters
+# Exact filters: provider and model ignore case; project and session are
+# spelled exactly as the exports print them
 ai-usage-tui --json --all --provider opencode --model gpt-5.6-sol
+ai-usage-tui --json --month --project /home/me/work/api
+ai-usage-tui --summary-json --session 0198f4c2-7d1e-7a3b-9c11-3e5a6b7c8d90
 ```
 
-`--json` and `--csv` imply `--once`. JSON includes the source description,
-selected range, usage rows, a `limits` array of Omarchy subscription
-windows (see [Subscription limits](docs/omarchy.md#subscription-limits); empty when
+`--json` and `--csv` imply `--once`, and so does `--summary-json`. Every JSON document carries
+`"schema_version": 1`, and `ai-usage-tui --schema` defines every key and every enum value in
+them; what the version promises is in [`docs/stability.md`](docs/stability.md). `--json` includes
+the source description, selected range, usage rows, a `limits` array of subscription
+windows (see [Subscription limits](#subscription-limits); empty when
 there are none), an `escalations` object, and a `provenance` object; each usage row also carries
-`project` and `session_id` (`null` when unknown).
+`billing` (`per_token` or `subscription`), and `project` and `session_id` (`null` when unknown).
 
 `escalations` is the routing panel's derived block — which sessions moved to a
 pricier model, and what that cost — for scripts:
@@ -711,7 +791,8 @@ pricier model, and what that cost — for scripts:
   "escalation_rate": 8.33,
   "unclassified_changes": 0,
   "transitions": [
-    { "from": "claude-sonnet-5", "to": "claude-opus-5", "sessions": 1,
+    { "from": "claude-sonnet-5", "to": "claude-opus-5",
+      "from_input_rate": 3.0, "to_input_rate": 5.0, "sessions": 1,
       "cost_after": 9.7265, "unpriced_after": 0, "quota_after": 0 }
   ]
 }
@@ -1041,6 +1122,10 @@ On Windows, `USERPROFILE` (or `HOMEDRIVE` + `HOMEPATH`) stands in for `HOME`,
 - OpenCode data is read locally from SQLite in read-only mode.
 - The local-model journal (`--record-ollama`, `--record-usage`) stores usage metadata, not prompt or response content.
 - Routing events contain only the JSON fields supplied by the caller.
+- An LLM agent you point at the tool (`--summary-json`, the Claude Code skill) reads token counts,
+  model names, costs, **project paths and session ids**. Those travel to the model provider that
+  agent runs on, as anything in its context does — that is your agent's data flow, not this
+  tool's, which still transmits nothing. Nothing from your prompts or transcripts is in any export.
 - Prompts, completions, API keys, credentials, and interaction content are not
   collected.
 - Claude Code session transcripts contain source code and secrets; only the
@@ -1220,6 +1305,10 @@ of releases and writing.
 - [`docs/provider-support.md`](docs/provider-support.md) — provider support matrix
 - [`docs/routing-analytics.md`](docs/routing-analytics.md) — routing analytics
 - [`docs/omarchy.md`](docs/omarchy.md) — reading and publishing Omarchy agents-panel records
+- [`docs/agent-guide.md`](docs/agent-guide.md) — for LLM agents: how to read the JSON outputs and
+  what to look for (`--agent-guide` prints it); [`docs/json-glossary.json`](docs/json-glossary.json)
+  defines every key (`--schema`); [`contrib/agents/`](contrib/agents/README.md) and
+  [`contrib/claude-code/`](contrib/claude-code/README.md#skill) wire an agent up
 - [`docs/stability.md`](docs/stability.md) — what a version number promises: flags, exit codes,
   config, JSON/CSV, the journal. Script against those; the Rust library API is not stable
 

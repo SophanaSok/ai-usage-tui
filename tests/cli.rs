@@ -2428,3 +2428,59 @@ fn every_json_document_is_fully_described_by_the_schema() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The model row the README shows under "Ask an LLM about your usage" is real output.
+///
+/// It was pasted from a run against the committed fixtures, and this holds it there: a key added
+/// to the bucket, or a figure computed differently, fails here until the README says so too.
+#[test]
+fn the_readmes_summary_sample_is_what_the_binary_prints() {
+    // Line endings normalised: a Windows checkout has CRLF, and the fence is found by its newline.
+    let readme = std::fs::read_to_string(format!("{}/README.md", env!("CARGO_MANIFEST_DIR")))
+        .expect("read README")
+        .replace("\r\n", "\n");
+    let start = readme
+        .find("```json\n{ \"provider\": \"opencode\"")
+        .expect("the README's summary sample")
+        + "```json\n".len();
+    let end = start
+        + readme[start..]
+            .find("\n```")
+            .expect("the sample's closing fence");
+    let sample: serde_json::Value =
+        serde_json::from_str(&readme[start..end]).expect("the sample is JSON");
+
+    let fixtures = format!("{}/tests/fixtures", env!("CARGO_MANIFEST_DIR"));
+    let output = bin()
+        .env("XDG_CONFIG_HOME", "/nonexistent/config-home")
+        .env("XDG_DATA_HOME", "/nonexistent/data-home")
+        // `config_json_path` checks `CLAUDE_CONFIG_DIR` before the `--claude-dir` override, so
+        // with it exported this would read the developer's real `~/.claude.json`.
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("CLAUDE_PROJECTS_DIR")
+        .args(["--summary-json", "--all", "--top", "0", "--db"])
+        .arg(format!("{fixtures}/opencode_test.db"))
+        // The three committed fixtures the sample was taken from: `share_of_tokens_pct` is a share
+        // of all of them.
+        .arg("--codex-dir")
+        .arg(format!("{fixtures}/codex_home"))
+        .arg("--copilot-dir")
+        .arg(format!("{fixtures}/copilot_home"))
+        .args(["--claude-dir", "/nonexistent"])
+        .args(["--gemini-dir", "/nonexistent"])
+        .args(["--omarchy-dir", "/nonexistent"])
+        .args(["--journal", "/nonexistent/journal.db"])
+        .output()
+        .expect("run");
+    let doc: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+    let row = doc["by_model"]["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .find(|row| row["model"] == sample["model"] && row["provider"] == sample["provider"])
+        .expect("the sampled model is in the fixture");
+    assert_eq!(
+        &sample, row,
+        "README.md shows a row the binary does not print"
+    );
+}
