@@ -28,6 +28,16 @@
   cut, and `--summary-json`'s `pricing` block gains `currency` (`USD`, list price, nothing
   converted), `community_table_date` and `curated_table_date`. No figure anywhere had a unit.
 
+### Changed
+
+- **The bundled community rate table is refreshed from LiteLLM** (snapshot of 2026-09-17, the
+  first opened from the monthly drift job's issue): 3,975 keys become 4,627 -- 713 added, 61
+  removed, 182 repriced -- and the engine prices 4,370 models, up from 3,785. Of the repriced, 59
+  only gained a published rate (usually cache reads) or lost a rounding; 63 got cheaper, such as
+  `azure/gpt-5.6-sol` from $5/$30 to $4/$20 per million, 52 dearer and 8 moved both ways. A cost
+  computed for one of those models changes with this release, in either direction; the curated Zen
+  table, which wins where both list a model, is untouched.
+
 ### Fixed
 
 - **A free model the rate table lists at `0.0` is `FREE` again.** The rule added earlier in this
