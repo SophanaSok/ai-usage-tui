@@ -934,6 +934,13 @@ fn derived_escalations_are_exported() {
     assert_eq!(transitions.len(), 1, "{escalations}");
     assert_eq!(transitions[0]["from"], "claude-sonnet-4-5-20250929");
     assert_eq!(transitions[0]["to"], "claude-opus-4-1-20250805");
+    // The direction is in the numbers, not left to whoever reads the names: a model reading this
+    // export called an escalation to a newer, pricier model a "downgrade".
+    let from_rate = transitions[0]["from_input_rate"]
+        .as_f64()
+        .expect("from rate");
+    let to_rate = transitions[0]["to_input_rate"].as_f64().expect("to rate");
+    assert!(to_rate > from_rate, "{escalations}");
     assert_eq!(transitions[0]["sessions"], 1);
     // Opus output is priced, so the spend after the move is a real figure, not a floor.
     assert!(
@@ -1984,7 +1991,12 @@ fn the_example_config_ships_in_the_binary_and_doctor_points_at_it() {
 fn every_json_document_carries_its_schema_version() {
     let dir = scratch("schema-version");
     let journal = dir.join("usage.db");
-    for flag in ["--json", "--routing-json", "--check-budgets"] {
+    for flag in [
+        "--summary-json",
+        "--json",
+        "--routing-json",
+        "--check-budgets",
+    ] {
         let output = hermetic_with(bin().arg(flag), &PathBuf::from(fixture_db()), &journal)
             .output()
             .expect("run");
@@ -1996,5 +2008,271 @@ fn every_json_document_carries_its_schema_version() {
         let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json parses");
         assert_eq!(json["schema_version"], 1, "{flag}: {json}");
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A Claude Code home with two projects and two sessions, for the drill-down filters.
+fn two_project_claude_home(root: &std::path::Path) -> std::path::PathBuf {
+    let projects = root.join(".claude").join("projects");
+    for (dir, cwd, session, model, input) in [
+        (
+            "api",
+            "/w/api",
+            "s-api",
+            "claude-sonnet-4-5-20250929",
+            1000u64,
+        ),
+        ("web", "/w/web", "s-web", "claude-opus-4-1-20250805", 3000),
+    ] {
+        let project = projects.join(dir);
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            project.join("s.jsonl"),
+            format!(
+                "{{\"type\":\"assistant\",\"uuid\":\"u-{dir}\",\"requestId\":\"req_{dir}\",\
+                 \"timestamp\":\"2026-08-18T10:00:00Z\",\"sessionId\":\"{session}\",\"cwd\":\"{cwd}\",\
+                 \"message\":{{\"id\":\"msg_{dir}\",\"role\":\"assistant\",\"model\":\"{model}\",\
+                 \"usage\":{{\"input_tokens\":{input},\"output_tokens\":100,\
+                 \"cache_read_input_tokens\":9000,\"cache_creation_input_tokens\":0}}}}}}\n"
+            ),
+        )
+        .unwrap();
+    }
+    projects
+}
+
+/// The binary against a planted Claude Code home and nothing else.
+fn with_claude_home(projects: &std::path::Path, args: &[&str]) -> std::process::Output {
+    let mut command = bin();
+    command
+        .env("XDG_CONFIG_HOME", "/nonexistent/config-home")
+        .env("XDG_DATA_HOME", "/nonexistent/data-home")
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("CLAUDE_PROJECTS_DIR")
+        .args(args)
+        .arg("--all")
+        .arg("--claude-dir")
+        .arg(projects)
+        .args(["--claude-billing", "api"])
+        .args(["--db", "/nonexistent/opencode.db"])
+        .args(["--codex-dir", "/nonexistent"])
+        .args(["--copilot-dir", "/nonexistent"])
+        .args(["--gemini-dir", "/nonexistent"])
+        .args(["--omarchy-dir", "/nonexistent"])
+        .args(["--journal", "/nonexistent/journal.db"]);
+    let output = command.output().expect("run");
+    assert!(
+        output.status.success(),
+        "{args:?} exited {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+/// `--json` prints one object per request -- 13 MB on the machine this was written on. The
+/// summary is the same run as one compact line a reader with a context window can take whole.
+#[test]
+fn the_summary_is_one_compact_document_that_adds_up() {
+    let dir = scratch("summary-json");
+    let projects = two_project_claude_home(&dir);
+    let output = with_claude_home(&projects, &["--summary-json"]);
+    let text = String::from_utf8(output.stdout).expect("utf8");
+    assert_eq!(
+        text.trim_end().lines().count(),
+        1,
+        "compact, not pretty-printed"
+    );
+    let doc: serde_json::Value = serde_json::from_str(&text).expect("json parses");
+
+    assert_eq!(doc["schema_version"], 1);
+    assert_eq!(doc["range"]["label"], "ALL TIME");
+    assert!(doc["range"]["since"].is_null(), "all history has no start");
+    assert_eq!(doc["totals"]["requests"], 2);
+    assert_eq!(doc["totals"]["tokens"], 1000 + 3000 + 200 + 18_000);
+    // 18,000 cache reads over 22,000 prompt tokens.
+    assert_eq!(doc["totals"]["metrics"]["cache_hit_pct"], 81.82);
+    assert!(
+        doc["totals"]["metrics"]["reasoning_pct"].is_null(),
+        "Claude Code reports no reasoning split, which is not 0% reasoning"
+    );
+
+    let by_project = doc["by_project"]["rows"].as_array().expect("rows");
+    assert_eq!(by_project.len(), 2);
+    assert_eq!(by_project[0]["project"], "/w/web", "largest first");
+    assert_eq!(doc["by_session"]["rows"][0]["session_id"], "s-web");
+    assert_eq!(doc["by_model"]["total"], 2);
+    let rate = |model: &str| {
+        doc["by_model"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["model"] == model)
+            .and_then(|row| row["list_input_rate"].as_f64())
+            .unwrap_or_else(|| panic!("no list rate for {model}"))
+    };
+    assert!(
+        rate("claude-opus-4-1-20250805") > rate("claude-sonnet-4-5-20250929"),
+        "the list rate is what says which model is the expensive one"
+    );
+    // What `--doctor` alone said: which sources were read, and how billing was decided.
+    let claude = doc["sources"]
+        .as_array()
+        .expect("sources")
+        .iter()
+        .find(|s| s["id"] == "claude_code")
+        .expect("claude_code source");
+    assert_eq!(claude["rows"], 2);
+    assert!(
+        claude["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("billing"),
+        "{claude}"
+    );
+    for key in [
+        "by_category",
+        "by_day",
+        "burn",
+        "budgets",
+        "limits",
+        "escalations",
+        "provenance",
+        "routing",
+        "pricing",
+    ] {
+        assert!(!doc[key].is_null(), "the summary has no {key}");
+    }
+
+    // `--top 1` folds the smaller project away and says so; the rows still add up.
+    let top = with_claude_home(&projects, &["--summary-json", "--top", "1"]);
+    let top: serde_json::Value = serde_json::from_slice(&top.stdout).expect("json parses");
+    assert_eq!(top["by_project"]["shown"], 1);
+    assert_eq!(top["by_project"]["total"], 2);
+    assert_eq!(
+        top["by_project"]["rows"][0]["tokens"].as_u64().unwrap()
+            + top["by_project"]["other"]["tokens"].as_u64().unwrap(),
+        top["totals"]["tokens"].as_u64().unwrap()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The summary names projects and sessions; these are how a reader asks about one of them
+/// without pulling every row.
+#[test]
+fn project_and_session_filters_narrow_every_export() {
+    let dir = scratch("drill-down");
+    let projects = two_project_claude_home(&dir);
+
+    let rows = |args: &[&str]| -> Vec<serde_json::Value> {
+        let output = with_claude_home(&projects, args);
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+        json["usage"].as_array().cloned().unwrap_or_default()
+    };
+    assert_eq!(rows(&["--json"]).len(), 2);
+    let api = rows(&["--json", "--project", "/w/api"]);
+    assert_eq!(api.len(), 1);
+    assert_eq!(api[0]["session_id"], "s-api");
+    // `billing` was in the model and in `--doctor`'s text, and in no export.
+    assert_eq!(api[0]["billing"], "per_token");
+    assert_eq!(
+        rows(&["--json", "--project", "/w/api/"]).len(),
+        1,
+        "a trailing slash is forgiven"
+    );
+    assert_eq!(
+        rows(&["--json", "--session", "s-web"])[0]["project"],
+        "/w/web"
+    );
+    assert!(rows(&["--json", "--project", "/w/nothing"]).is_empty());
+
+    let summary = with_claude_home(&projects, &["--summary-json", "--session", "s-web"]);
+    let summary: serde_json::Value = serde_json::from_slice(&summary.stdout).expect("json");
+    assert_eq!(summary["totals"]["requests"], 1);
+    assert_eq!(summary["filters"]["session"], "s-web");
+    assert_eq!(
+        summary["by_model"]["rows"][0]["model"],
+        "claude-opus-4-1-20250805"
+    );
+
+    // CSV is the compact row format, and `-` finally lets it into a pipeline -- with nothing
+    // but the table on stdout.
+    let csv = with_claude_home(&projects, &["--csv", "-", "--project", "/w/web"]);
+    let csv = String::from_utf8(csv.stdout).expect("utf8");
+    let lines: Vec<&str> = csv.lines().collect();
+    assert_eq!(
+        lines.len(),
+        2,
+        "a header and one row, no confirmation line:\n{csv}"
+    );
+    assert!(lines[0].starts_with("provider,model,"), "{csv}");
+    assert!(lines[1].contains("/w/web"), "{csv}");
+    assert!(!dir.join("-").exists() && !std::path::Path::new("-").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--routing-json` has always meant all history. A range flag now narrows it -- but only one
+/// the caller gave, because the default range everywhere else is a week and applying that
+/// unasked would have shrunk every existing script's output.
+#[test]
+fn routing_json_is_narrowed_by_a_range_flag_only_when_one_is_given() {
+    let dir = scratch("routing-range");
+    let journal = dir.join("usage.db");
+    let record = |created: i64, task: &str| {
+        use std::io::Write;
+        let mut child = bin()
+            .arg("--record-routing")
+            .arg("--journal")
+            .arg(&journal)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("spawn");
+        let event = format!(
+            "{{\"agent\":\"a\",\"model\":\"m\",\"provider\":\"p\",\"task\":\"{task}\",\"tokens\":10,\"test_result\":true,\"created\":{created}}}"
+        );
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(event.as_bytes())
+            .unwrap();
+        assert!(child.wait().expect("wait").success());
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    record(now - 60, "recent");
+    record(now - 90 * 86_400, "old");
+
+    let events = |args: &[&str]| -> serde_json::Value {
+        // Not `hermetic_with`: it appends `--all`, and the last range flag wins. This export
+        // reads the journal and nothing else, so the journal is all there is to pin.
+        let output = bin()
+            .env("XDG_CONFIG_HOME", "/nonexistent/config-home")
+            .env("XDG_DATA_HOME", "/nonexistent/data-home")
+            .arg("--routing-json")
+            .args(args)
+            .arg("--journal")
+            .arg(&journal)
+            .output()
+            .expect("run");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).expect("json")
+    };
+    assert_eq!(
+        events(&[])["events"],
+        2,
+        "no range flag: all history, as always"
+    );
+    assert_eq!(events(&["--week"])["events"], 1);
+    assert_eq!(events(&["--all"])["events"], 2);
+    // The rate the panel has always shown, no longer left for the reader to divide.
+    assert_eq!(events(&[])["aggregates"][0]["success_rate"], 100.0);
     let _ = std::fs::remove_dir_all(&dir);
 }

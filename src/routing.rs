@@ -192,6 +192,52 @@ pub fn load_routing_events(path: &std::path::Path) -> anyhow::Result<Vec<Routing
     crate::collector::journal::load_routing(path)
 }
 
+/// One aggregate as the JSON row `--routing-json` and `--summary-json` both print.
+///
+/// Built here rather than in `main` so the two exports cannot drift into describing the same
+/// aggregate differently.
+pub fn aggregate_json(agg: &RoutingAggregates) -> serde_json::Value {
+    let mut row = serde_json::json!({
+        "agent": agg.agent,
+        "model": agg.model,
+        "provider": agg.provider,
+        "tasks": agg.tasks,
+        "tokens": agg.tokens,
+        // `null` rather than `0` when nothing was priced, for the same reason the
+        // usage export keeps an unknown cost null: a script that sums this column
+        // must not be handed a zero it cannot distinguish from a free model.
+        "cost": if agg.priced_tasks == 0 { None } else { Some(agg.cost) },
+        "priced_tasks": agg.priced_tasks,
+        "unpriced_tasks": agg.unpriced_tasks,
+        "quota_tasks": agg.quota_tasks,
+        "free_tasks": agg.free_tasks,
+        // What `cost_per_success` is standing on, in the same words the panel uses,
+        // so a script and the dashboard cannot disagree about one aggregate.
+        "cost_per_success": cost_per_success_sort_key(agg),
+        "cost_basis": cost_basis_label(agg),
+        // `null`, not `0`, when no task reported the count — and the number of
+        // tasks that did, so a script has the denominator the rate was taken over.
+        // The rates are the share of those tasks affected: a percentage, bounded,
+        // rather than `retries / tasks`, which exceeded 100% on the first task that
+        // retried twice.
+        "retries": agg.retries.sum(),
+        "escalations": agg.escalations.sum(),
+        "test_passes": agg.test_passes,
+        "test_failures": agg.test_failures,
+        "review_defects": agg.review_defects.sum(),
+        "retries_observed": agg.retries.observed,
+        "escalations_observed": agg.escalations.observed,
+        "review_defects_observed": agg.review_defects.observed,
+        "retry_rate": retry_rate(agg),
+        "escalation_rate": escalation_rate(agg),
+        "defect_rate": defect_rate(agg),
+    });
+    // Share of tasks with a recorded test result that passed. The panel has always shown it;
+    // the export carried the two counts and left the division to the reader.
+    row["success_rate"] = serde_json::json!(success_rate(agg));
+    row
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

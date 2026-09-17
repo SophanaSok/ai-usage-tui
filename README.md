@@ -967,8 +967,10 @@ does not load it automatically.
 | `-h`, `--help` | Print help |
 | `-V`, `--version` | Print the version |
 | `--once` | Collect once, print plain text, and exit |
-| `--json` | Collect once and print usage JSON |
-| `--csv PATH` | Collect once and write usage CSV |
+| `--json` | Collect once and print usage JSON, one object per request (large: megabytes on a busy machine) |
+| `--summary-json` | Collect once and print a compact aggregated summary as one line of JSON: totals and efficiency metrics by model, project, session and day, with sources, budgets, limits, escalations and routing |
+| `--top N` | With `--summary-json`, list the `N` largest models, projects and sessions and fold the rest into `other` (default 10; `0` lists all) |
+| `--csv PATH` | Collect once and write usage CSV; `-` writes it to stdout |
 | `--config PATH` | Load a specific TOML config file |
 | `--doctor` | Report where each data source was looked for, what was found there, and how billing was decided, then exit |
 | `--completions SHELL` | Print a shell completion script (`bash`, `zsh`, `fish`, `elvish`, `powershell`) and exit |
@@ -993,6 +995,8 @@ does not load it automatically.
 | `--all` | Use all available history |
 | `--provider NAME` | Filter by exact provider name, ignoring case |
 | `--model NAME` | Filter by exact model name, ignoring case |
+| `--project PATH` | Filter by project: the working directory exactly as the exports spell it (`(unattributed)` for usage with none) |
+| `--session ID` | Filter by exact session id |
 | `--refresh-interval N` | Refresh the TUI every `N` seconds |
 | `--record-ollama` | Read an Ollama response from stdin and journal it |
 | `--record-usage PROVIDER` | Read an OpenAI-compatible response from stdin and journal it under PROVIDER |
@@ -1004,7 +1008,7 @@ does not load it automatically.
 | `--record-routing` | Read one routing event from stdin and journal it |
 | `--claude-code-hook` | Read a Claude Code `PostToolUse`/`PostToolUseFailure` hook payload from stdin and journal a routing event when it observed a test run |
 | `--statusline` | Read Claude Code's statusline JSON from stdin, print a one-line rate-limit readout for its status bar, and cache the windows for the `l` panel |
-| `--routing-json` | Print aggregated routing analytics as JSON |
+| `--routing-json` | Print aggregated routing analytics as JSON — all history unless a range flag is given |
 | `--routing-csv PATH` | Write aggregated routing analytics as CSV |
 
 Recording, refresh, budget, usage export, and routing export modes are

@@ -26,6 +26,7 @@ pub mod omarchy;
 pub mod pricing;
 pub mod routing;
 pub mod statusline;
+pub mod summary;
 pub mod ui;
 pub mod update;
 pub mod utils;

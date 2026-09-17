@@ -1,7 +1,5 @@
 //! Dashboard state and the derived views rendered from it.
 
-use std::cmp::Reverse;
-use std::collections::BTreeMap;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -11,8 +9,8 @@ use crate::collector::background::CollectorHandle;
 use crate::collector::SourceRoots;
 use crate::escalation::{self, Escalations};
 use crate::model::{
-    BurnRate, Category, CostStatus, DayTotals, ProjectTotals, Range, RoutingAggregates,
-    SessionTotals, Totals, Usage,
+    BurnRate, Category, DayTotals, ProjectTotals, Range, RoutingAggregates, SessionTotals, Totals,
+    Usage,
 };
 use crate::omarchy::LimitsReport;
 use crate::pricing::PricingEngine;
@@ -472,39 +470,8 @@ impl App {
             escalation::derive(&self.view.filtered, |model| self.pricing.input_rate(model));
         self.view.escalations = escalations;
 
-        let mut grouped = BTreeMap::<(String, String, Category, CostStatus), Usage>::new();
-        for u in &self.view.filtered {
-            let key = (
-                u.provider.clone(),
-                u.model.clone(),
-                u.category,
-                u.cost_status,
-            );
-            let entry = grouped.entry(key).or_insert_with(|| Usage {
-                provider: u.provider.clone(),
-                model: u.model.clone(),
-                category: u.category,
-                cost_status: u.cost_status,
-                ..Default::default()
-            });
-            entry.requests += u.requests;
-            entry.input += u.input;
-            entry.output += u.output;
-            entry.reasoning += u.reasoning;
-            entry.cache_read += u.cache_read;
-            entry.cache_write += u.cache_write;
-            if u.cost_status.is_billable() {
-                if let Some(cost) = u.cost {
-                    entry.cost = Some(entry.cost.unwrap_or(0.0) + cost);
-                }
-            }
-            if let Some(equivalent) = u.api_equivalent_cost {
-                entry.api_equivalent_cost =
-                    Some(entry.api_equivalent_cost.unwrap_or(0.0) + equivalent);
-            }
-        }
-        self.view.rows = grouped.into_values().collect();
-        self.view.rows.sort_by_key(|u| Reverse(u.total_tokens()));
+        // The grouping the `by_model` export prints too; see `summary::model_rows`.
+        self.view.rows = crate::summary::model_rows(&self.view.filtered);
 
         self.apply_sorts();
         self.apply_search();
