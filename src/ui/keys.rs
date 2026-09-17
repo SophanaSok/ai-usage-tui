@@ -339,16 +339,14 @@ mod tests {
     #[test]
     fn every_panel_except_the_default_has_a_key() {
         let bound: Vec<Panel> = panel_keys().map(|(_, panel)| panel).collect();
-        for panel in [
-            Panel::Budgets,
-            Panel::Routing,
-            Panel::Projects,
-            Panel::TimeSeries,
-            Panel::Burn,
-            Panel::Sessions,
-            Panel::Limits,
-        ] {
-            assert!(bound.contains(&panel), "{panel:?} has no key binding");
+        // `Panel::ALL` is generated beside the enum. This was a list of seven variants written
+        // out here, so the eighth would have passed unbound.
+        assert!(Panel::ALL.len() > 1);
+        for panel in Panel::ALL
+            .iter()
+            .filter(|panel| **panel != Panel::default())
+        {
+            assert!(bound.contains(panel), "{panel:?} has no key binding");
         }
         // `Panel::Models` is the default view, returned to by pressing an active panel's key
         // again; it deliberately has no key of its own.

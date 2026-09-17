@@ -167,14 +167,9 @@ mod tests {
     fn every_source_is_reachable_from_both_paths() {
         // The bug this replaces: a provider wired into the background collectors and not into
         // `load_usage` worked in the dashboard and was invisible to every export, silently.
-        let roots = SourceRoots {
-            journal: std::path::PathBuf::from("/nonexistent/journal.db"),
-            db_path: Some(std::path::PathBuf::from("/nonexistent/opencode.db")),
-            claude_dir: Some(std::path::PathBuf::from("/nonexistent/claude")),
-            codex_dir: Some(std::path::PathBuf::from("/nonexistent/codex")),
-            omarchy_dir: Some(std::path::PathBuf::from("/nonexistent/omarchy")),
-            ..Default::default()
-        };
+        // `nowhere()` names every root. Spelling four of them here and defaulting the rest left
+        // Copilot and Gemini at `None`, which resolves to the developer's real home directory.
+        let roots = SourceRoots::nowhere();
         assert!(!SOURCES.is_empty());
         for spec in SOURCES {
             let (report, _rows) =
@@ -211,18 +206,44 @@ mod tests {
     /// `detect` reaches its "api key in environment" branch only through `api_env_vars`, whose
     /// fallback arm is `_ => &[]`. An id that does not match therefore does not fail loudly --
     /// it silently makes an exported API key invisible and reports the account as
-    /// subscription-billed. These are the two sources that can be billed either way.
+    /// subscription-billed.
+    ///
+    /// Asked of the registry rather than of a list kept here: the list named two sources, and
+    /// Gemini -- which can be billed either way -- shipped outside it. A source with no API-key
+    /// mode at all is named in `SEAT_ONLY`, so its empty arm is a decision and not a fall-through.
     #[test]
     fn billing_capable_sources_resolve_their_api_key_variables() {
-        for id in [
-            crate::collector::claude_code::ID,
-            crate::collector::codex::ID,
-        ] {
+        const SEAT_ONLY: &[&str] = &[crate::collector::copilot::ID];
+        let capable: Vec<&str> = SOURCES
+            .iter()
+            .filter(|spec| spec.supports_billing)
+            .map(|spec| spec.id)
+            .collect();
+        assert!(
+            capable.len() >= 2,
+            "no billing-capable sources: {capable:?}"
+        );
+        for id in SEAT_ONLY {
             assert!(
-                !crate::collector::billing::api_env_vars(id).is_empty(),
-                "api_env_vars({id:?}) fell through to the empty arm; billing detection for this \
-                 source can no longer see an API key in the environment"
+                capable.contains(id),
+                "{id:?} is listed as seat-only but is not a billing-capable source"
             );
+        }
+        for id in capable {
+            let vars = crate::collector::billing::api_env_vars(id);
+            if SEAT_ONLY.contains(&id) {
+                assert!(
+                    vars.is_empty(),
+                    "{id:?} is listed as seat-only but api_env_vars names {vars:?}"
+                );
+            } else {
+                assert!(
+                    !vars.is_empty(),
+                    "api_env_vars({id:?}) fell through to the empty arm; billing detection for \
+                     this source can no longer see an API key in the environment. If it has no \
+                     API-key mode, add it to SEAT_ONLY"
+                );
+            }
         }
     }
 }

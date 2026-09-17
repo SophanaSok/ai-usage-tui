@@ -109,18 +109,40 @@ pub struct App {
     pub(super) view: DerivedView,
 }
 
-/// The right-hand pane's contents. Exactly one at a time.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum Panel {
-    #[default]
-    Models,
-    Budgets,
-    Routing,
-    Projects,
-    TimeSeries,
-    Burn,
-    Sessions,
-    Limits,
+/// Declares `Panel` and `Panel::ALL` from one list.
+///
+/// An exhaustive `match` makes a new variant a compile error wherever panels are *handled*, but
+/// nothing makes a hand-written list of them complete, and the tests that ask "is every panel
+/// bound to a key, is every panel named in the overlay" each kept such a list. Generated from the
+/// same tokens as the enum, `ALL` cannot fall behind it.
+macro_rules! panels {
+    ($(#[$meta:meta])* pub enum $name:ident { $($(#[$variant_meta:meta])* $variant:ident,)+ }) => {
+        $(#[$meta])*
+        pub enum $name {
+            $($(#[$variant_meta])* $variant,)+
+        }
+
+        impl $name {
+            /// Every panel, in declaration order.
+            pub const ALL: &'static [$name] = &[$($name::$variant,)+];
+        }
+    };
+}
+
+panels! {
+    /// The right-hand pane's contents. Exactly one at a time.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub enum Panel {
+        #[default]
+        Models,
+        Budgets,
+        Routing,
+        Projects,
+        TimeSeries,
+        Burn,
+        Sessions,
+        Limits,
+    }
 }
 
 /// Order two costs, where `None` means "not known" rather than zero.

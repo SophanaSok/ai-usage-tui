@@ -411,6 +411,33 @@ fn readme_data_source_sections_match_the_registry() {
     );
 }
 
+/// `--schema` tells an agent which source ids exist, and the sentence that says so is prose.
+///
+/// The schema walker holds every *key* to real output; a list of values inside a `meaning`
+/// string is outside its reach, so a source added to the registry left the glossary naming the
+/// old set -- to a reader that takes the glossary as the definition.
+#[test]
+fn the_glossary_names_every_source_id() {
+    let glossary: serde_json::Value =
+        serde_json::from_str(ai_usage_tui::schema::GLOSSARY).expect("the glossary is JSON");
+    let meaning = glossary["documents"]["--summary-json"]["keys"]["sources"]["keys"]["id"]
+        ["meaning"]
+        .as_str()
+        .expect("sources[].id has a meaning");
+    let named: BTreeSet<&str> = meaning
+        .trim_end_matches('.')
+        .split(", ")
+        .map(str::trim)
+        .collect();
+    let registered: BTreeSet<&str> = ai_usage_tui::collector::registry::ids()
+        .into_iter()
+        .collect();
+    assert_eq!(
+        named, registered,
+        "docs/json-glossary.json's sources[].id meaning and registry::SOURCES disagree"
+    );
+}
+
 /// GitHub's topics cover every keyword and every source.
 ///
 /// The source-name rule is the forcing function: a collector cannot be added without the project
