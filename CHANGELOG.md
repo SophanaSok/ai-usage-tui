@@ -50,6 +50,12 @@
   skill, ran the guide and the summary and never `--json`, reported 1.47B tokens at a 98.5% cache
   hit as plan-billed with no dollar figure, named context size rather than caching as the lever,
   and declined to judge the routing because only one outcome had been recorded.
+- **The README has a section for this** -- "Ask an LLM about your usage" -- and the documents a
+  reader meets say what shipped: the routing guide defines every `cost_basis` value and what it
+  does to `cost_per_success`, the privacy and security notes say what an agent's provider sees
+  (project paths and session ids; never prompts or transcripts, and nothing sent by this tool),
+  and the roadmap records why the tool gives facts rather than advice and why there is no MCP
+  server in V1.
 - **`--project PATH` and `--session ID`** filter every export, so a reader goes from the summary
   to one project or session without pulling every row.
 - **`--csv -`** writes the CSV to stdout. It is the compact row format and could only be written
