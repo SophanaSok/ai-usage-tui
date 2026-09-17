@@ -552,7 +552,13 @@ CATEGORIES:
 
 EXAMPLES:
     ai-usage-tui
-    OPENCODE_DB_PATH=/path/to/opencode.db ai-usage-tui"
+    OPENCODE_DB_PATH=/path/to/opencode.db ai-usage-tui
+
+MORE:
+    Website and docs   {homepage}
+    Source and issues  {repository}",
+        homepage = env!("CARGO_PKG_HOMEPAGE"),
+        repository = env!("CARGO_PKG_REPOSITORY"),
     )
 }
 

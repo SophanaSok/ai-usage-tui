@@ -37,7 +37,7 @@ pkgrel=1
 # description -- there is no escaping that works inside them.
 pkgdesc='__DESCRIPTION_SHORT__'
 arch=('x86_64' 'aarch64')
-url="https://github.com/SophanaSok/ai-usage-tui"
+url="__HOMEPAGE__"
 license=('MIT')
 # Read off the shipped binary with `ldd`, not assumed: it needs libgcc_s (gcc-libs) and libc/libm
 # (glibc), and nothing else -- rustls means no OpenSSL, and rusqlite is the bundled build, so

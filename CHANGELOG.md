@@ -71,6 +71,17 @@
   that unasked would have shrunk every existing script's output.
 - The dashboard's model table and the summary's `by_model` are grouped by one function
   (`summary::model_rows`), with a test holding them to each other.
+- **Every channel now points at the website.** crates.io and GitHub's About box named the site,
+  while the Homebrew formula, the Scoop manifest, the Chocolatey nuspec and the AUR `PKGBUILD` all
+  named the source repository as their homepage, and `--help`, the man page, `--doctor` and the
+  installer named nothing -- so how the tool was installed decided whether a user ever learned the
+  documentation existed. The packaging templates carry `__HOMEPAGE__`, rendered by the release job
+  from `Cargo.toml`'s `homepage` like the description is; `--help` and the man page end with a
+  `MORE:` block naming the site and the repository; `--doctor` lists it under THIS BUILD; the
+  installer prints it when it finishes; the README leads with a badge and a line saying what is
+  there. `package.documentation` names the site too, so crates.io's Documentation link goes to the
+  user documentation rather than to docs.rs for a library API `docs/stability.md` says not to use.
+  A test holds every one of these to the single field.
 - **Release assets are uploaded one at a time, each confirmed before the release goes public.**
   `softprops/action-gh-release` uploaded all fifteen at once, and on v0.17.0 GitHub left the
   multi-megabyte ones stuck half-finished (`state: starter`), which a same-name upload cannot
