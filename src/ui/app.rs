@@ -3,6 +3,7 @@
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::budget::{Alert, BudgetEngine};
@@ -51,7 +52,10 @@ pub struct App {
     pub(super) limits_absence_logged: bool,
     pub provider_filter: Option<String>,
     pub model_filter: Option<String>,
-    pub collector: Option<CollectorHandle>,
+    /// Shared with the caller, which restores the terminal *before* dropping the last reference:
+    /// the final drop joins the collector threads, and a poll in flight (a pricing fetch, say)
+    /// would otherwise hold a raw-mode, alternate-screen terminal until it finished.
+    pub collector: Option<Arc<CollectorHandle>>,
     /// Which view occupies the right-hand pane. This was two independent booleans, so
     /// "budgets on" and "routing on" could both be true and one silently won.
     pub panel: Panel,
@@ -82,6 +86,10 @@ pub struct App {
     /// `pub` so the screenshot renderer can clear it, as it pins the clock: it is a fact about
     /// the machine that built the image, and it does not belong in a README.
     pub update_notice: Option<String>,
+    /// `NO_COLOR` was set when the dashboard started: every frame is drawn without colour. Read
+    /// once here, like the update notice, so the render path reads no environment; `pub` so the
+    /// screenshot renderer can clear it on a machine that has it set.
+    pub no_color: bool,
     pub alerts: Vec<Alert>,
     /// Alerts are handed to a worker thread; the webhook POST is blocking and must never
     /// happen on the render path.
@@ -359,7 +367,7 @@ impl App {
         refresh_interval: Duration,
         provider_filter: Option<String>,
         model_filter: Option<String>,
-        collector: Option<CollectorHandle>,
+        collector: Option<Arc<CollectorHandle>>,
         budget_engine: BudgetEngine,
         alert_sink: Option<Sender<Vec<Alert>>>,
     ) -> Self {
@@ -385,6 +393,7 @@ impl App {
             show_help: false,
             pricing: PricingEngine::load(),
             update_notice: crate::update::header_notice(),
+            no_color: crate::utils::no_color_in(&crate::utils::system_env),
             alerts: Vec::new(),
             alert_sink,
             view: DerivedView::default(),

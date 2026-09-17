@@ -189,48 +189,104 @@ fn read_json_events(input: &str) -> Result<(Vec<Value>, usize)> {
     Ok((events, invalid_lines))
 }
 
-/// The journal, opened for writing and migrated if it predates a column.
+/// The journal schema this build writes, stored in SQLite's `PRAGMA user_version`.
 ///
-/// This is the only code that creates `usage.db`; the collector opens it read-only and so cannot
-/// migrate it.
-fn journal_connection(path: &Path) -> Result<Connection> {
+/// Version 1 is the shape both tables have today. The two tables are created lazily by different
+/// commands, so each writer still probes and migrates its own table; the version exists to guard
+/// the other direction. A journal a *newer* build has written may carry a shape this one would
+/// damage by writing into it, and a hook installed from one channel with the dashboard from another
+/// is exactly how two builds end up sharing one file -- so a writer refuses a version above this
+/// one, by name, instead of guessing. Raise it with any change an older writer must not touch.
+pub const JOURNAL_SCHEMA_VERSION: i64 = 1;
+
+/// How long a writer waits for another writer's lock.
+///
+/// Was 250ms. Writers here are short-lived processes -- parallel subagents fire parallel hooks, a
+/// streamed chat pipes into `--record-usage` -- and losing the lock is a lost row and a failing
+/// hook, where waiting is a few milliseconds nobody sees.
+const WRITER_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Open the journal for writing, running `migrate` for the caller's table under the write lock.
+///
+/// `BEGIN IMMEDIATE` takes that lock *before* anything is probed. The migrations were
+/// probe-then-`ALTER` with nothing held between the two, so writers that opened an unmigrated
+/// journal together all saw the column missing and all but the first failed on "duplicate column
+/// name" -- reproduced by `writers_opening_an_unmigrated_journal_together_all_succeed`. Under the
+/// lock the second writer waits, then probes a table the first has already migrated.
+fn open_for_writing(
+    path: &Path,
+    migrate: impl FnOnce(&Connection) -> Result<()>,
+) -> Result<Connection> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("journal path has no parent directory"))?;
     fs::create_dir_all(parent)?;
     let conn = Connection::open(path)?;
-    conn.busy_timeout(Duration::from_millis(250))?;
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS usage_event (
-            id INTEGER PRIMARY KEY,
-            event_id TEXT,
-            provider TEXT NOT NULL,
-            model TEXT NOT NULL,
-            category TEXT NOT NULL,
-            cost_status TEXT NOT NULL,
-            requests INTEGER NOT NULL,
-            input_tokens INTEGER NOT NULL,
-            output_tokens INTEGER NOT NULL,
-            reasoning_tokens INTEGER NOT NULL,
-            cache_read_tokens INTEGER NOT NULL,
-            cache_write_tokens INTEGER NOT NULL,
-            cost REAL,
-            created INTEGER NOT NULL
-        );",
-    )?;
-    let has_event_id: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('usage_event') WHERE name = 'event_id')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !has_event_id {
-        conn.execute("ALTER TABLE usage_event ADD COLUMN event_id TEXT", [])?;
+    conn.busy_timeout(WRITER_BUSY_TIMEOUT)?;
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let migrated = (|| -> Result<()> {
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        anyhow::ensure!(
+            version <= JOURNAL_SCHEMA_VERSION,
+            "{} was written by a newer ai-usage-tui (journal schema {version}; this build writes \
+             {JOURNAL_SCHEMA_VERSION}). Upgrade this copy -- `ai-usage-tui --doctor` shows where it \
+             came from -- rather than writing into a journal it may not understand.",
+            path.display()
+        );
+        migrate(&conn)?;
+        if version < JOURNAL_SCHEMA_VERSION {
+            conn.execute_batch(&format!("PRAGMA user_version = {JOURNAL_SCHEMA_VERSION}"))?;
+        }
+        Ok(())
+    })();
+    match migrated {
+        Ok(()) => conn.execute_batch("COMMIT")?,
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(error);
+        }
     }
-    conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS usage_event_event_id ON usage_event(event_id)",
-        [],
-    )?;
     Ok(conn)
+}
+
+/// The journal, opened for writing usage and migrated if it predates a column.
+///
+/// This is the only code that creates `usage_event`; the collector opens the journal read-only and
+/// so cannot migrate it.
+fn journal_connection(path: &Path) -> Result<Connection> {
+    open_for_writing(path, |conn| {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS usage_event (
+                id INTEGER PRIMARY KEY,
+                event_id TEXT,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                category TEXT NOT NULL,
+                cost_status TEXT NOT NULL,
+                requests INTEGER NOT NULL,
+                input_tokens INTEGER NOT NULL,
+                output_tokens INTEGER NOT NULL,
+                reasoning_tokens INTEGER NOT NULL,
+                cache_read_tokens INTEGER NOT NULL,
+                cache_write_tokens INTEGER NOT NULL,
+                cost REAL,
+                created INTEGER NOT NULL
+            );",
+        )?;
+        let has_event_id: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('usage_event') WHERE name = 'event_id')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_event_id {
+            conn.execute("ALTER TABLE usage_event ADD COLUMN event_id TEXT", [])?;
+        }
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS usage_event_event_id ON usage_event(event_id)",
+            [],
+        )?;
+        Ok(())
+    })
 }
 
 /// One completed response, on its way into the journal.
@@ -349,11 +405,11 @@ pub fn record_ollama(path: &Path) -> Result<()> {
     if invalid_lines > 0 {
         eprintln!("Skipped {} malformed Ollama JSON line(s)", invalid_lines);
     }
-    println!(
+    crate::helpers::print_line(&format!(
         "Recorded {} Ollama usage event(s) in {}",
         recorded,
         path.display()
-    );
+    ))?;
     Ok(())
 }
 
@@ -376,12 +432,12 @@ pub fn record_usage(path: &Path, provider: &str) -> Result<()> {
     if invalid_lines > 0 {
         eprintln!("Skipped {invalid_lines} malformed JSON line(s)");
     }
-    println!(
+    crate::helpers::print_line(&format!(
         "Recorded {} {} usage event(s) in {}",
         recorded,
         provider,
         path.display()
-    );
+    ))?;
     Ok(())
 }
 
@@ -552,11 +608,11 @@ pub fn record_routing(path: &Path) -> Result<()> {
     io::stdin().read_to_string(&mut input)?;
     let json: Value = serde_json::from_str(&input)?;
     let inserted = record_routing_event(path, &json)?;
-    println!(
+    crate::helpers::print_line(&format!(
         "Recorded {} routing event(s) in {}",
         inserted,
         path.display()
-    );
+    ))?;
     Ok(())
 }
 
@@ -606,28 +662,25 @@ pub(crate) fn record_routing_event(path: &Path, json: &Value) -> Result<usize> {
     let requests = quantity(json, "requests")?.max(1);
     let tokens = quantity(json, "tokens")?;
 
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("journal path has no parent directory"))?;
-    fs::create_dir_all(parent)?;
-    let conn = Connection::open(path)?;
-    conn.busy_timeout(Duration::from_millis(250))?;
-    conn.execute_batch(&format!(
-        "CREATE TABLE IF NOT EXISTS routing_event ({ROUTING_EVENT_COLUMNS});"
-    ))?;
-    let has_event_id: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('routing_event') WHERE name = 'event_id')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !has_event_id {
-        conn.execute("ALTER TABLE routing_event ADD COLUMN event_id TEXT", [])?;
-    }
-    allow_unreported_counters(&conn)?;
-    conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS routing_event_event_id ON routing_event(event_id)",
-        [],
-    )?;
+    let conn = open_for_writing(path, |conn| {
+        conn.execute_batch(&format!(
+            "CREATE TABLE IF NOT EXISTS routing_event ({ROUTING_EVENT_COLUMNS});"
+        ))?;
+        let has_event_id: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('routing_event') WHERE name = 'event_id')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_event_id {
+            conn.execute("ALTER TABLE routing_event ADD COLUMN event_id TEXT", [])?;
+        }
+        allow_unreported_counters(conn)?;
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS routing_event_event_id ON routing_event(event_id)",
+            [],
+        )?;
+        Ok(())
+    })?;
 
     let inserted = conn.execute(
         "INSERT OR IGNORE INTO routing_event (event_id, task, phase, agent, model, provider, category, cost_status, requests, tokens, cost, retries, escalations, test_result, review_defects, created) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
@@ -676,8 +729,9 @@ const ROUTING_EVENT_COLUMNS: &str = "
 
 /// Drop the `NOT NULL` from the three counters of a journal written before they were nullable.
 ///
-/// SQLite cannot alter a constraint in place, so the table is rebuilt: the documented way, in one
-/// transaction, with the index recreated after. Rows already there keep their zeros. An omitted
+/// SQLite cannot alter a constraint in place, so the table is rebuilt: the documented way, inside
+/// the transaction `open_for_writing` holds, with the index recreated after. It used to open its own
+/// deferred `BEGIN`, which a concurrent writer could interleave with before the lock was taken. Rows already there keep their zeros. An omitted
 /// field was stored as `0` then, and that is what was recorded — rewriting it as unknown would be
 /// inventing in the other direction. Only rows written from here on can say "not reported".
 fn allow_unreported_counters(conn: &Connection) -> Result<()> {
@@ -691,13 +745,11 @@ fn allow_unreported_counters(conn: &Connection) -> Result<()> {
     }
     const COLUMNS: &str = "id, event_id, task, phase, agent, model, provider, category, cost_status, requests, tokens, cost, retries, escalations, test_result, review_defects, created";
     conn.execute_batch(&format!(
-        "BEGIN;
-         CREATE TABLE routing_event_rebuilt ({ROUTING_EVENT_COLUMNS});
+        "CREATE TABLE routing_event_rebuilt ({ROUTING_EVENT_COLUMNS});
          INSERT INTO routing_event_rebuilt ({COLUMNS}) SELECT {COLUMNS} FROM routing_event;
          DROP TABLE routing_event;
          ALTER TABLE routing_event_rebuilt RENAME TO routing_event;
-         CREATE UNIQUE INDEX IF NOT EXISTS routing_event_event_id ON routing_event(event_id);
-         COMMIT;"
+         CREATE UNIQUE INDEX IF NOT EXISTS routing_event_event_id ON routing_event(event_id);"
     ))?;
     Ok(())
 }
@@ -1345,5 +1397,102 @@ mod tests {
         let rows = load_journal(&journal).expect("load");
         assert_eq!(rows[0].cost_status, CostStatus::Unavailable);
         assert_eq!(rows[0].cost, None);
+    }
+}
+
+#[cfg(test)]
+mod concurrent_writer_tests {
+    use super::*;
+    use std::sync::{Arc, Barrier};
+
+    /// A journal from before `event_id`, which every writer migrates on open.
+    fn pre_event_id_journal(path: &Path) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE usage_event (
+                id INTEGER PRIMARY KEY, provider TEXT NOT NULL, model TEXT NOT NULL,
+                category TEXT NOT NULL, cost_status TEXT NOT NULL, requests INTEGER NOT NULL,
+                input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+                reasoning_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL,
+                cache_write_tokens INTEGER NOT NULL, cost REAL, created INTEGER NOT NULL);",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_write_stamps_the_schema_version() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("usage.db");
+        journal_connection(&path).unwrap();
+        let version: i64 = Connection::open(&path)
+            .unwrap()
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, JOURNAL_SCHEMA_VERSION);
+    }
+
+    /// A journal from a newer build may have a shape this one would damage. Refusing names why and
+    /// what to do, and leaves the file as it was.
+    #[test]
+    fn a_journal_from_a_newer_build_is_refused_and_left_untouched() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("usage.db");
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch(&format!(
+                "PRAGMA user_version = {}",
+                JOURNAL_SCHEMA_VERSION + 1
+            ))
+            .unwrap();
+
+        for error in [
+            journal_connection(&path).err(),
+            record_routing_event(&path, &serde_json::json!({"agent": "a", "model": "m"})).err(),
+        ] {
+            let message = error.expect("a newer journal is refused").to_string();
+            assert!(message.contains("newer ai-usage-tui"), "{message}");
+        }
+        let tables: i64 = Connection::open(&path)
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(tables, 0, "the refused writers created nothing");
+    }
+
+    /// Parallel subagents fire parallel hooks, each opening the journal to write. The migration
+    /// was probe-then-`ALTER` with no lock held between the two, so writers that probed together
+    /// all saw the column missing, and every one but the first died on "duplicate column name".
+    #[test]
+    fn writers_opening_an_unmigrated_journal_together_all_succeed() {
+        for round in 0..20 {
+            let dir = tempfile::TempDir::new().unwrap();
+            let path = dir.path().join("usage.db");
+            pre_event_id_journal(&path);
+            let writers = 8;
+            let start = Arc::new(Barrier::new(writers));
+            let handles: Vec<_> = (0..writers)
+                .map(|_| {
+                    let path = path.clone();
+                    let start = Arc::clone(&start);
+                    std::thread::spawn(move || {
+                        start.wait();
+                        journal_connection(&path)
+                            .map(|_| ())
+                            .map_err(|e| e.to_string())
+                    })
+                })
+                .collect();
+            for handle in handles {
+                let outcome = handle.join().unwrap();
+                assert!(
+                    outcome.is_ok(),
+                    "round {round}: a writer failed: {outcome:?}"
+                );
+            }
+        }
     }
 }

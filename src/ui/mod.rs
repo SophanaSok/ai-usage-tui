@@ -30,14 +30,14 @@ pub mod theme;
 #[cfg(test)]
 mod tests;
 
-use std::io;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
-    backend::CrosstermBackend,
+    backend::Backend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
@@ -49,7 +49,7 @@ use crate::budget::{Alert, AlertDispatcher, BudgetEngine};
 use crate::cli::Cli;
 use crate::collector::background::CollectorHandle;
 use crate::collector::SourceRoots;
-use crate::model::CYAN;
+use crate::model::{CYAN, RED};
 use crate::utils::journal_path;
 
 pub use aggregate::{coverage, project_labels, project_totals};
@@ -65,13 +65,23 @@ use panels::{
 };
 use theme::{panel, MUTED};
 
-pub fn run(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+/// Run the dashboard until the user quits or `stop` is raised.
+///
+/// `stop` is how a termination signal reaches the loop: the caller's handler only sets the flag,
+/// and the loop checks it at least every 250ms, so a `kill` leaves through the same exit as `q`
+/// and the terminal is restored rather than left in raw mode on the alternate screen.
+pub fn run<B>(
+    terminal: &mut Terminal<B>,
     cli: &Cli,
-    collector: Option<CollectorHandle>,
+    collector: Option<Arc<CollectorHandle>>,
     budget_engine: BudgetEngine,
     mut dispatcher: AlertDispatcher,
-) -> Result<()> {
+    stop: &AtomicBool,
+) -> Result<()>
+where
+    B: Backend,
+    B::Error: Send + Sync + 'static,
+{
     let journal = cli
         .journal_path
         .clone()
@@ -105,7 +115,7 @@ pub fn run(
         budget_engine,
         alert_sink,
     );
-    loop {
+    while !stop.load(Ordering::Relaxed) {
         app.refresh_if_due();
         terminal.draw(|frame| draw(frame, &app))?;
         if event::poll(Duration::from_millis(250))? {
@@ -156,14 +166,57 @@ pub fn run(
     Ok(())
 }
 
+/// The fewest rows the dashboard lays out in: header 3, metric tiles 7, body 8, footer 2 -- plus
+/// one for the alert banner while a budget alert is actionable (`required_height`).
+///
+/// Below it ratatui does not complain -- it squeezes the constraints, and panels collapse to zero
+/// height one after another in silence, which on a short pane reads as a dashboard with nothing in
+/// it rather than a dashboard with no room. Width has no such floor: the footer is measured and
+/// reflows down to 16 columns, and a test sweeps every width.
+pub const MIN_HEIGHT: u16 = 20;
+
 /// Lay out one frame and dispatch to the panel renderers.
 pub(super) fn draw(frame: &mut Frame, app: &App) {
+    draw_in_colour(frame, app);
+    if app.no_color {
+        strip_colour(frame.buffer_mut());
+    }
+}
+
+/// Everything colour is, removed after the frame is drawn -- one pass here rather than a branch
+/// in every panel's styles, which is how a new panel would have come to ignore `NO_COLOR`.
+/// Bold, reverse and the rest stay: they are not colour. The one thing colour alone carried is
+/// the selected row, drawn as a background, so that becomes reverse video.
+fn strip_colour(buffer: &mut ratatui::buffer::Buffer) {
+    use ratatui::style::Color;
+    for cell in buffer.content.iter_mut() {
+        if cell.bg == theme::SELECTED {
+            cell.modifier.insert(Modifier::REVERSED);
+        }
+        cell.fg = Color::Reset;
+        cell.bg = Color::Reset;
+    }
+}
+
+/// Whether a budget alert is showing, which costs the layout its banner row.
+fn has_alert_banner(app: &App) -> bool {
+    app.alerts.iter().any(|a| a.is_actionable())
+}
+
+/// `MIN_HEIGHT`, plus the banner row when there is one. Checking the bare constant let a 20-row pane
+/// with an alert run the full layout one row short, squeezing the body below its minimum -- the
+/// silent collapse the check exists to prevent (found in review of #104).
+fn required_height(app: &App) -> u16 {
+    MIN_HEIGHT + u16::from(has_alert_banner(app))
+}
+
+fn draw_in_colour(frame: &mut Frame, app: &App) {
     let area = frame.area();
-    let alert_banner_height = if app.alerts.iter().any(|a| a.is_actionable()) {
-        1u16
-    } else {
-        0u16
-    };
+    if area.height < required_height(app) {
+        draw_too_short(frame, area, app);
+        return;
+    }
+    let alert_banner_height = u16::from(has_alert_banner(app));
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -198,6 +251,35 @@ pub(super) fn draw(frame: &mut Frame, app: &App) {
     if app.show_help {
         draw_help(frame, area);
     }
+}
+
+/// What a pane shorter than `required_height` shows: why nothing else is there, that a budget
+/// alert is active if one is -- a too-short pane must not be how an alert goes unseen -- and, on the
+/// last line as always, how to leave.
+fn draw_too_short(frame: &mut Frame, area: Rect, app: &App) {
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "Terminal too short for the dashboard",
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            format!("needs {} rows, has {}", required_height(app), area.height),
+            Style::default().fg(MUTED),
+        )),
+    ];
+    if has_alert_banner(app) {
+        lines.push(Line::from(Span::styled(
+            "A budget alert is active.",
+            Style::default().fg(RED).add_modifier(Modifier::BOLD),
+        )));
+    }
+    let message = Paragraph::new(lines);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(area);
+    frame.render_widget(message, rows[0]);
+    frame.render_widget(footer(area.width, app.search_status()), rows[1]);
 }
 
 /// Key hints, sized to the terminal.

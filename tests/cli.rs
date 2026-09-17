@@ -717,6 +717,59 @@ fn the_text_output_path_also_survives_a_closed_pipe() {
 }
 
 #[test]
+fn the_recorders_survive_a_closed_pipe_after_journaling() {
+    // Each recorder confirmed with a bare `println!` *after* writing its row, so a caller that
+    // discards stdout by closing it -- a hook runner, `| head -0` -- got a journaled row and a
+    // panic, and an exit status that told it the recording failed. The closed pipe is set up
+    // before stdin is written, and the child cannot print before stdin closes, so the order is
+    // not a race.
+    use std::io::Write;
+    let fixtures = format!("{}/tests/fixtures", env!("CARGO_MANIFEST_DIR"));
+    for (flag, fixture) in [
+        ("--record-ollama", "ollama_single.json"),
+        ("--record-usage=llamacpp", "llamacpp_chat.json"),
+    ] {
+        let dir = scratch(&format!("closed-pipe-{}", flag.trim_start_matches('-')));
+        let journal = dir.join("usage.db");
+        let mut child = bin()
+            .arg(flag)
+            .arg("--journal")
+            .arg(&journal)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
+
+        drop(child.stdout.take());
+        let body = std::fs::read(format!("{fixtures}/{fixture}")).expect("read fixture");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(&body)
+            .expect("write stdin");
+
+        let mut stderr = String::new();
+        if let Some(mut handle) = child.stderr.take() {
+            let _ = handle.read_to_string(&mut stderr);
+        }
+        let status = child.wait().expect("wait");
+
+        assert!(
+            !stderr.contains("panicked"),
+            "{flag} panicked writing to a closed pipe:\n{stderr}"
+        );
+        assert!(
+            status.success(),
+            "{flag} on a closed pipe should exit cleanly, got {status}"
+        );
+        assert_eq!(journal_rows(&journal).len(), 1, "{flag} journaled its row");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[test]
 fn the_flags_that_describe_the_cli_survive_a_closed_pipe_too() {
     // `--json` and `--once` were covered; the four flags that describe the CLI itself were not,
     // and two of them panicked. `print_help` ended with a bare `println!()`, and
@@ -1849,6 +1902,79 @@ fn a_statusline_payload_becomes_one_line_and_a_row_in_the_limits_export() {
         String::from_utf8_lossy(&output.stderr)
     );
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--doctor` names an unreadable statusline cache on its own row. The LIMITS problems added
+/// beneath it come from `limits::load`, which reads that cache again -- and printed the same parse
+/// error a second time, on an unlabelled row. Caught in review of #102.
+#[test]
+fn doctor_reports_an_unreadable_statusline_cache_once() {
+    let dir = scratch("doctor-statusline-once");
+    let data = dir.join("data");
+    std::fs::create_dir_all(data.join("ai-usage-tui")).expect("data dir");
+    std::fs::write(
+        data.join("ai-usage-tui").join("statusline-limits.json"),
+        "{ not json",
+    )
+    .expect("write");
+
+    let output = hermetic(bin().arg("--doctor"))
+        .env("XDG_DATA_HOME", &data)
+        .output()
+        .expect("run --doctor");
+    let text = String::from_utf8(output.stdout).expect("utf8");
+    let problem = text
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("statusline"))
+        .and_then(|rest| rest.trim_start().strip_prefix("unreadable"))
+        .map(str::trim)
+        .unwrap_or_else(|| {
+            panic!("the statusline row does not report the cache as unreadable:\n{text}")
+        });
+    assert_eq!(
+        text.matches(problem).count(),
+        1,
+        "the parse error is printed more than once:\n{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--doctor` told a user without a config to "copy examples/config.toml there" -- a file no binary
+/// install channel ships. The example is in the binary now, and the hint names the command.
+#[test]
+fn the_example_config_ships_in_the_binary_and_doctor_points_at_it() {
+    let output = bin().arg("--print-config").output().expect("run");
+    assert!(output.status.success());
+    let example = std::fs::read_to_string(format!(
+        "{}/examples/config.toml",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("read example");
+    assert_eq!(String::from_utf8(output.stdout).expect("utf8"), example);
+
+    // It works before the config is read: a user asking for an example is often one whose own
+    // config does not parse.
+    let dir = scratch("print-config-broken");
+    let broken = dir.join("config.toml");
+    std::fs::write(&broken, "this is not = [toml").expect("write");
+    let output = bin()
+        .args(["--print-config", "--config"])
+        .arg(&broken)
+        .output()
+        .expect("run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let doctor = hermetic(bin().arg("--doctor"))
+        .output()
+        .expect("run --doctor");
+    let text = String::from_utf8(doctor.stdout).expect("utf8");
+    assert!(text.contains("--print-config"), "{text}");
+    assert!(!text.contains("copy examples/config.toml"), "{text}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

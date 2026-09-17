@@ -77,6 +77,7 @@ fn rows_do_not_mix_cost_provenance() {
         show_help: false,
         budget_engine: BudgetEngine::empty(),
         update_notice: None,
+        no_color: false,
         // Bundled, not loaded: a refreshed cache on the developer's machine must not change
         // how a test ranks two models.
         pricing: crate::pricing::PricingEngine::bundled(),
@@ -706,4 +707,39 @@ fn panels_without_columns_ignore_the_sort_keys() {
     app.cycle_sort_column(true);
     app.reverse_sort();
     assert_eq!(app.sort_marker(Panel::Budgets, 0), "", "nothing to mark");
+}
+
+/// A raised stop flag ends the event loop, which is how SIGTERM and SIGHUP leave the dashboard
+/// through the same exit as `q` instead of killing it with the terminal still in raw mode.
+///
+/// Before the flag existed the loop could end only on a key. Here there is no terminal to read
+/// keys from, so the old loop either spun forever or failed on its first read -- neither is `Ok`.
+#[test]
+fn a_raised_stop_flag_ends_the_event_loop_cleanly() {
+    use ratatui::{backend::TestBackend, Terminal};
+    use std::sync::atomic::AtomicBool;
+
+    let scratch = ScratchDir::new("stop-flag");
+    let cli = crate::cli::Cli {
+        db_path: Some(scratch.0.join("no-opencode.db")),
+        journal_path: Some(scratch.0.join("no-journal.db")),
+        claude_dir: Some(scratch.0.join("no-claude-logs")),
+        codex_dir: Some(scratch.0.join("no-codex-home")),
+        copilot_dir: Some(scratch.0.join("no-copilot-home")),
+        gemini_dir: Some(scratch.0.join("no-gemini-home")),
+        omarchy_dir: Some(scratch.0.join("no-omarchy")),
+        ..Default::default()
+    };
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("backend");
+
+    let result = run(
+        &mut terminal,
+        &cli,
+        None,
+        BudgetEngine::empty(),
+        crate::budget::AlertDispatcher::new(None),
+        &AtomicBool::new(true),
+    );
+
+    assert!(result.is_ok(), "the loop did not stop cleanly: {result:?}");
 }

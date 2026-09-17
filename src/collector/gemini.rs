@@ -43,6 +43,7 @@ use serde_json::Value;
 
 use crate::collector::background::Collector;
 use crate::collector::billing::{detect, resolve_sticky, BillingSetting, Signals};
+use crate::collector::skipped::Skipped;
 use crate::model::{Billing, Category, CostStatus, Usage};
 
 pub const ID: &str = "gemini";
@@ -74,6 +75,9 @@ pub fn telemetry_path(root: Option<&Path>) -> Option<PathBuf> {
 #[derive(Clone, Debug, Default)]
 pub struct Offsets {
     files: HashMap<PathBuf, u64>,
+    /// Records the tail had to go around; see `collector::skipped`. This used to be a count
+    /// local to one read, so the dashboard -- which reads incrementally -- never saw it.
+    skipped: Skipped,
 }
 
 impl Offsets {
@@ -269,7 +273,6 @@ pub fn load_gemini(
     let (objects, consumed) = complete_objects(&text[start..]);
 
     let mut usages = Vec::new();
-    let mut unparsed = 0usize;
     for object in objects {
         match serde_json::from_str::<Value>(object) {
             Ok(value) => {
@@ -277,17 +280,16 @@ pub fn load_gemini(
                     usages.push(usage);
                 }
             }
-            Err(_) => unparsed += 1,
+            Err(_) => offsets.skipped.malformed(),
         }
     }
     offsets
         .files
         .insert(path.clone(), (start + consumed) as u64);
 
-    let note = if unparsed > 0 {
-        format!(" · {unparsed} unreadable record(s)")
-    } else {
-        String::new()
+    let note = match offsets.skipped.detail() {
+        Some(detail) => format!(" · {detail}"),
+        None => String::new(),
     };
     let status = format!(
         "Gemini CLI: {} ({} events{})",
@@ -373,6 +375,9 @@ impl Collector for GeminiCollector {
         self.decision = Some(decision.clone());
         let (usages, _) = load_gemini(self.root.as_deref(), &mut self.offsets, decision.billing)?;
         Ok(usages)
+    }
+    fn warning(&self) -> Option<String> {
+        self.offsets.skipped.warning()
     }
 }
 
@@ -613,6 +618,38 @@ mod tests {
             load_gemini(Some(dir.path()), &mut Offsets::new(), Billing::PerToken).unwrap();
         assert!(usages.is_empty());
         assert!(source.contains("telemetry not enabled"), "{source}");
+    }
+
+    /// The count of unreadable records was local to one read, so it described only the slice a
+    /// poll happened to tail: the dashboard, which reads incrementally, reported it for one
+    /// poll at most and then never again, although that usage stayed missing.
+    #[test]
+    fn a_malformed_record_stays_reported_after_the_poll_that_skipped_it() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("telemetry.json");
+        let mut text = record("p-1", "2026-08-24T10:00:00.000Z", "");
+        text.push_str("{ \"attributes\": not json }\n");
+        std::fs::write(&path, &text).unwrap();
+
+        let mut offsets = Offsets::new();
+        let (first, status) =
+            load_gemini(Some(dir.path()), &mut offsets, Billing::PerToken).unwrap();
+        assert_eq!(first.len(), 1, "the readable record survives");
+        assert!(status.contains("1 malformed record(s) skipped"), "{status}");
+
+        text.push_str(&record("p-2", "2026-08-24T10:00:05.000Z", ""));
+        std::fs::write(&path, &text).unwrap();
+        let (second, status) =
+            load_gemini(Some(dir.path()), &mut offsets, Billing::PerToken).unwrap();
+        assert_eq!(second.len(), 1);
+        assert!(
+            status.contains("1 malformed record(s) skipped"),
+            "a later poll forgot the skipped record: {status}"
+        );
+        assert_eq!(
+            offsets.skipped.warning().as_deref(),
+            Some("1 malformed record(s) skipped")
+        );
     }
 
     #[test]

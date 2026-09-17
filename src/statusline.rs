@@ -219,25 +219,13 @@ pub fn cache_path() -> Option<PathBuf> {
 
 /// Write the windows where `limits::load` will find them.
 ///
-/// Temporary-then-rename, as the update and pricing caches are written, so the dashboard's read
-/// never sees half a file -- but with the temporary named per process, which those caches do not
-/// need and this one does. They have one writer, the dashboard. This has one writer per open
-/// Claude Code session, each fired on every redraw, and two sharing a temporary name race: the
-/// first rename moves the second's half-written file into place, and the second rename finds
-/// nothing to move. `omarchy::record::write_record` records the same rule for the same reason.
-/// A temporary that could not be renamed is removed, so a failure leaves nothing behind either.
+/// Through `helpers::write_atomic`: this has one writer per open Claude Code session, each fired
+/// on every redraw, which is the case that rule was first written for.
 pub fn write_cache_at(path: &Path, cached: &CachedLimits) -> anyhow::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("statusline cache path has no parent directory"))?;
-    std::fs::create_dir_all(parent)?;
-    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
-    let written = std::fs::write(&temporary, serde_json::to_vec_pretty(cached)?)
-        .and_then(|()| std::fs::rename(&temporary, path));
-    if written.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-    }
-    Ok(written?)
+    Ok(crate::helpers::write_atomic(
+        path,
+        &serde_json::to_vec_pretty(cached)?,
+    )?)
 }
 
 /// Read the cache. `Ok(None)` when there is none, which is the normal state for anyone who has
@@ -658,12 +646,6 @@ mod tests {
         assert!(
             leftovers.is_empty(),
             "temporaries left behind: {leftovers:?}"
-        );
-        assert!(
-            path.with_extension(format!("{}.tmp", std::process::id()))
-                .to_string_lossy()
-                .contains(&std::process::id().to_string()),
-            "the temporary name carries the process id"
         );
     }
 

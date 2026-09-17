@@ -4,6 +4,21 @@
 
 ### Added
 
+- **A journal schema version.** Writers stamp `PRAGMA user_version` and refuse, by name, a journal a
+  newer build has stamped higher -- a hook installed from one channel beside a dashboard from another
+  is how two builds come to share one file. See `docs/data-model.md`.
+
+- **`NO_COLOR`.** Any non-empty value draws the dashboard without colour, per no-color.org. Every
+  colour was a hard-coded RGB value, backgrounds included, with no way to turn it off. The colour is
+  removed from the finished frame in one pass rather than branched in every panel, so a panel added
+  later cannot ignore the setting; bold and the rest stay, and the selected row -- which colour
+  alone had marked -- is drawn in reverse video.
+- **`--print-config`** prints the annotated example configuration, which is now in the binary.
+  `--doctor` used to tell a user without a config to "copy examples/config.toml there", a file no
+  binary install channel ships. It works before the config is read, so a broken config does not
+  stop it. The example's budgets are live samples, so the hint says to edit them rather than
+  suggesting a `> config.toml` redirect.
+
 - **`docs/stability.md`: what a version number promises.** Semantic versioning covers the
   command-line tool -- flags, exit codes, config keys, JSON and CSV output, the journal schema,
   environment variables -- and explicitly not the Rust library API, which exists so the binary, its
@@ -18,6 +33,71 @@
   code; the build now enforces it.
 
 ### Fixed
+
+- **A `kill`, a closed terminal window or a logout no longer leaves the terminal broken.** The
+  panic hook restored raw mode and the alternate screen; a signal never reached that code, so
+  SIGTERM, SIGHUP or an outside SIGINT ended the dashboard with the shell still on the alternate
+  screen and echo off. All three now set a flag the event loop checks every 250ms and leave through
+  the same exit as `q`; a second signal exits at once. Checked in a real pseudo-terminal against
+  the v0.16.0 binary, which died on each signal without leaving the alternate screen.
+- **Quitting no longer freezes a raw-mode terminal behind a poll in flight.** The dashboard owned
+  the collector handle, and dropping it joined every collector thread *before* the terminal was
+  restored -- with no bound, and a poll cannot be interrupted, so pressing `q` during a
+  rate-limited `zen_pricing` fetch held a frozen screen for most of a minute. The terminal is now
+  restored first, and the join waits at most two seconds before leaving a stuck poll to the
+  process exit (`CollectorHandle::join_within`).
+- **The `zen_pricing` collector no longer prints into the dashboard.** Its rate-limit retry notice
+  went to stderr from a background thread, which lands in the middle of the frame. The collector
+  logs it; the one-shot `--refresh-pricing` still prints it.
+- **`--record-ollama`, `--record-usage`, `--record-routing` and `--claude-code-hook` survive a
+  closed stdout.** Each confirmed with a bare `println!` after journaling, so a caller that closed
+  the pipe got a written row, a panic, and a failing exit status that said the recording had not
+  happened.
+
+- **Data a collector reads around now shows on the dashboard.** Every tailing reader skipped an
+  unreadable file with `Err(_) => continue` and a line that was not JSON as "no usage here", and
+  counted neither: a transcript with a bad byte, a Codex rollout written in a new encoding or a
+  corrupt OpenCode row made the totals smaller while the header stayed green. Claude Code, Codex,
+  OpenCode, Gemini CLI and Copilot's legacy logs now record both through one `collector::skipped`
+  type and implement `Collector::warning` -- which until now only the local-model journal did --
+  so the live status line reads, say, `claude_code: 1 file(s) unreadable, 2 malformed record(s)
+  skipped` and the header is marked degraded. The one-shot status carries the same note plus the
+  first unreadable path and error into `--once`, `--json` and `--doctor`, and the log records each
+  change. An unreadable file is a current state (it is retried every poll and drops out once it
+  reads); a skipped line is permanent for the process, and is counted exactly once -- including
+  OpenCode's deliberately re-read boundary row, which would otherwise have grown by one per poll.
+  Gemini's existing count had lived only inside a single read, so the incremental dashboard
+  reported it for one poll at most.
+- **Subscription windows this build does not recognise are reported, not dropped.** The
+  `~/.claude.json` reader counted entries of an unknown `kind`, and nothing read the count, so a
+  window Claude Code added upstream vanished from the Limits panel, `--json` and `--doctor` alike.
+  It is now a limits problem -- on the status line, and in a `problem` row under `--doctor`'s LIMITS
+  section, which had never printed the problems the panel flags at all.
+
+- **Concurrent hooks no longer fail on an unmigrated journal.** Opening the journal to write ran
+  probe-then-`ALTER` with no lock held between the two, so writers that opened a journal from
+  before `event_id` together -- parallel subagents fire parallel hooks -- all saw the column
+  missing, and every one but the first died on "duplicate column name". A test with eight writers
+  reproduced it on the first round. Migrations now run under `BEGIN IMMEDIATE`, the routing
+  table's rebuild runs inside that transaction instead of opening its own, and writers wait up to
+  five seconds for the lock instead of 250ms.
+- **The update and pricing caches no longer share a temporary file between writers.** Both wrote
+  through a fixed `json.tmp` / `toml.tmp` on the belief that only the dashboard wrote them; in fact
+  two dashboards each run `zen_pricing`, and a scheduled `--check-update` can land beside an
+  opted-in `--doctor`. Writers sharing a temporary race, and the loser's rename moves a half-written
+  file into place. All three caches now go through one `helpers::write_atomic`, which names the
+  temporary per process and removes it when the rename fails -- the rule `--statusline` already
+  followed.
+
+- **A new install no longer opens on a blank table.** With no rows the default panel drew a header
+  over nothing beside tiles reading `0` -- a working dashboard with nothing to report, the least
+  likely reading of an empty screen. It now says no usage was collected and names
+  `ai-usage-tui --doctor`, or, when data exists outside the range or filter, says so and how to widen
+  it.
+- **A pane shorter than 20 rows says so** (21 while a budget alert's banner is showing). Below the
+  height the layout needs, ratatui squeezed the panels to zero height one by one without complaint.
+  The dashboard now shows the rows it needs and has, says so when a budget alert is active so a short
+  pane cannot hide one, and keeps the key hints -- and how to quit -- on the last line.
 
 - **`SECURITY.md` listed the network calls as `--refresh-zen`, `--refresh-pricing` and the budget
   webhook**, omitting `--check-update` and an opted-in `--doctor`, which have called GitHub's

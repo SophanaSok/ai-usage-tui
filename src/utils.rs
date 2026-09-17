@@ -80,6 +80,12 @@ pub fn home_dir() -> Option<PathBuf> {
     home_dir_in(&system_env)
 }
 
+/// Whether the user asked for no colour, per <https://no-color.org>: `NO_COLOR` present and not
+/// empty, whatever its value.
+pub fn no_color_in(env: Env<'_>) -> bool {
+    non_empty(env, "NO_COLOR").is_some()
+}
+
 pub fn home_dir_in(env: Env<'_>) -> Option<PathBuf> {
     if let Some(home) = non_empty(env, "HOME") {
         return Some(PathBuf::from(home));
@@ -188,6 +194,22 @@ pub fn journal_path_in(env: Env<'_>) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_color_is_any_non_empty_value() {
+        let unset = |_: &str| None;
+        let empty = |_: &str| Some(std::ffi::OsString::new());
+        let zero = |name: &str| (name == "NO_COLOR").then(|| std::ffi::OsString::from("0"));
+        assert!(!no_color_in(&unset));
+        assert!(
+            !no_color_in(&empty),
+            "no-color.org: an empty value does not count"
+        );
+        assert!(
+            no_color_in(&zero),
+            "no-color.org: any non-empty value, even `0`"
+        );
+    }
 
     #[test]
     fn count_formatting_scales_by_magnitude() {

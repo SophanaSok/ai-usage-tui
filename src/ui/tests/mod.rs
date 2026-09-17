@@ -34,6 +34,7 @@ mod projects;
 mod routing;
 mod sessions;
 mod svg;
+mod terminal;
 mod timeseries;
 
 fn usage(project: Option<&str>, session: Option<&str>, cost: Option<f64>, tokens: u64) -> Usage {
@@ -95,6 +96,7 @@ fn test_app(usages: Vec<Usage>) -> App {
         // Never the machine's real update cache, for the same reason as `pricing` below: a
         // developer who has opted in would otherwise render a notice these tests never planted.
         update_notice: None,
+        no_color: false,
         // Bundled, not loaded: a refreshed cache on the developer's machine must not change
         // how a test ranks two models.
         pricing: crate::pricing::PricingEngine::bundled(),
@@ -214,7 +216,7 @@ fn buffer_row(buffer: &Buffer, y: u16) -> (String, bool) {
         .collect();
     let highlighted = buffer
         .cell((1, y))
-        .is_some_and(|c| c.style().bg == Some(Color::Rgb(37, 57, 67)));
+        .is_some_and(|c| c.style().bg == Some(crate::ui::theme::SELECTED));
     (text, highlighted)
 }
 

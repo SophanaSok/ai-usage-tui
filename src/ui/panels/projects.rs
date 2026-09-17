@@ -5,7 +5,7 @@
 
 use ratatui::{
     layout::{Constraint, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::Span,
     widgets::{Cell, Row, Table, TableState},
     Frame,
@@ -29,7 +29,7 @@ pub fn draw_projects(frame: &mut Frame, area: Rect, app: &App) {
             // The highlight the model and session tables use. This table had none, so `j`/`k`
             // moved a cursor nothing drew — and `Enter` drilled into whatever row it had reached.
             let style = if index == app.selected {
-                Style::default().bg(Color::Rgb(37, 57, 67))
+                Style::default().bg(crate::ui::theme::SELECTED)
             } else {
                 Style::default()
             };
