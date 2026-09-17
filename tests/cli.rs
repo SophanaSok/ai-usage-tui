@@ -2276,3 +2276,155 @@ fn routing_json_is_narrowed_by_a_range_flag_only_when_one_is_given() {
     assert_eq!(events(&[])["aggregates"][0]["success_rate"], 100.0);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Every key, every enum value and every `null` in every JSON document is in `--schema`.
+///
+/// The glossary is data, so it can drift from the code that prints the JSON. This runs each
+/// document against as much fixture data as there is -- four sources, a routing event, a budget
+/// past its limit, Claude Code's cached limits -- and fails on anything the glossary does not
+/// describe, naming the path to add.
+#[test]
+fn every_json_document_is_fully_described_by_the_schema() {
+    let dir = scratch("schema-drift");
+    let journal = dir.join("usage.db");
+    let fixtures = format!("{}/tests/fixtures", env!("CARGO_MANIFEST_DIR"));
+    let config = dir.join("config.toml");
+    std::fs::write(
+        &config,
+        "[budgets]\n[[budgets.entry]]\nscope = \"global\"\nperiod = \"monthly\"\nlimit = 0.0001\n\
+         [[budgets.entry]]\nscope = \"provider\"\nname = \"nobody\"\nperiod = \"daily\"\nlimit = 5.0\n",
+    )
+    .expect("write config");
+
+    use std::io::Write;
+    let mut child = bin()
+        .args(["--record-routing", "--journal"])
+        .arg(&journal)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("spawn");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(br#"{"agent":"a","model":"m","provider":"p","task":"t","tokens":10,"cost":0.5,"cost_status":"reported","retries":1,"test_result":true}"#)
+        .unwrap();
+    assert!(child.wait().expect("wait").success());
+
+    // The committed fixtures are years old, so nothing in them is inside a budget's period. One
+    // request dated now, priced per token, is what puts the global budget over its limit.
+    let recent = dir.join("recent").join(".claude").join("projects");
+    std::fs::create_dir_all(recent.join("p")).expect("recent claude home");
+    std::fs::write(
+        recent.join("p").join("s.jsonl"),
+        format!(
+            "{{\"type\":\"assistant\",\"uuid\":\"u-now\",\"requestId\":\"req_now\",\
+             \"timestamp\":\"{}\",\"sessionId\":\"s-now\",\"message\":{{\"id\":\"msg_now\",\
+             \"role\":\"assistant\",\"model\":\"claude-sonnet-4-5-20250929\",\
+             \"usage\":{{\"input_tokens\":100000,\"output_tokens\":5000}}}}}}\n",
+            chrono::Utc::now().to_rfc3339()
+        ),
+    )
+    .expect("write recent session");
+    let fixture_claude = PathBuf::from(format!("{fixtures}/claude_home/.claude/projects"));
+
+    let run_with = |flag: &str, claude_dir: &Path| -> serde_json::Value {
+        let output = bin()
+            .env("XDG_CONFIG_HOME", "/nonexistent/config-home")
+            .env("XDG_DATA_HOME", "/nonexistent/data-home")
+            .env_remove("CLAUDE_CONFIG_DIR")
+            .env_remove("CLAUDE_PROJECTS_DIR")
+            .arg(flag)
+            .arg("--all")
+            .arg("--config")
+            .arg(&config)
+            .arg("--db")
+            .arg(format!("{fixtures}/opencode_test.db"))
+            .arg("--claude-dir")
+            .arg(claude_dir)
+            .args(["--claude-billing", "api"])
+            .arg("--codex-dir")
+            .arg(format!("{fixtures}/codex_home"))
+            .arg("--copilot-dir")
+            .arg(format!("{fixtures}/copilot_home"))
+            .args(["--gemini-dir", "/nonexistent", "--omarchy-dir"])
+            .arg(format!("{fixtures}/omarchy"))
+            .arg("--journal")
+            .arg(&journal)
+            .output()
+            .expect("run");
+        // `--check-budgets` exits non-zero by design when a budget is over; the document is what
+        // is under test.
+        serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|e| panic!("{flag}: {e}\n{}", String::from_utf8_lossy(&output.stderr)))
+    };
+
+    let run = |flag: &str| run_with(flag, &fixture_claude);
+    // A session that moves to a pricier model, so `escalations.transitions` is not empty.
+    let escalating = escalating_claude_home(&dir.join("escalating"));
+    assert!(
+        !run_with("--summary-json", &escalating)["escalations"]["transitions"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "no escalation in the fixture run"
+    );
+
+    for (flag, document) in [
+        ("--summary-json", run("--summary-json")),
+        ("--summary-json", run_with("--summary-json", &recent)),
+        ("--summary-json", run_with("--summary-json", &escalating)),
+        ("--json", run("--json")),
+        ("--json", run_with("--json", &escalating)),
+        ("--routing-json", run("--routing-json")),
+        ("--check-budgets", run_with("--check-budgets", &recent)),
+    ] {
+        let problems = ai_usage_tui::schema::unknown(flag, &document);
+        assert!(
+            problems.is_empty(),
+            "{flag} prints what docs/json-glossary.json does not describe:\n  {}",
+            problems.join("\n  ")
+        );
+    }
+
+    // And the fixtures really did exercise the optional parts, or the check above proves little.
+    let summary = run("--summary-json");
+    assert!(
+        summary["budgets"].as_array().is_some_and(|b| b.len() == 2),
+        "{}",
+        summary["budgets"]
+    );
+    assert!(
+        summary["limits"].as_array().is_some_and(|l| !l.is_empty()),
+        "no limits in the fixture run"
+    );
+    assert_eq!(summary["routing"]["events"], 1);
+    assert!(summary["by_model"]["rows"]
+        .as_array()
+        .is_some_and(|r| r.len() > 3));
+    assert!(
+        !run_with("--check-budgets", &recent)["alerts"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "no budget alert in the fixture run"
+    );
+
+    // `--schema` is the same glossary, compact, and needs no config or sources.
+    let schema = bin().arg("--schema").output().expect("run --schema");
+    assert!(schema.status.success());
+    let printed: serde_json::Value = serde_json::from_slice(&schema.stdout).expect("json");
+    let embedded: serde_json::Value =
+        serde_json::from_str(ai_usage_tui::schema::GLOSSARY).expect("json");
+    assert_eq!(printed, embedded);
+    let guide = bin()
+        .arg("--agent-guide")
+        .output()
+        .expect("run --agent-guide");
+    assert_eq!(
+        String::from_utf8_lossy(&guide.stdout),
+        ai_usage_tui::schema::AGENT_GUIDE
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

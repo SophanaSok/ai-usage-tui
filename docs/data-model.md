@@ -1,13 +1,16 @@
 # Data Model
 
 The normalized usage event is the contract shared by collectors, aggregation, exports, and the UI.
+This is the model; the exported spelling of every key and every enum value, with its meaning, is
+[`json-glossary.json`](json-glossary.json), printed by `ai-usage-tui --schema` and checked against
+real output by a test.
 
 ```text
 event_id (stable per-event identity from the source, used for dedup; null falls back to shape + timestamp)
 timestamp
 provider
 model
-category: local | cloud | free | paid | unknown
+category: LOCAL | CLOUD | FREE | PAID | UNKNOWN (exported in upper case)
 cost_status: reported | calculated | estimated | free | local | quota | unavailable
 request_count
 input_tokens
@@ -16,14 +19,13 @@ reasoning_tokens
 cache_read_tokens
 cache_write_tokens
 cost
-billing: per_token | subscription (set by the collector; subscription rows become `quota`)
+billing: per_token | subscription (set by the collector; subscription rows become `quota`; exported in each `--json` row)
 api_equivalent_cost: float | null (list-rate figure for subscription rows only; never summed into cost; the last, 15th, CSV column)
-latency (planned)
-error_status (planned)
 project (populated by the Claude Code, Codex and Copilot collectors from `cwd`; Copilot falls back to `repository`)
 session (populated by the Claude Code, Codex — the thread id — OpenCode and Copilot collectors)
-source (planned)
 ```
+
+Not part of the contract, and not collected: latency, error status, and a per-row source id.
 
 Historical events are priced at the rates that were in effect when they happened, not at whatever the table says now. `pricing/zen.toml` carries effective-dated `[[model."x".period]]` blocks with a `through` date, and `estimate_cost` selects the period covering the event's date before falling back to current rates. A `--refresh-pricing` therefore no longer rewrites historical figures, provided the rate change is recorded as a new period rather than an overwrite.
 

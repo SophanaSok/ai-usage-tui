@@ -23,6 +23,20 @@
   They are facts, not advice -- no thresholds, no verdicts -- and unknown stays unknown: a
   percentage nothing recorded is `null`, not `0` (several sources never report cache or reasoning
   tokens), and `cost` is `null` when nothing in a bucket could be priced.
+- **`--schema` and `--agent-guide`: the output explains itself, from the binary.** The meanings
+  of the JSON lived in README prose, `docs/data-model.md` and Rust doc comments, none of which the
+  CLI could hand to whatever was reading its output -- `"cost_basis": "floor"` could be resolved
+  only by reading the source, and `docs/data-model.md` spelled the categories in lower case while
+  the exports print them in upper. `--schema` prints a JSON glossary of every key of every
+  document and every value of every closed vocabulary, with its type, whether it can be `null`,
+  and what it means. It cannot drift: a test walks real `--summary-json`, `--json`,
+  `--routing-json` and `--check-budgets` output against it and fails on any key, enum value or
+  `null` it does not describe, and another holds each vocabulary to the labels the code prints.
+  `--agent-guide` prints the guide for an LLM agent: start with the summary, drill down with the
+  filters, the reading rules (`null` is never 0, `cost` can be a floor, `quota` is real cost with
+  no figure, `api_equivalent_cost` was never charged, a token share is not a cost share), what to
+  look for in usage and routing, and what not to claim. Both are compiled in, because no binary
+  install ships `docs/`, and both work before the config is read.
 - **`--project PATH` and `--session ID`** filter every export, so a reader goes from the summary
   to one project or session without pulling every row.
 - **`--csv -`** writes the CSV to stdout. It is the compact row format and could only be written
