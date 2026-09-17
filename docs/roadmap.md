@@ -1,8 +1,9 @@
 # Roadmap and Outstanding Findings
 
-Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.17.0, which
-shipped the five V1-readiness pull requests (#101–#105): terminal lifecycle, collector failures on
-screen, concurrent journal writers, first run and terminal compatibility, and the stability contract.
+Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.18.0, which
+shipped the LLM-readable surface (#108–#111: `--summary-json`, `--schema`, `--agent-guide`, the
+Claude Code skill), the site linked from every install channel (#107) and serial release uploads
+(#106), on top of v0.17.0's five V1-readiness pull requests (#101–#105).
 Shipped items are in the versioned sections of `CHANGELOG.md` (new work goes under
 `[Unreleased]`); this file is the *remaining* work, with enough evidence attached that each item
 can be picked up cold.

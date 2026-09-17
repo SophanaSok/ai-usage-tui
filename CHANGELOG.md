@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-09-17
+
 ### Added
 
 - **`--summary-json`: the whole picture in one compact document.** `--json` prints one object per
