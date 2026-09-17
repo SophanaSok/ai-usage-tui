@@ -264,8 +264,17 @@ fn usage_from_event_row(row: &rusqlite::Row<'_>, decision: &Decision) -> Option<
         .saturating_sub(cache_write);
     let output = count(raw_output).saturating_sub(reasoning);
 
-    // A row with nothing in any bucket says nothing, and is counted as skipped by the caller.
-    if input == 0 && output == 0 && reasoning == 0 && cache_read == 0 && cache_write == 0 {
+    // A row with zeros in every bucket says nothing, and is counted as skipped by the caller. One
+    // that is empty because its input or output is `NULL` is a request of unknown size: no row in
+    // the validating capture or a live store has a `NULL` there, so it is kept and flagged rather
+    // than filed under "no tokens".
+    if input == 0
+        && output == 0
+        && reasoning == 0
+        && cache_read == 0
+        && cache_write == 0
+        && !incomplete
+    {
         return None;
     }
 
@@ -1041,6 +1050,20 @@ mod tests {
             collector.warning().as_deref(),
             Some("1 record(s) missing a token count, left unpriced")
         );
+
+        // Both counts `NULL` and nothing else on the row: it used to be filed under "no tokens"
+        // with the rows that really are empty (found in review).
+        Connection::open(dir.path().join("session-store.db"))
+            .unwrap()
+            .execute("UPDATE assistant_usage_events SET input_tokens = NULL", [])
+            .unwrap();
+        let mut cursor = Cursor::start();
+        let (rows, status) =
+            load_copilot_since(Some(dir.path()), &mut cursor, &decision()).expect("load");
+        assert_eq!(rows.len(), 1, "kept, not skipped as empty: {status}");
+        assert!(rows[0].incomplete && rows[0].requests == 1);
+        assert!(status.contains("missing a token count"), "{status}");
+        assert!(!status.contains("with no tokens skipped"), "{status}");
     }
 
     #[test]

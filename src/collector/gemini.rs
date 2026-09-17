@@ -210,7 +210,15 @@ pub fn parse_record(value: &Value, decision_billing: Billing) -> Option<Usage> {
         incomplete,
     };
 
-    if usage.input == 0 && usage.output == 0 && usage.reasoning == 0 && usage.cache_read == 0 {
+    // Nothing in any bucket with the counts present is a response that used nothing. Nothing
+    // because the counts are gone is a request of unknown size, and is kept and flagged --
+    // otherwise both counts renamed upstream would read as Gemini having gone quiet.
+    if usage.input == 0
+        && usage.output == 0
+        && usage.reasoning == 0
+        && usage.cache_read == 0
+        && !usage.incomplete
+    {
         return None;
     }
     Some(usage)
@@ -673,6 +681,35 @@ mod tests {
         let usage = parse_record(&renamed, Billing::PerToken).expect("kept");
         assert!(usage.incomplete);
         assert_eq!(usage.output, 0);
+
+        // Both counts gone, and nothing cached or reasoned: the common shape of a plain call
+        // after a rename. It was dropped by the all-zero check, invisibly (found in review).
+        let mut bare = whole.clone();
+        let attributes = bare["attributes"].as_object_mut().unwrap();
+        for key in [
+            "input_token_count",
+            "output_token_count",
+            "cached_content_token_count",
+            "thoughts_token_count",
+        ] {
+            attributes.remove(key);
+        }
+        let usage = parse_record(&bare, Billing::PerToken).expect("kept, not dropped as empty");
+        assert!(usage.incomplete);
+        assert_eq!((usage.requests, usage.input, usage.output), (1, 0, 0));
+
+        // The same zeros with the counts present are a response that used nothing.
+        let mut nothing = whole.clone();
+        let attributes = nothing["attributes"].as_object_mut().unwrap();
+        for key in [
+            "input_token_count",
+            "output_token_count",
+            "cached_content_token_count",
+            "thoughts_token_count",
+        ] {
+            attributes.insert(key.into(), serde_json::json!(0));
+        }
+        assert!(parse_record(&nothing, Billing::PerToken).is_none());
     }
 
     #[test]
