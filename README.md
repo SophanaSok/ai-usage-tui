@@ -467,6 +467,41 @@ id — so a wrapper that records twice cannot inflate a total.
 [`contrib/codecompanion/`](contrib/codecompanion/) wires this into
 CodeCompanion, which drives llama.cpp from Neovim.
 
+**Any other tool** — an agent, a gateway, a script of your own — goes through
+`--record-event`, provided it logs its own token counts. There is no response to
+parse here: a few lines of `jq` or a script turn the tool's log into this tool's
+own terms, one JSON object per line, and pipe them in.
+
+```sh
+# a tool whose log has lines like
+#   {"id":"r1","ts":1758000000,"model":"claude-sonnet-5","in":1200,"out":300,"cwd":"/work/app"}
+jq -c '{provider: "mytool", model, event_id: .id, created: .ts,
+        input_tokens: .in, output_tokens: .out, project: .cwd}' ~/.mytool/usage.jsonl \
+  | ai-usage-tui --record-event
+```
+
+`provider`, `model`, `input_tokens` and `output_tokens` are required, and so is
+one of `event_id` (the tool's own id for the request, the better choice) or
+`created` (unix seconds) — with neither, recording the same log twice would
+count it twice. Optional: `reasoning_tokens`, `cache_read_tokens`,
+`cache_write_tokens`, `project` (the working directory), `session_id`, and the
+two statements about money an adapter may make. `"cost": 0.0123` is a figure the
+tool itself recorded, kept as `reported` and never re-estimated;
+`"billing": "subscription"` says the work was billed against a plan, which makes
+the row `quota` with the list-rate figure beside it, as for Claude Code on a Max
+plan. Say neither and the row is priced from the rate tables like any other. No
+other `cost_status` can be supplied: this tool will not vouch for arithmetic it
+did not see.
+
+It is strict, because the exit status is all an adapter's author has to go on. A
+key it does not know, a count that is not a whole number, a line that is not
+JSON: each refuses the *whole* batch, by name, before the journal is touched.
+And it records measured counts only — an event without its token counts is
+refused, never stored as zero, so a tool that keeps none cannot be journaled by
+estimating them ([why](#why-there-is-no-cursor-collector)). Do not feed it a
+tool that already has a collector here: the two would be counted twice.
+`ai-usage-tui --agent-guide` tells an LLM agent how to write the adapter.
+
 The journal defaults to:
 
 ```text
@@ -546,6 +581,12 @@ Cursor row is ever produced.
 
 If Cursor ships reliable local counts — there is an open request for token
 usage in its hooks API — this becomes a collector like any other.
+
+`--record-event` does not change this. It journals what a tool *measured*, and
+refuses an event that arrives without its token counts, so it cannot be handed
+Cursor's zeros — but nothing can stop a script from inventing the counts before
+they get there. For any source this tool does not read itself, the rule above
+is the adapter author's to keep: no measurement, no row.
 
 ## Interactive dashboard
 
@@ -1091,6 +1132,7 @@ does not load it automatically.
 | `--refresh-interval N` | Refresh the TUI every `N` seconds |
 | `--record-ollama` | Read an Ollama response from stdin and journal it |
 | `--record-usage PROVIDER` | Read an OpenAI-compatible response from stdin and journal it under PROVIDER |
+| `--record-event` | Read usage events from stdin, one JSON object per line in this tool's own terms, and journal them — for a tool with no collector, through an adapter |
 | `--refresh-zen` | Refresh the cached Zen model catalog and exit |
 | `--refresh-pricing` | Refresh the Zen pricing cache and exit |
 | `--check-update` | Ask GitHub for the latest release tag, cache it for the dashboard header, and exit (needs the network; the command is the consent) |
@@ -1128,7 +1170,7 @@ On Windows, `USERPROFILE` (or `HOMEDRIVE` + `HOMEPATH`) stands in for `HOME`,
 ## Privacy and network behavior
 
 - OpenCode data is read locally from SQLite in read-only mode.
-- The local-model journal (`--record-ollama`, `--record-usage`) stores usage metadata, not prompt or response content.
+- The local-model journal (`--record-ollama`, `--record-usage`, `--record-event`) stores usage metadata, not prompt or response content. `--record-event` also stores the project path and session id, when the adapter sends them.
 - Routing events contain only the JSON fields supplied by the caller.
 - An LLM agent you point at the tool (`--summary-json`, the Claude Code skill) reads token counts,
   model names, costs, **project paths and session ids**. Those travel to the model provider that

@@ -19,7 +19,7 @@ use ai_usage_tui::{
     cli::{parse_cli, print_help},
     collector::{
         background::{Collector, CollectorHandle},
-        journal::{record_ollama, record_routing, record_usage},
+        journal::{record_event, record_ollama, record_routing, record_usage},
         load_usage,
         pricing_refresh::refresh_pricing,
         registry,
@@ -143,6 +143,10 @@ fn dispatch() -> Result<()> {
     if let Some(provider) = cli.record_usage.as_deref() {
         let path = journal_path(&cli)?;
         return record_usage(&path, provider);
+    }
+    if cli.record_event {
+        let path = journal_path(&cli)?;
+        return record_event(&path);
     }
     if cli.record_routing {
         let path = journal_path(&cli)?;
@@ -944,8 +948,9 @@ fn absence_hint(id: &str) -> Option<&'static str> {
             r#"{"telemetry":{"enabled":true,"target":"local","outfile":"~/.gemini/telemetry.json"}}"#,
         )),
         "journal" => Some(
-            "written by --record-usage (llama.cpp, LM Studio, vLLM), --record-ollama and \
-             --record-routing; nothing to do if unused",
+            "written by --record-usage (llama.cpp, LM Studio, vLLM), --record-ollama, \
+             --record-event (any other tool, through an adapter) and --record-routing; nothing \
+             to do if unused",
         ),
         "zen_pricing" => {
             Some("optional; --refresh-pricing writes it (bundled rates work without it)")
