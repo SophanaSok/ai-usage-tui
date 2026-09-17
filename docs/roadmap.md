@@ -1,11 +1,12 @@
 # Roadmap and Outstanding Findings
 
-Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.19.0, which
-shipped the LLM-extendable surface (#117–#121: `--record-event`, `--agent-guide [TOPIC]` with the
-`setup`, `recipes` and `extend` guides, the contributor's guide and guards that ask the registry),
-unknown-stays-unknown in the four places it did not (#112), bundled pricing that says when it is
-old (#113) and the monthly rate-table drift job (#114, #116), on top of v0.18.0's LLM-readable
-surface (#107–#111) and v0.17.0's five V1-readiness pull requests (#101–#105).
+Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.20.0, which
+shipped the supply chain (#122: attested releases, a bill of materials, actions pinned by commit,
+least-privilege tokens, a protected `main` that the release commit goes through too) and the last
+decision that had to precede 1.0.0 (#123: a failure exits `2`, and `1` means only that a budget
+is over), on top of v0.19.0's LLM-extendable surface (#117–#121), unknown-stays-unknown (#112) and
+pricing that says when it is old (#113, #114, #116), v0.18.0's LLM-readable surface (#107–#111)
+and v0.17.0's five V1-readiness pull requests (#101–#105).
 Shipped items are in the versioned sections of `CHANGELOG.md` (new work goes under
 `[Unreleased]`); this file is the *remaining* work, with enough evidence attached that each item
 can be picked up cold.
