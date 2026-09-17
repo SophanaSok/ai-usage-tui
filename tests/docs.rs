@@ -730,3 +730,75 @@ fn readme_links_the_crates_io_page() {
         "README.md does not link {url}, though it documents `cargo install`"
     );
 }
+
+/// Every channel sends a reader to the same front door: `package.homepage`.
+///
+/// crates.io and GitHub's About box named the site while Homebrew, Scoop, Chocolatey and the AUR
+/// package all named the source repository, and `--help`, the man page, `--doctor` and the
+/// installer named nothing -- so how a user installed the tool decided whether they ever learned
+/// the documentation existed. The templates now carry `__HOMEPAGE__`, which `release.yml` renders
+/// from the manifest, and everything compiled in reads `CARGO_PKG_HOMEPAGE`.
+#[test]
+fn every_channel_points_at_the_homepage() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let homepage = env!("CARGO_PKG_HOMEPAGE");
+    assert!(homepage.starts_with("https://"), "homepage: {homepage:?}");
+    // Rendered by the same `sed -e "s|__HOMEPAGE__|...|g"` as the description.
+    for bad in ['|', '&', '\\', '\'', '"', ' '] {
+        assert!(
+            !homepage.contains(bad),
+            "{bad:?} in package.homepage would corrupt a rendered manifest"
+        );
+    }
+
+    let read = |relative: &str| {
+        std::fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|e| panic!("read {relative}: {e}"))
+    };
+    for relative in [
+        "packaging/homebrew/ai-usage-tui.rb",
+        "packaging/scoop/ai-usage-tui.json",
+        "packaging/chocolatey/ai-usage-tui.nuspec",
+        "packaging/aur/PKGBUILD",
+    ] {
+        let text = read(relative);
+        assert!(
+            text.contains("__HOMEPAGE__"),
+            "{relative} has no __HOMEPAGE__ placeholder for release.yml to render"
+        );
+        assert!(
+            !text.contains(homepage),
+            "{relative} carries a literal copy of the homepage; use __HOMEPAGE__"
+        );
+    }
+    assert!(
+        read(".github/workflows/release.yml").contains("s|__HOMEPAGE__|${HOMEPAGE}|g"),
+        "release.yml no longer renders __HOMEPAGE__"
+    );
+
+    // The installer runs alone, piped from curl, so it carries its own copy -- held to the
+    // manifest here.
+    assert!(
+        read("scripts/install.sh").contains(&format!("SITE=\"{homepage}\"")),
+        "scripts/install.sh names a different site than package.homepage"
+    );
+
+    // crates.io's two links, and the About box.
+    let manifest = read("Cargo.toml");
+    assert!(
+        manifest.contains(&format!("\ndocumentation = \"{homepage}\"")),
+        "package.documentation should name the site, not default to docs.rs"
+    );
+    assert!(
+        manifest.contains(&format!("\ngithub_homepage = \"{homepage}\"")),
+        "GitHub's About box and crates.io name different homepages"
+    );
+
+    // What every install can print.
+    let help = ai_usage_tui::cli::command().render_long_help().to_string();
+    assert!(help.contains(homepage), "--help does not name the site");
+    assert!(
+        help.contains(env!("CARGO_PKG_REPOSITORY")),
+        "--help does not name the repository"
+    );
+}
