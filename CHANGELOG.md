@@ -30,6 +30,22 @@
 
 ### Changed
 
+- **The contributor's guide says what adding a data source really takes, and tests hold the parts
+  of it that were wrong.** `CONTRIBUTING.md` called it "two files" and listed the other six
+  thirty lines later; its fixture command and `just run` both called themselves hermetic while
+  leaving Copilot and Gemini unpinned, so the documented fixture-only run printed the reader's own
+  rows. The section now opens with the two questions that decide whether there should be a
+  collector at all (does the tool measure its own counts; would `--record-event` do), requires a
+  redacted real capture before a parser, lists every file, and names the tests that will say what
+  is missing. `documented_fixture_commands_pin_every_source` runs both documented commands as
+  written and asks `--doctor` where each source resolved. `AGENTS.md` is no longer headed as one
+  vendor's instructions and gains an "Extending it" section -- cheapest route first, and the rules
+  that outrank a request (never invent a number, work from real bytes, a test must fail against
+  its bug). A project skill, `.claude/skills/add-data-source/`, gives a coding agent the order to
+  work in, including the two places it should stop. The check that agent-facing files name only
+  real flags now matches the parser exactly -- it was a substring search that accepted `--record`
+  -- and covers `AGENTS.md` and the new skill.
+
 - **The guards a new source or panel trips now ask the code, not a list kept in a test.** Five
   checks each carried a hand-written list -- of source ids, of billing-capable sources, of panels,
   of overlay words, of actions `--once` refuses -- and a list in a test passes for the entry nobody
