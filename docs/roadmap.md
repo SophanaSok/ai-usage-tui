@@ -26,8 +26,9 @@ closed the next day. Findings numbered since the audit take the priority they wo
 there, so a P1 can be open again — read `## Positioning` alongside `## Outstanding findings`,
 not instead of it. Nothing above P2 is open as of 2026-09-02.
 
-Sources read today: OpenCode SQLite, Claude Code JSONL, Codex CLI rollouts, the local Ollama/routing journal, and the
-Zen pricing table. Verified end to end against ~103MB of real Claude Code logs — 5,879 requests
+Sources read today: OpenCode SQLite, Claude Code JSONL, Codex CLI rollouts, GitHub Copilot's store and legacy logs,
+Gemini CLI telemetry, the local-model/routing journal (Ollama, llama.cpp and other OpenAI-compatible servers), and
+the Zen pricing table. Verified end to end against ~103MB of real Claude Code logs — 5,879 requests
 parsed in 0.27s with **zero unpriced rows**. On a subscription account those rows are `quota`
 rather than priced, and carry the list-rate figure as `api_equivalent_cost` instead of `cost`.
 
@@ -243,6 +244,65 @@ refactor, with no mention of testing or reviewers:
 The first makes `--doctor` panic rather than degrade when `HOME` is unset; the second requires
 Cursor at all four platform paths at once, so the notice can never fire. Revert both before
 merging anything.
+
+## V1 readiness — 2026-09-17
+
+A production-readiness audit on 2026-09-17 (three read-only sweeps: core robustness, CI and
+release, providers and UX, each claim checked against the code) found the numbers sound and the
+gaps around them. v0.16.0 shipped the unreleased rustls advisory fix the same day. The blockers
+were split into five pull requests: terminal lifecycle (signals, quitting behind a poll, a
+collector printing into the frame, recorders panicking on a closed pipe); failures that never
+reached the screen (`collector::skipped`, dropped limit windows); concurrent writers (the journal
+migration race, reproduced at 8 of 40 parallel writes, plus shared cache temporaries and
+`PRAGMA user_version`); first run and terminals (`NO_COLOR`, `--print-config`, an empty state, a
+minimum height); and the contract itself (`docs/stability.md`, `schema_version` in every JSON
+document, `#![forbid(unsafe_code)]`, stale security and privacy text). **The decision taken:** 1.0
+stabilises the command-line tool and its data formats, and the Rust library API is declared
+unstable, so refactors never force a 2.0.
+
+**Suggested path:** cut a minor release once those are merged, let it run, then tag 1.0.0. Items 1–3
+below are the first 1.x work.
+
+**Found and not yet done, ranked.** Each has its evidence; none blocks the contract above.
+
+1. **Unknown stays unknown, four places it does not.** An absent token field reads as `0`
+   (`helpers::number`, Copilot's `count`, Gemini's closure), so an upstream rename prices zero
+   output instead of saying "unknown". An absent timestamp becomes epoch 0 (`claude_code.rs`,
+   `codex.rs`), invisible outside `--all` with nothing on screen. `classify::is_free_model` asserts
+   $0.00 from a *name* containing a `free` token, with no table lookup. The recorders stamp `now()`
+   when a response carries no time.
+2. **Bundled pricing has no age check.** Only the refreshed cache is dated (30 days); the tables
+   compiled into the binary are never compared to the clock, so a six-month-old install prices at
+   six-month-old rates without a word. `--refresh-pricing` refreshes Zen only, not the LiteLLM
+   table. Engine warnings reach `--doctor` only. Figures are USD list rates and nothing says so.
+3. **Supply chain.** No build-provenance attestation (`actions/attest-build-provenance` is a few
+   lines), no signing, no SBOM. Actions are pinned by tag, not SHA, and the MSRV job uses
+   `dtolnay/rust-toolchain@master`. `release.yml` grants `contents: write` to every job, and
+   `ci.yml` has no `permissions:` block (the repository default is read, so this is documentation
+   rather than exposure). The "Protect main" ruleset exists with `enforcement: disabled`, so no
+   check is required before merging; enabling it is a settings change.
+4. **Onboarding.** Routing analytics, the differentiating feature, sits behind a hand-run `jq`
+   merge into `~/.claude/settings.json`. An `--install-hook` / `--uninstall-hook` pair, and an
+   uninstall path for the data directory, would close it. The consent question is the one the update
+   story settled: the command is the consent.
+5. **Data lifecycle.** `usage.db` has no retention or `VACUUM`; the collector's in-memory rows grow
+   for the life of the process; Gemini re-reads its whole telemetry file into memory each poll
+   (`gemini.rs`, `read_to_string`); the opt-in log never rotates.
+6. **Coverage.** Codex rollouts carry `rate_limits` on every token event and nothing reads them, so
+   Codex windows exist only on Omarchy. Claude Code, the largest source, has no captured transcript
+   fixture file, only inline strings. No fuzz or property tests over the parsers of other tools'
+   formats; no coverage measurement. `.jsonl.zst` Codex rollouts are not read.
+7. **Scripting surface.** One non-zero exit code covers both "a budget is over" and "the tool
+   failed", so a monitor cannot tell them apart; a distinct code is a breaking change and belongs
+   before 1.0.0 if it is wanted at all. No `--csv -`, no `--doctor --json`, no absolute reset time in
+   the Limits panel. CSV has no formula-injection guard. The journal and caches are written at the
+   default umask, and the webhook accepts plain `http://`.
+8. **Distribution.** The Windows zip carries no completions (PowerShell is never generated); no musl
+   static Linux build; macOS binaries unsigned; AUR blocked upstream; Chocolatey never pushed.
+9. **Hygiene.** `CODE_OF_CONDUCT.md` has no contact or enforcement path; `LICENSE` names
+   "contributors" where `Cargo.toml` names the author; CHANGELOG headings mix `## [x.y.z]` and
+   `## x.y.z`; `v0.1.0` has a tag and no GitHub Release; `.claude/settings.local.json` is ignored
+   only by one machine's global gitignore.
 
 ## Positioning
 
