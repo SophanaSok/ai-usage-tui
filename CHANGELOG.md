@@ -4,6 +4,15 @@
 
 ### Added
 
+- **A monthly job keeps the bundled rate table from going stale by neglect.** The tool now tells
+  a user when their install's rates are over 90 days old; this is the other end of that promise.
+  `pricing-drift.yml` regenerates `pricing/litellm.tsv` when LiteLLM's table has moved, runs the
+  pricing engine's tests against it, and opens one issue with what changed and a link that opens
+  the pull request -- an issue, because a pull request opened by the workflow token gets no CI, and
+  never a red build, because upstream moving is not a failure. If the tests fail against the new
+  table it says so and pushes nothing. The community table stays release-bound by decision:
+  refreshing it at runtime would give `--refresh-pricing` a new host to contact.
+
 - **Bundled pricing says when it is old.** Rates ship in the binary, and only the *refreshed cache*
   was ever compared to the clock -- so an install six months old priced at six-month-old rates
   without a word, which is a confident number resting on a fact nobody checked. Both tables carry an
@@ -21,6 +30,14 @@
 
 ### Fixed
 
+- **A free model the rate table lists at `0.0` is `FREE` again.** The rule added earlier in this
+  cycle -- a name does not make a model free if the pricing table lists a rate for it -- asked only
+  whether a rate was *listed*, and the community table publishes free tiers as an explicit
+  `input=0.0 output=0.0`. So `llama-3.3-70b-instruct-turbo-free`, and every other free model the
+  table knew about, became `PAID`, priced at an estimated $0.00 and counted as billable. A
+  published rate of zero is the table agreeing the model is free; only a rate above zero
+  contradicts its name. Found by the pricing-drift job's first dry run, where a regenerated table
+  listing OpenRouter's `...:free` models made a classification test fail.
 - **A token count a source stopped reporting is no longer read as zero.** The counts are plain
   integers, so an absent `output_tokens` was `0` -- and a field renamed upstream would have priced
   every request as though it produced no output: a confident, low, wrong number, from a tool whose

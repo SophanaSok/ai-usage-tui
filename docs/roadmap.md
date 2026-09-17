@@ -312,10 +312,26 @@ and an `AGENTS.md` snippet. Two decisions worth keeping:
    engine's faults reach the dashboard's status line (`App::pricing_note`; only a fault turns the
    header red), `--doctor` and `--summary-json`, which also carry the table dates and `USD`.
    Every date in the tests is injected -- a test reading the clock would start failing by itself
-   ninety days after `just pricing`. **Still open:** `--refresh-pricing` refreshes Zen only. The
-   community table can only be updated by a release; doing it at runtime means fetching this
-   repository's own generated `pricing/litellm.tsv` (a new host for that command to contact) and
-   a scheduled job to regenerate it, both of which want a decision rather than a rider.
+   ninety days after `just pricing`.
+
+   **Resolved by decision (2026-09-17): the community table stays release-bound.** Refreshing it
+   at runtime would mean `--refresh-pricing` fetching this repository's generated table -- a new
+   host for that command, for a tool whose pitch is that it transmits nothing -- when releases
+   here are frequent and the notice above now tells a user when to take one. What was missing
+   was the other end: nothing made sure the table a release is cut from was fresh.
+   `.github/workflows/pricing-drift.yml` does, monthly: it regenerates the table, runs the
+   pricing engine's tests against it, pushes one branch and opens one issue with what changed
+   (`scripts/pricing-drift-summary.py`) and a link that opens the pull request. It opens an issue
+   and not the pull request because one opened by the workflow token gets no CI run, and it does
+   not go red on drift because `just pricing-check` is kept out of CI for that reason.
+
+   Its first dry run paid for it. Fifteen days after the last refresh upstream had 177 repriced
+   entries and ~650 new ones, and the regenerated table **failed a classification test**: it
+   lists OpenRouter's `...:free` models at an explicit `0.0`, and `bundled_lists_a_rate` -- added
+   the same day -- took "a rate is listed" to mean "costs money". That was already wrong on
+   `main`: the committed table lists `llama-3.3-70b-instruct-turbo-free` at `0.0`, so a free model
+   the table knew about was `PAID` at an estimated $0.00. A published rate of zero is the table
+   agreeing a model is free; only a rate above zero contradicts its name.
 
    *As filed:* **Bundled pricing has no age check.** Only the refreshed cache is dated (30 days); the tables
    compiled into the binary are never compared to the clock, so a six-month-old install prices at
