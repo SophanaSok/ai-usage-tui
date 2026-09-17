@@ -1,9 +1,11 @@
 # Roadmap and Outstanding Findings
 
-Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.18.0, which
-shipped the LLM-readable surface (#108–#111: `--summary-json`, `--schema`, `--agent-guide`, the
-Claude Code skill), the site linked from every install channel (#107) and serial release uploads
-(#106), on top of v0.17.0's five V1-readiness pull requests (#101–#105).
+Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.19.0, which
+shipped the LLM-extendable surface (#117–#121: `--record-event`, `--agent-guide [TOPIC]` with the
+`setup`, `recipes` and `extend` guides, the contributor's guide and guards that ask the registry),
+unknown-stays-unknown in the four places it did not (#112), bundled pricing that says when it is
+old (#113) and the monthly rate-table drift job (#114, #116), on top of v0.18.0's LLM-readable
+surface (#107–#111) and v0.17.0's five V1-readiness pull requests (#101–#105).
 Shipped items are in the versioned sections of `CHANGELOG.md` (new work goes under
 `[Unreleased]`); this file is the *remaining* work, with enough evidence attached that each item
 can be picked up cold.
