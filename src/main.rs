@@ -3,6 +3,7 @@
 use std::env;
 use std::io::stdout;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
+use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,7 +17,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 
 use ai_usage_tui::{
     budget::{AlertDispatcher, BudgetEngine},
-    cli::{parse_cli, print_help},
+    cli::{parse_cli, print_help, EXIT_CHECK_SAID_NO, EXIT_FAILURE, EXIT_HOOK_FAILED},
     collector::{
         background::{Collector, CollectorHandle},
         journal::{record_event, record_ollama, record_routing, record_usage},
@@ -32,12 +33,36 @@ use ai_usage_tui::{
     ui::run,
 };
 
-fn main() -> Result<()> {
+const HOOK_FLAG: &str = "--claude-code-hook";
+
+fn main() -> ExitCode {
     match dispatch() {
+        Ok(()) => ExitCode::SUCCESS,
         // A downstream reader closing the pipe — `| head`, `| grep -q`, quitting out of
         // `| less` — is a normal way for a command in a pipeline to end, not a failure.
-        Err(error) if is_broken_pipe(&error) => Ok(()),
-        other => other,
+        Err(error) if is_broken_pipe(&error) => ExitCode::SUCCESS,
+        Err(error) => {
+            // What returning the error from `main` printed, kept word for word.
+            eprintln!("Error: {error:?}");
+            // Asked of the arguments and not of the parsed command line, because a hook fails
+            // before there is one too: a config that does not parse stops every invocation,
+            // and would otherwise be read out to the model after every Bash call.
+            let hook = env::args().any(|arg| arg == HOOK_FLAG);
+            ExitCode::from(exit_code(&error, hook))
+        }
+    }
+}
+
+/// `1` and `2` mean what they mean to `grep` and `diff`: the answer was no, and there was
+/// trouble. They were one code until 1.0, so a monitor could not tell a budget that was over
+/// from a config that did not parse.
+fn exit_code(error: &anyhow::Error, hook: bool) -> u8 {
+    if error.downcast_ref::<BudgetsExceeded>().is_some() {
+        EXIT_CHECK_SAID_NO
+    } else if hook {
+        EXIT_HOOK_FAILED
+    } else {
+        EXIT_FAILURE
     }
 }
 
@@ -961,7 +986,8 @@ fn absence_hint(id: &str) -> Option<&'static str> {
     }
 }
 
-/// Budget breach as an error, so the non-zero exit runs destructors like any other failure.
+/// Budget breach as an error, so the exit runs destructors like any failure does. It is not one:
+/// [`exit_code`] gives it a status of its own.
 #[derive(Debug)]
 struct BudgetsExceeded(usize);
 

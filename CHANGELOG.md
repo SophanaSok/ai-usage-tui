@@ -28,6 +28,22 @@
 
 ### Changed
 
+- **A failure exits `2`; `1` now means only that a budget is over.** Every failure and a
+  breached budget shared one exit code, so the scheduled `--check-budgets` this tool tells people
+  to run could not tell "you are over" from "your config does not parse" -- the recipe shipped in
+  `--agent-guide recipes` parsed stdout with `jq` to find out which it had, and a cron line
+  testing the status alone would have raised a budget alarm for a typo. The codes now mean what
+  they mean to `grep` and `diff`: `0` fine, `1` the check said no, `2` trouble -- a flag the tool
+  does not know, a config or source it could not read, a write that did not happen. The breach
+  keeps `1`, the number the README documented, and `docs/stability.md` had promised only
+  "non-zero" for a failure, so a script written against either keeps working unless it tested a
+  *failure* for `== 1`. This is the last change of its kind before 1.0.0, which freezes it.
+  `--help` and the man page gained an `EXIT STATUS` section, and the budget recipe is three lines
+  shorter. One exception, from a capture and not from documentation: on Claude Code 2.1.275 a
+  `PostToolUse` hook that exits `2` has its stderr given to the model as something to act on, and
+  one that exits `1` does not -- so a failed `--claude-code-hook` still exits `1`, including when
+  what failed was the config, before the hook's own code ran. A journal that could not be written
+  is not the model's to fix.
 - **Every action is pinned by commit, and every workflow token is least-privilege.** Actions
   were named by tag -- a pointer its owner can move -- including in the job that holds the
   crates.io token, and the MSRV job tracked a branch. All are now `owner/action@<commit> # version`,

@@ -1344,6 +1344,108 @@ fn an_unknown_flag_is_an_error_not_a_panic() {
     assert!(!stderr.contains("panicked"), "{stderr}");
 }
 
+/// `1` is an answer and `2` is trouble, as they are for `grep` and `diff`. They were one code, so
+/// the scheduled check this exists for could not tell a budget that was over from a config that
+/// did not parse -- and the shipped recipe had to parse stdout to find out which it had.
+#[test]
+fn a_budget_that_is_over_exits_1_and_a_tool_that_failed_exits_2() {
+    let dir = scratch("exit-codes");
+    let journal = dir.join("usage.db");
+    let config_home = dir.join("config");
+    let config = config_home.join("ai-usage-tui").join("config.toml");
+    std::fs::create_dir_all(config.parent().unwrap()).expect("config home");
+    let budget = |limit: &str| {
+        format!("[budgets]\n[[budgets.entry]]\nscope = \"global\"\nperiod = \"monthly\"\nlimit = {limit}\n")
+    };
+    let now = chrono::Utc::now().timestamp();
+    let events = dir.join("events.ndjson");
+    std::fs::write(
+        &events,
+        format!(
+            "{{\"provider\":\"aider\",\"model\":\"gpt-5\",\"event_id\":\"c\",\"created\":{now},\"input_tokens\":10,\"output_tokens\":3,\"cost\":0.25}}\n"
+        ),
+    )
+    .expect("write events");
+    record(&journal, events.to_str().unwrap(), "--record-event");
+    let check = |config_text: &str| {
+        std::fs::write(&config, config_text).expect("write config");
+        let mut command = bin();
+        command.arg("--check-budgets");
+        hermetic_with(
+            &mut command,
+            Path::new("/nonexistent/opencode.db"),
+            &journal,
+        );
+        command.env("XDG_CONFIG_HOME", &config_home);
+        command.output().expect("run")
+    };
+
+    let under = check(&budget("100.0"));
+    assert_eq!(under.status.code(), Some(0), "{under:?}");
+
+    let over = check(&budget("0.10"));
+    assert_eq!(over.status.code(), Some(1), "{over:?}");
+    let document: serde_json::Value = serde_json::from_slice(&over.stdout).expect("json");
+    assert_eq!(document["alerts"].as_array().map(Vec::len), Some(1));
+
+    // The same command, the same breach on disk, and a config the tool refuses to read.
+    let broken = check(&format!("{}not_a_key = 1\n", budget("0.10")));
+    assert_eq!(broken.status.code(), Some(2), "{broken:?}");
+    assert!(broken.stdout.is_empty(), "{broken:?}");
+
+    let unknown_flag = bin().arg("--not-a-real-flag").output().expect("run");
+    assert_eq!(unknown_flag.status.code(), Some(2), "{unknown_flag:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The one failure that is not `2`. Claude Code reads a hook's status itself, and measured on
+/// 2.1.275 a `PostToolUse` hook that exits `2` has its stderr handed to the model as something
+/// to act on; one that exits `1` does not. That has to hold for a failure from before the hook's
+/// own code runs as well: a config that does not parse stops every invocation, and would be
+/// read out to the model after every Bash call.
+#[test]
+fn a_failed_claude_code_hook_never_exits_2() {
+    use std::io::Write;
+    let dir = scratch("hook-exit-code");
+    let config_home = dir.join("config");
+    let config = config_home.join("ai-usage-tui").join("config.toml");
+    std::fs::create_dir_all(config.parent().unwrap()).expect("config home");
+    let run = |config_text: &str, payload: &str| {
+        std::fs::write(&config, config_text).expect("write config");
+        let mut command = bin();
+        command.arg("--claude-code-hook");
+        hermetic_with(
+            &mut command,
+            Path::new("/nonexistent/opencode.db"),
+            &dir.join("usage.db"),
+        );
+        let mut child = command
+            .env("XDG_CONFIG_HOME", &config_home)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.as_bytes())
+            .unwrap();
+        child.wait_with_output().expect("wait")
+    };
+
+    let not_a_payload = run("", "not json");
+    assert_eq!(not_a_payload.status.code(), Some(1), "{not_a_payload:?}");
+    let broken_config = run("not_a_key = 1\n", "{}");
+    assert_eq!(broken_config.status.code(), Some(1), "{broken_config:?}");
+    assert!(
+        String::from_utf8_lossy(&broken_config.stderr).contains("not_a_key"),
+        "{broken_config:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A throwaway Claude Code home: `<home>/.claude/projects/<p>/<s>.jsonl` plus, by construction,
 /// `<home>/.claude.json` as the derived config document — so nothing here can reach the
 /// developer's own account.
