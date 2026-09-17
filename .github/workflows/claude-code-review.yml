@@ -6,6 +6,12 @@ on:
 
 jobs:
   claude-review:
+    # Not for Dependabot. The action refuses bot actors ("Workflow initiated by non-human
+    # actor: dependabot"), and a Dependabot run gets no repository secrets anyway, so the
+    # job could only ever fail -- a red check on every dependency bump (#96, #99). Keyed on
+    # the actor, as the action's own check is, so a human pushing to that branch still gets
+    # a review.
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
