@@ -787,6 +787,7 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
         }
     }
     let _ = writeln!(out, "  installed by {}", channel.label());
+    let _ = writeln!(out, "  website      {}", env!("CARGO_PKG_HOMEPAGE"));
     match channel.upgrade_command() {
         Some(command) => {
             let _ = writeln!(out, "  upgrade      {command}");

@@ -17,6 +17,9 @@
 set -eu
 
 REPO="SophanaSok/ai-usage-tui"
+# The documentation. This script runs on its own, piped from curl, so it cannot read Cargo.toml;
+# tests/docs.rs holds it to `package.homepage` instead.
+SITE="https://sophanasok.github.io/ai-usage-tui-site/"
 BIN="ai-usage-tui"
 VERSION=""
 DEST=""
@@ -227,3 +230,5 @@ case ":${PATH}:" in
         fi
         ;;
 esac
+echo
+echo "Docs, data sources and configuration: $SITE"
