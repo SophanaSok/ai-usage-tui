@@ -672,6 +672,13 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
                 );
             }
         }
+        // What the panel itself would flag: a record or cache that exists and could not be used,
+        // or windows it read and would not show. The dashboard puts these on its status line;
+        // until this, `--doctor` -- the place a user is sent to look -- listed every file as
+        // "found" and said nothing about them.
+        for problem in ai_usage_tui::limits::load(&roots, ai_usage_tui::utils::now()).problems {
+            let _ = writeln!(out, "  {:<12} problem     {problem}", "");
+        }
     } else {
         let _ = writeln!(out, "  {:<12} disabled ([omarchy] limits = false)", "panel");
     }

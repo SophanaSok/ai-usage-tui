@@ -323,6 +323,9 @@ impl CollectorHandle {
             write_state(&state).register(&name, interval);
 
             threads.push(thread::spawn(move || {
+                // Logged when it changes, not every poll: an unreadable transcript stays
+                // unreadable for hours, and the log is for noticing, not for counting.
+                let mut logged_warning: Option<String> = None;
                 while !shutdown.is_set() {
                     let result = catch_unwind(AssertUnwindSafe(|| collector.poll()));
                     match result {
@@ -330,6 +333,13 @@ impl CollectorHandle {
                             let source = format!("{}: ok", name);
                             let count = usages.len();
                             let warning = collector.warning();
+                            if warning != logged_warning {
+                                match &warning {
+                                    Some(note) => logging::warn(&name, note),
+                                    None => logging::info(&name, "nothing skipped any more"),
+                                }
+                                logged_warning = warning.clone();
+                            }
                             // Built *before* the lock is taken. A new cache on disk is worth
                             // nothing until the engine reads it -- but reading and parsing it
                             // while holding the write lock would block `snapshot()` on the render

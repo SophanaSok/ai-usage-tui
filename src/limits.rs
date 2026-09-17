@@ -296,6 +296,15 @@ pub fn load(roots: &SourceRoots, now: i64) -> LimitsReport {
         if let Some(path) = roots.claude_json_path() {
             let readout = read_claude_cache(&path, now, CACHE_STALE_AFTER_SECS, tier.clone());
             report.problems.extend(readout.problems);
+            // Counted by the reader and, until this, read by nothing: a window kind Claude Code
+            // added after this build simply vanished from the panel, `--json` and `--doctor`.
+            if readout.dropped > 0 {
+                report.problems.push(format!(
+                    "{}: {} window(s) not shown (a kind this build does not know, or no percentage)",
+                    path.display(),
+                    readout.dropped
+                ));
+            }
             if let Some(snapshot) = readout.snapshot {
                 merge(&mut report, snapshot, true);
             }
@@ -484,6 +493,30 @@ mod tests {
         assert!(!readout.present);
         assert!(readout.snapshot.is_none());
         assert!(readout.problems.is_empty(), "absent is not a problem");
+    }
+
+    /// `dropped` was counted and read by nothing, so a window kind added upstream disappeared
+    /// from the panel, `--json` and `--doctor` alike.
+    #[test]
+    fn windows_the_reader_refused_reach_the_report_as_a_problem() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config = dir.path().join(".claude.json");
+        std::fs::copy(fixture(), &config).expect("copy fixture");
+        let roots = SourceRoots {
+            claude_json: Some(config),
+            omarchy_dir: Some(dir.path().join("no-omarchy")),
+            limits_enabled: true,
+            ..SourceRoots::default()
+        };
+        let report = load(&roots, NOW);
+        assert!(
+            report
+                .problems
+                .iter()
+                .any(|p| p.contains("1 window(s) not shown")),
+            "{:?}",
+            report.problems
+        );
     }
 
     #[test]
