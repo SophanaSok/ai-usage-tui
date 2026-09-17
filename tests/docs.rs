@@ -445,7 +445,9 @@ fn the_glossary_names_every_source_id() {
 #[test]
 fn the_setup_guide_inlines_the_shipped_files_byte_for_byte() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let guide = ai_usage_tui::schema::AGENT_SETUP;
+    // Line endings aside: a Windows checkout gives both the guide and the files CRLF, and what is
+    // being held together is their content.
+    let guide = ai_usage_tui::schema::AGENT_SETUP.replace('\r', "");
     let mut inlined = 0;
     for directory in ["contrib/claude-code", "contrib/systemd/user"] {
         for entry in std::fs::read_dir(root.join(directory)).expect(directory) {
@@ -455,7 +457,9 @@ fn the_setup_guide_inlines_the_shipped_files_byte_for_byte() {
                 Some("service" | "timer") => "ini",
                 _ => continue,
             };
-            let contents = std::fs::read_to_string(&path).expect("read");
+            let contents = std::fs::read_to_string(&path)
+                .expect("read")
+                .replace('\r', "");
             assert!(
                 guide.contains(&format!("```{fence}\n{contents}```")),
                 "docs/agent-setup.md does not carry {} as it is on disk",
