@@ -31,6 +31,12 @@ Provider adapters should tolerate missing optional fields and preserve the event
 
 The local journal currently stores usage metadata in `usage_event`. It intentionally excludes prompt and completion content.
 
+The journal's schema version lives in SQLite's `PRAGMA user_version` (`JOURNAL_SCHEMA_VERSION` in
+`src/collector/journal.rs`, currently `1`). Writers migrate their table under `BEGIN IMMEDIATE`, so
+concurrent hooks cannot race a migration, and refuse a journal stamped with a newer version than
+they know rather than writing into a shape they may not understand. Readers open it read-only and
+adapt to the columns they find.
+
 ## Budget Configuration
 
 ```text

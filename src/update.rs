@@ -244,17 +244,13 @@ pub struct CachedCheck {
     pub checked: i64,
 }
 
-/// Write the answer where the dashboard will find it. Temporary-then-rename, as the pricing
-/// cache is written, so a reader never sees half a file.
+/// Write the answer where the dashboard will find it, through `helpers::write_atomic`: the daily
+/// timer's `--check-update` and an opted-in `--doctor` can both be writing it.
 pub fn write_check_cache_at(path: &Path, cached: &CachedCheck) -> anyhow::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("update cache path has no parent directory"))?;
-    std::fs::create_dir_all(parent)?;
-    let temporary = path.with_extension("json.tmp");
-    std::fs::write(&temporary, serde_json::to_vec_pretty(cached)?)?;
-    std::fs::rename(temporary, path)?;
-    Ok(())
+    Ok(crate::helpers::write_atomic(
+        path,
+        &serde_json::to_vec_pretty(cached)?,
+    )?)
 }
 
 /// Write it to the default location, returning where it went.
@@ -358,7 +354,12 @@ mod tests {
         write_check_cache_at(&path, &answer).unwrap();
         assert_eq!(read_check_cache_at(&path), Some(answer));
         // No leftovers: the temporary is renamed, not copied.
-        assert!(!path.with_extension("json.tmp").exists());
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| name.to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 
     #[test]

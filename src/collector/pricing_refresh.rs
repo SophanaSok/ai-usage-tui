@@ -36,9 +36,8 @@ pub fn refresh_pricing() -> Result<PathBuf> {
     let toml_content = parse_pricing_html(&html)
         .context("failed to parse Zen pricing page; page structure may have changed")?;
 
-    let temporary = path.with_extension("toml.tmp");
-    fs::write(&temporary, toml_content)?;
-    fs::rename(temporary, &path)?;
+    // Every dashboard runs this collector, so two can be writing the cache at once.
+    crate::helpers::write_atomic(&path, toml_content.as_bytes())?;
     Ok(path)
 }
 
