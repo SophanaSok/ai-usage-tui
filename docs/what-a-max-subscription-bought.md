@@ -20,7 +20,8 @@ built around. The first edition could not fill it in because the
 been installed on the author's own machine. It is installed now — `ai-usage-tui --install-hook`
 is one command, and `--doctor` reports `hook installed` — and the honest state of the journal is
 three events: one passing run under Opus 5, one under Fable 5.1, and one hand-recorded in July.
-Three events are not a measurement.
+Three events are not a measurement. Why there are so few turned out to have an answer, found the
+day this was written; it is under *The holes*.
 
 The second reason has not changed and will not. On a Max subscription there are no dollars per
 request. Every Claude Code request here is billed against a quota, and the tool's own rule
@@ -159,7 +160,8 @@ That is a ratio a reader can form an opinion about — $4.38 of list-rate comput
 $8.08 per merged pull request — with the caveat that it is a delivery count, not a
 delivery *quality* measure, and that the model per commit is who wrote the trailer, not who
 did the thinking. The measure the tool was built to give, tests passed per dollar per model,
-is not in this table because the journal that feeds it holds three events.
+is not in this table because the journal that feeds it holds three events (see *The holes* for
+why).
 
 The days line up better than they did. The repository's spend falls on six days — 09-01 to
 09-03 ($19, $192, $15) and 09-16 to 09-18 ($18, $234, $87) — and 126 of the 129 commits fall
@@ -227,10 +229,33 @@ without a local transcript for this repository — but the method has not change
 Claude Code on the web or on another machine is in no figure above, and the per-commit ratio is
 generous by whatever that was.
 
-**Three routing events.** The hook records a test run Claude Code executes through its Bash
-tool. Two such events beside 129 commits is fewer than the work would suggest, and this piece
-does not know why: the journal does not say when the hook was installed, and test runs inside
-subagents or CI may not reach it. That is an open question, not a finding.
+**Three routing events — and why.** The hook records a test run Claude Code executes through its
+Bash tool, and two such events beside 129 commits is far fewer than the work. This piece first
+went out calling that an open question. It is answered: the hook was working, and it recorded
+every test run its rules allowed it to.
+
+The rule is an honest one. A hook sees the exit status of the whole command line, not of the test
+runner inside it, so `cargo test 2>&1 | tail -20` exits with `tail`'s status and a red run would
+read as green; the tool records a result only when the status is the runner's own. And every test
+command on this machine is trimmed — `cargo test --all-targets --locked 2>&1 | grep -E "^test
+result|FAILED" | head -40` — so that the output fits in a tool result. Replaying every Bash call
+the local transcripts hold through v1.0.1's hook: **1,074 command lines ran a test runner, and
+ten had a status that was the runner's own.** Eight of those ten ran in scratch sessions started
+without the user's hooks on purpose, to capture fixtures. The other two are the two events. The
+hook had been installed since 09-02, saw a thousand test runs, could honestly speak for two, and
+said nothing at all about the rest — which is this tool's own failure mode, *broken rendered as
+nothing to report*, in the one place it had not been looked for.
+
+The capture that settled what to do about it: a **failing** `cargo test 2>&1 | grep -E "^test
+result|FAILED"` fires Claude Code's *success* hook, because `grep` found its lines. Loosening the
+rule would have recorded failures as passes. What the payload does carry is the runner's own
+summary line, in its output. The next release reads that line where the status cannot speak —
+for the four runners whose real output was captured, believing a failure always and a pass only
+when the end of the output is there — and counts, by reason, every run it still cannot record.
+Replayed over the same 1,074 lines it records **396** (272 passes, 124 failures) where v1.0.1
+recorded 10, and shows the other 678 in `--doctor` instead of nowhere: 331 on a line with `$(…)`
+or a heredoc, 197 followed by `;`, 147 piped with no summary left to read. The mechanism and the
+rules are in [`routing-analytics.md`](routing-analytics.md).
 
 **Cache reads at list.** The tool uses the cache-read rate in the bundled table for each model,
 but a subscription is not a metered API and the reader should not mistake the API-equivalent
@@ -240,10 +265,11 @@ for a bill avoided. It is the cost of the same requests made a different way.
 
 ## What comes next
 
-A period in which Sonnet does a real share of the work, with the hook recording, and an answer
-to why the hook has recorded two test runs. The piece the roadmap asked for — Opus against Sonnet, per
-passing test — needs both. Until then this is what could be said honestly, and at twenty days'
-retention the last of the transcripts it was said from will be gone by 2026-10-08.
+A period in which Sonnet does a real share of the work, with a hook that can now see the test
+runs it was blind to. The piece the roadmap asked for — Opus against Sonnet, per passing test —
+needs both, and the second only stopped being the blocker the day this was written. Until then
+this is what could be said honestly, and at twenty days' retention the last of the transcripts it
+was said from will be gone by 2026-10-08.
 
 ## Reproducing the figures
 

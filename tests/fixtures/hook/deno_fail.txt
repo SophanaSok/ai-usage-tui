@@ -1,0 +1,4 @@
+
+FAILED | 1 passed | 1 failed (1ms)
+
+error: Test failed

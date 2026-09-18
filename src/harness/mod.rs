@@ -10,3 +10,4 @@
 
 pub mod claude_code;
 pub mod shell;
+pub mod summary;

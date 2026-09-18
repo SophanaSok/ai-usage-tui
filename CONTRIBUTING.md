@@ -320,6 +320,31 @@ type of each block, and names every key it dropped -- read its output before com
 delegation matters: the subagent's transcript is where one request's lines disagree about
 `output_tokens`, which is what this fixture was captured to pin.
 
+### Capturing a Claude Code hook payload
+
+`tests/fixtures/hook/` is what Claude Code really hands `--claude-code-hook`, and what four test
+runners really print. The summary markers in `src/harness/summary.rs` exist only for runners with
+a file there: to teach the hook another runner's summary line, capture it first. From a scratch
+project with a passing and a failing test, a hook that only writes its stdin down, and no user
+settings:
+
+```sh
+mkdir -p /tmp/hookcap/.claude /tmp/hookcap/payloads && cd /tmp/hookcap   # plus a tiny project with tests
+printf '#!/bin/sh\ncat > /tmp/hookcap/payloads/$(date +%%s%%N).json\n' > tee-hook.sh && chmod +x tee-hook.sh
+# .claude/settings.json: contrib/claude-code/settings.json with the command set to /tmp/hookcap/tee-hook.sh
+claude --model haiku --setting-sources project --allowedTools 'Bash' \
+  -p 'Run each as its own Bash call and nothing else: 1) cargo test 2>&1 | tail -5  2) cargo test' </dev/null
+scripts/redact-hook-payload.py payloads/FILE.json 9 > tests/fixtures/hook/<runner>_<pass|fail>_<shape>.json
+```
+
+Capture the piped shapes as well as the bare one, and a failing run as well as a passing one: the
+fixture that mattered most here is a failing `cargo test | grep` that fired `PostToolUse`. The
+redactor replaces the ids and paths and the model's description of the command, and keeps the
+command and output byte for byte -- which is why the project must be a scratch one. A runner's
+plain output (`pytest … | tail -3 > tests/fixtures/hook/pytest_pass.txt`) is enough when the
+payload's shape is already covered. To check a build end to end, point the same settings at
+`ai-usage-tui --claude-code-hook --journal /tmp/hookcap/e2e.db` and read `--routing-json`.
+
 ## Pull requests
 
 Say what changes for a user, which data sources are touched, any privacy impact, and the

@@ -18,6 +18,92 @@ pub struct Observable {
     pub on_failure: bool,
 }
 
+/// What a command line says about a test run.
+///
+/// The middle case is the one that used to be thrown away. Measured on the author's machine
+/// over eighteen days, 845 command lines ran a test runner and four of them had a status that
+/// was the runner's own: every other one was trimmed through `grep`, `tail` or `head`, and the
+/// hook said nothing about any of them. A harness needs to know a runner ran even when the
+/// status cannot speak for it — to look for the runner's own word elsewhere, and to count what
+/// it could not record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    /// No recognised runner heads a command on the line: an ordinary Bash call.
+    NoRunner,
+    /// A runner ran, and the line's exit status is not its own.
+    Withheld(Reason),
+    /// A runner ran, and the line's exit status speaks for it in the directions given.
+    Observable(Observable),
+}
+
+/// Why a line's exit status does not speak for the runner on it. The labels are what the
+/// journal's tally and `--summary-json` carry, so they are part of the stable surface: add one,
+/// never rename one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Reason {
+    /// `cargo test | tail`: the status is the last command's in the pipeline.
+    Pipe,
+    /// `cargo test; echo done`: the status is the later command's.
+    Sequence,
+    /// `cargo test || true`: a failure is replaced by what ran because of it.
+    OrAfter,
+    /// `cargo check || cargo test`: the tests ran only because something else failed.
+    AfterOr,
+    /// `cargo test &`: the line moved on before the runner finished.
+    Background,
+    /// `$(…)`, backticks or a heredoc: the line is not readable by this splitter.
+    Substitution,
+    /// `cargo build && cargo test` that failed: the failure may be an earlier command's. Decided
+    /// by the harness, which knows which way the line went; [`verdict`] never returns it.
+    AndChain,
+}
+
+impl Reason {
+    pub const ALL: [Reason; 7] = [
+        Reason::Pipe,
+        Reason::Sequence,
+        Reason::OrAfter,
+        Reason::AfterOr,
+        Reason::Background,
+        Reason::Substitution,
+        Reason::AndChain,
+    ];
+
+    /// The label stored and exported.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Reason::Pipe => "pipe",
+            Reason::Sequence => "sequence",
+            Reason::OrAfter => "or_after",
+            Reason::AfterOr => "after_or",
+            Reason::Background => "background",
+            Reason::Substitution => "substitution",
+            Reason::AndChain => "and_chain",
+        }
+    }
+
+    pub fn parse(label: &str) -> Option<Reason> {
+        Reason::ALL
+            .into_iter()
+            .find(|reason| reason.as_str() == label)
+    }
+
+    /// The reason in words, to follow "a test run" or a count of them.
+    pub fn explain(self) -> &'static str {
+        match self {
+            Reason::Pipe => "piped into another command, whose status the line took",
+            Reason::Sequence => "followed by `;` or a newline, so the status was a later command's",
+            Reason::OrAfter => "followed by `||`, which replaces a failure",
+            Reason::AfterOr => "run after `||`, so only because something else failed",
+            Reason::Background => "put in the background with `&`",
+            Reason::Substitution => "on a line with `$(…)`, backticks or a heredoc",
+            Reason::AndChain => {
+                "in an `&&` chain that failed, where the failure may be another command's"
+            }
+        }
+    }
+}
+
 /// Test runners this tool recognises, as the leading tokens of a simple command. A trailing `*`
 /// matches any token with that prefix, so `npm run test:unit` is a test run and `npm run build`
 /// is not. Deliberately a short, reviewable list rather than a heuristic on the word "test":
@@ -49,6 +135,9 @@ const RUNNERS: &[&[&str]] = &[
     &["go", "test"],
     &["gotestsum"],
     &["just", "test*"],
+    // As `make check`: the recipe that runs the tests, by the name this project's own
+    // `justfile` gives it.
+    &["just", "check"],
     &["make", "test*"],
     &["make", "check"],
     &["ctest"],
@@ -107,15 +196,24 @@ enum Op {
     Background,
 }
 
-/// What the exit status of `command` would say about the test runner in it, or `None` when it
-/// contains no recognised runner or its status would not be the runner's.
+/// What the exit status of `command` would say about the test runner in it.
 ///
 /// Command substitution and heredocs make the line unreadable by this splitter — a runner inside
 /// `$(…)` never sets the status, and a runner on a heredoc line is text being written to a file
-/// — so a line containing either is not an observation at all.
-pub fn test_runner(command: &str) -> Option<Observable> {
+/// — so a line containing either is never [`Verdict::Observable`]. Whether a runner ran on it is
+/// still worth knowing, and is asked of the line with its heredoc bodies taken out: counted with
+/// them in, seven in eight of the lines this rule withheld were scripts that only *mentioned* a
+/// runner.
+pub fn verdict(command: &str) -> Verdict {
     if command.contains("$(") || command.contains('`') || command.contains("<<") {
-        return None;
+        let ran = split(&without_heredoc_bodies(command))
+            .iter()
+            .any(|(_, text)| is_test_runner(text));
+        return if ran {
+            Verdict::Withheld(Reason::Substitution)
+        } else {
+            Verdict::NoRunner
+        };
     }
     let segments = split(command);
     let mut observable: Option<Observable> = None;
@@ -136,7 +234,7 @@ pub fn test_runner(command: &str) -> Option<Observable> {
         for j in (0..=index).rev() {
             match segments[j].0 {
                 Op::Start | Op::Seq => break,
-                Op::Or if j == index => return None,
+                Op::Or if j == index => return Verdict::Withheld(Reason::AfterOr),
                 Op::And | Op::Or => on_failure = false,
                 Op::Pipe | Op::Background => {}
             }
@@ -148,7 +246,10 @@ pub fn test_runner(command: &str) -> Option<Observable> {
         for (op, _) in &segments[index + 1..] {
             match op {
                 Op::And => on_failure = false,
-                Op::Seq | Op::Or | Op::Pipe | Op::Background | Op::Start => return None,
+                Op::Pipe => return Verdict::Withheld(Reason::Pipe),
+                Op::Or => return Verdict::Withheld(Reason::OrAfter),
+                Op::Background => return Verdict::Withheld(Reason::Background),
+                Op::Seq | Op::Start => return Verdict::Withheld(Reason::Sequence),
             }
         }
         observable = Some(match observable {
@@ -162,7 +263,47 @@ pub fn test_runner(command: &str) -> Option<Observable> {
             },
         });
     }
-    observable.filter(|o| o.on_success || o.on_failure)
+    // A zero status always speaks (`on_success` is never cleared), so a runner that got this
+    // far is observable in at least one direction.
+    observable.map_or(Verdict::NoRunner, Verdict::Observable)
+}
+
+/// `command` with the lines of every heredoc body removed, the opening line kept. A body is text
+/// on its way to a file or a program's stdin, not commands the shell ran.
+fn without_heredoc_bodies(command: &str) -> String {
+    let mut kept = Vec::new();
+    let mut terminator: Option<String> = None;
+    for line in command.lines() {
+        match &terminator {
+            Some(word) => {
+                if line.trim() == word {
+                    terminator = None;
+                }
+            }
+            None => {
+                kept.push(line);
+                terminator = heredoc_terminator(line);
+            }
+        }
+    }
+    kept.join("\n")
+}
+
+/// The word that ends the heredoc `line` opens, if it opens one: `<<EOF`, `<<-EOF`, `<<'EOF'`,
+/// `<< "EOF"`. A here-string (`<<<`) opens nothing.
+fn heredoc_terminator(line: &str) -> Option<String> {
+    let after = &line[line.find("<<")? + 2..];
+    if after.starts_with('<') {
+        return None;
+    }
+    let word: String = after
+        .trim_start_matches('-')
+        .trim_start()
+        .trim_start_matches(['\'', '"'])
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    (!word.is_empty()).then_some(word)
 }
 
 /// The line as simple commands, each with the operator that precedes it. Quotes are not
@@ -208,9 +349,58 @@ fn split(command: &str) -> Vec<(Op, String)> {
     segments
 }
 
+/// Whose summary lines a runner's output is written in. Only runners whose real output is kept
+/// under `tests/fixtures/hook/` have one; see `harness::summary`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Family {
+    Libtest,
+    Pytest,
+    Go,
+    Deno,
+}
+
+impl Family {
+    const ALL: [Family; 4] = [Family::Libtest, Family::Pytest, Family::Go, Family::Deno];
+
+    /// The families a recognised runner's output may be in: its own for a runner that prints
+    /// its own summary, every one for a recipe or script that may run anything (`make test`,
+    /// `npm test`), and none for a runner no output was captured from.
+    fn of(runner: &[&str]) -> &'static [Family] {
+        match runner {
+            ["cargo", "test"] => &[Family::Libtest],
+            ["pytest"] | ["py.test"] | [_, "-m", "pytest"] => &[Family::Pytest],
+            ["go", "test"] => &[Family::Go],
+            ["deno", "test"] => &[Family::Deno],
+            ["make", ..] | ["just", ..] | ["npm", ..] | ["pnpm", ..] | ["yarn", ..] => &Family::ALL,
+            ["bun", "run", ..] | ["tox"] | ["composer", ..] | ["rake", ..] => &Family::ALL,
+            _ => &[],
+        }
+    }
+}
+
+/// The summary families to read the output of `command` in: those of every runner that heads a
+/// command on it, heredoc bodies aside. Empty when no runner does, which is what keeps a line
+/// that only *prints* a summary — `grep -rn "test result: ok" src/` — from being read as a run.
+pub fn families(command: &str) -> Vec<Family> {
+    let mut found = Vec::new();
+    for (_, text) in split(&without_heredoc_bodies(command)) {
+        for family in runner_of(&text).map_or(&[][..], Family::of) {
+            if !found.contains(family) {
+                found.push(*family);
+            }
+        }
+    }
+    found
+}
+
 /// Whether one simple command is a recognised test runner, looking through leading variable
 /// assignments and wrappers.
 fn is_test_runner(segment: &str) -> bool {
+    runner_of(segment).is_some()
+}
+
+/// The entry of [`RUNNERS`] that one simple command is, if it is one.
+fn runner_of(segment: &str) -> Option<&'static [&'static str]> {
     let cleaned = segment
         .trim()
         .trim_start_matches(['(', '{'])
@@ -221,17 +411,17 @@ fn is_test_runner(segment: &str) -> bool {
             tokens.remove(0);
         }
         if tokens.is_empty() {
-            return false;
+            return None;
         }
-        if RUNNERS.iter().any(|runner| matches_prefix(&tokens, runner)) {
-            return true;
-        }
-        let Some(wrapper) = WRAPPERS
+        if let Some(runner) = RUNNERS
             .iter()
-            .find(|wrapper| matches_prefix(&tokens, wrapper))
-        else {
-            return false;
-        };
+            .find(|runner| matches_prefix(&tokens, runner))
+        {
+            return Some(runner);
+        }
+        let wrapper = WRAPPERS
+            .iter()
+            .find(|wrapper| matches_prefix(&tokens, wrapper))?;
         tokens.drain(..wrapper.len());
     }
 }
@@ -260,11 +450,11 @@ fn is_assignment(token: &str) -> bool {
 mod tests {
     use super::*;
 
-    const BOTH: Option<Observable> = Some(Observable {
+    const BOTH: Verdict = Verdict::Observable(Observable {
         on_success: true,
         on_failure: true,
     });
-    const PASS_ONLY: Option<Observable> = Some(Observable {
+    const PASS_ONLY: Verdict = Verdict::Observable(Observable {
         on_success: true,
         on_failure: false,
     });
@@ -280,6 +470,7 @@ mod tests {
             "npm run test:unit",
             "go test ./...",
             "just test",
+            "just check",
             "make check",
             "RUST_BACKTRACE=1 cargo test",
             "env FOO=1 cargo test",
@@ -292,7 +483,7 @@ mod tests {
             "cargo build; cargo test",
             "cargo build\ncargo test",
         ] {
-            assert_eq!(test_runner(command), BOTH, "{command:?}");
+            assert_eq!(verdict(command), BOTH, "{command:?}");
         }
     }
 
@@ -311,8 +502,14 @@ mod tests {
             "bash -c \"cargo test\"",
             "! cargo test",
             "",
+            // A runner that is only text: inside a substitution whose line is headed by
+            // something else, and in the body of a heredoc.
+            "echo $(cargo test)",
+            "out=`cargo test`",
+            "cat > run.sh <<'EOF'\ncargo test && echo ok\nEOF",
+            "python3 - <<PY\nimport os\nos.system('x')\ncargo test\nPY\necho done",
         ] {
-            assert_eq!(test_runner(command), None, "{command:?}");
+            assert_eq!(verdict(command), Verdict::NoRunner, "{command:?}");
         }
     }
 
@@ -320,22 +517,125 @@ mod tests {
     /// the observation is withheld in that direction rather than recorded as a guess.
     #[test]
     fn a_status_the_shell_discards_is_not_an_observation() {
-        for command in [
-            "cargo test 2>&1 | tail -20",
-            "cargo test | grep FAILED",
-            "cargo test; echo done",
-            "cargo test || true",
-            "cargo test || echo failed",
-            "cargo test &",
-            "cargo test && echo ok || echo failed", // always exits 0
-            "cargo test | tail; cargo test",        // one run's status is gone
-            "cargo test && cargo clippy | tail",
-            "echo $(cargo test)",
-            "out=`cargo test`",
-            "cat > run.sh <<'EOF'\ncargo test && echo ok\nEOF",
+        for (command, reason) in [
+            ("cargo test 2>&1 | tail -20", Reason::Pipe),
+            ("cargo test | grep FAILED", Reason::Pipe),
+            (
+                "cargo test --all-targets --locked 2>&1 | grep -E \"^test result\" | head -40",
+                Reason::Pipe,
+            ),
+            ("cargo test; echo done", Reason::Sequence),
+            ("cargo test || true", Reason::OrAfter),
+            ("cargo test || echo failed", Reason::OrAfter),
+            ("cargo test &", Reason::Background),
+            ("cargo test && echo ok || echo failed", Reason::OrAfter), // always exits 0
+            ("cargo test | tail; cargo test", Reason::Pipe),           // one run's status is gone
+            ("cargo test && cargo clippy | tail", Reason::Pipe),
+            // A runner really ran here; it is the line that cannot be read.
+            (
+                "cargo test --lib 2>&1 | tail -3; echo $(date)",
+                Reason::Substitution,
+            ),
+            (
+                "python3 - <<'EOF'\nprint(1)\nEOF\ncargo test",
+                Reason::Substitution,
+            ),
         ] {
-            assert_eq!(test_runner(command), None, "{command:?}");
+            assert_eq!(verdict(command), Verdict::Withheld(reason), "{command:?}");
         }
+    }
+
+    #[test]
+    fn a_heredoc_body_is_taken_out_and_its_opening_line_kept() {
+        assert_eq!(
+            without_heredoc_bodies("cat > f <<'EOF'\ncargo test\nEOF\ncargo test"),
+            "cat > f <<'EOF'\ncargo test"
+        );
+        assert_eq!(
+            without_heredoc_bodies("a <<-END\n\tbody\n\tEND\nb"),
+            "a <<-END\nb"
+        );
+        // A here-string opens nothing, so nothing after it is swallowed.
+        assert_eq!(
+            without_heredoc_bodies("wc <<<x\ncargo test"),
+            "wc <<<x\ncargo test"
+        );
+        assert_eq!(
+            heredoc_terminator("cat << \"EOF\""),
+            Some("EOF".to_string())
+        );
+        assert_eq!(heredoc_terminator("x <<< y"), None);
+        assert_eq!(heredoc_terminator("no heredoc"), None);
+    }
+
+    #[test]
+    fn a_runners_family_is_its_own_a_recipes_is_any_and_an_uncaptured_runners_is_none() {
+        assert_eq!(
+            families("cargo test --locked 2>&1 | tail -3"),
+            [Family::Libtest]
+        );
+        assert_eq!(families("uv run pytest -x | tail -3"), [Family::Pytest]);
+        assert_eq!(families("python3 -m pytest | tail"), [Family::Pytest]);
+        assert_eq!(families("cd api && go test ./... | tail"), [Family::Go]);
+        assert_eq!(families("deno test | tail"), [Family::Deno]);
+        assert_eq!(
+            families("cargo test | tail; pytest | tail"),
+            [Family::Libtest, Family::Pytest]
+        );
+        assert_eq!(families("make test | tail"), Family::ALL);
+        assert_eq!(families("pnpm test >/dev/null"), Family::ALL);
+        assert_eq!(families("npx vitest run | tail"), []);
+        assert_eq!(families("cargo nextest run | tail"), []);
+        assert_eq!(families("grep -rn \"test result: ok\" src/"), []);
+        assert_eq!(families("cat > x <<'EOF'\ncargo test\nEOF"), []);
+    }
+
+    /// Which runners have a summary family, spelled out: a runner added to `RUNNERS` shows up
+    /// here as having none until someone captures its output, and a pattern in `Family::of`
+    /// that stops matching its entry shows up as a runner that lost one.
+    #[test]
+    fn the_runners_with_a_summary_family_are_these() {
+        let with_family: Vec<String> = RUNNERS
+            .iter()
+            .filter(|runner| !Family::of(runner).is_empty())
+            .map(|runner| runner.join(" "))
+            .collect();
+        assert_eq!(
+            with_family,
+            [
+                "cargo test",
+                "pytest",
+                "py.test",
+                "python -m pytest",
+                "python3 -m pytest",
+                "tox",
+                "npm test",
+                "npm t",
+                "npm run test*",
+                "pnpm test",
+                "pnpm t",
+                "pnpm run test*",
+                "yarn test",
+                "yarn run test*",
+                "bun run test*",
+                "deno test",
+                "go test",
+                "just test*",
+                "just check",
+                "make test*",
+                "make check",
+                "rake test",
+                "composer test",
+            ]
+        );
+    }
+
+    #[test]
+    fn every_reason_has_a_label_that_reads_back() {
+        for reason in Reason::ALL {
+            assert_eq!(Reason::parse(reason.as_str()), Some(reason));
+        }
+        assert_eq!(Reason::parse("nonsense"), None);
     }
 
     /// `A && cargo test`: a zero status means the runner passed, but a non-zero one may be A's.
@@ -351,21 +651,27 @@ mod tests {
             "cd crate && cargo test",
             "(cd sub && cargo test)",
         ] {
-            assert_eq!(test_runner(command), PASS_ONLY, "{command:?}");
+            assert_eq!(verdict(command), PASS_ONLY, "{command:?}");
         }
     }
 
     /// `A || cargo test` runs the tests only when A failed, so a zero status may be A's alone.
     #[test]
     fn a_runner_after_or_is_never_observed() {
-        assert_eq!(test_runner("cargo check || cargo test"), None);
+        assert_eq!(
+            verdict("cargo check || cargo test"),
+            Verdict::Withheld(Reason::AfterOr)
+        );
     }
 
     #[test]
     fn redirections_are_not_background_jobs() {
-        assert_eq!(test_runner("cargo test 2>&1"), BOTH);
-        assert_eq!(test_runner("cargo test &>log"), BOTH);
-        assert_eq!(test_runner("cargo test |& tee log"), None);
+        assert_eq!(verdict("cargo test 2>&1"), BOTH);
+        assert_eq!(verdict("cargo test &>log"), BOTH);
+        assert_eq!(
+            verdict("cargo test |& tee log"),
+            Verdict::Withheld(Reason::Pipe)
+        );
     }
 
     #[test]

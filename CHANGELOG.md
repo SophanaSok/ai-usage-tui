@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Claude Code hook recorded almost none of the test runs it saw, and said nothing about the
+  rest.** It records a result only when the command line's exit status is the test runner's own
+  -- rightly: `cargo test | tail` exits with `tail`'s status. But on the author's machine every
+  test command is trimmed through `grep`, `tail` or `head` so its output fits a tool result.
+  Replayed over eighteen days of transcripts, 1,074 command lines ran a test runner, ten had a
+  status the hook could trust, and the journal held two events. Each of the others was skipped
+  with a good reason, printed to a stdout nobody reads, counted nowhere: a broken measurement
+  rendered as "no test runs", which is the failure this project exists to refuse.
+
+  The capture that settled the fix: a **failing** `cargo test 2>&1 | grep -E "^test
+  result|FAILED"` fires Claude Code's *success* hook, because `grep` succeeded -- so trusting the
+  status more would have recorded failures as passes. The runner's own summary line is in the
+  payload's output, and where the status does not speak, the hook now reads it: `test result:
+  ok.` / `FAILED.` and cargo's `error: test failed` for `cargo test`, and the equivalents for
+  `pytest`, `go test` and `deno test` -- the four runners whose real output is kept under
+  `tests/fixtures/hook/`; a recipe (`make test`, `npm test`, `just check`) is read for all four.
+  A failure marker is always believed; a pass needs the end of the output to be there, so it is
+  withheld when a `head` filled its limit or a filter selects passing lines by name. The summary
+  decides against the hook event when the two disagree, and the output is never stored. Replayed
+  over the same 1,074 lines: 396 runs recorded (272 passes, 124 failures), where there were 10.
+
+### Added
+
+- **What the hook cannot record, it counts.** A test run with neither a trustworthy status nor a
+  readable summary adds one to a tally in the journal (`withheld_test_run`: UTC day, agent, reason
+  -- no command line, which can carry a credential, and no output). `--doctor` prints it under
+  CLAUDE CODE beside the number recorded; the routing panel's title carries the total;
+  `--routing-json` and `--summary-json` gain a `routing.withheld` block (`runs`, and `by_reason`
+  with `pipe`, `sequence`, `or_after`, `after_or`, `background`, `substitution`, `and_chain`).
+  Two events beside 800 withheld runs is a coverage gap; two events beside none is a quiet
+  machine, and until now they were the same screen. `--prune-journal` ages the tally out with
+  the rest.
+- **`just check` is a recognised test runner**, as `make check` already was.
+- `scripts/redact-hook-payload.py` and `CONTRIBUTING.md`, "Capturing a Claude Code hook payload":
+  how the fixtures were taken, and how to teach the hook another runner's summary line -- from a
+  capture, not from its documentation.
+
+### Changed
+
+- **The write-up answers the question it left open.** `docs/what-a-max-subscription-bought.md`
+  said it did not know why the journal held two hook events beside 129 commits. It now says why,
+  with the replay's figures.
+
 ## [1.0.1] - 2026-09-18
 
 The binary is v1.0.0's. This release exists to carry a document: the site renders the write-up

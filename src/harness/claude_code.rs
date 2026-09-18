@@ -13,6 +13,18 @@
 //! So pass and fail are told apart by which hook fired, and the snippet in
 //! `contrib/claude-code/` registers the same command for both.
 //!
+//! That is the whole story only for a line whose exit status is the runner's own, and measured
+//! on the machine this was written on, that is four test runs in 845: the rest are trimmed
+//! through `grep`, `tail` or `head` so the output fits a tool result. A third thing the capture
+//! showed (2.1.x, `tests/fixtures/hook/libtest_fail_grep.json`): `cargo test 2>&1 | grep -E
+//! "^test result|FAILED"` with a **failing** test fires `PostToolUse`. The status was never going
+//! to say. The runner's own summary line is in `tool_response.stdout` — or, for
+//! `PostToolUseFailure`, in `error` after its `Exit code N` line — and `harness::summary` reads
+//! it. Where the status speaks it is used and the output is not consulted; where it does not,
+//! the runner's summary decides, **against the hook event if they disagree**; and where there is
+//! no summary either, the run is counted as withheld with the reason, and nothing is recorded.
+//! No output is stored in any case: a verdict is derived from it and it is dropped.
+//!
 //! The hook's *own* exit status is read by Claude Code too, and checked the same way (2.1.275):
 //! a `PostToolUse` hook that exits `2` has its stderr handed to the model as something to act
 //! on; one that exits `1` does not. So a failure here exits `1` where every other command exits
@@ -21,8 +33,9 @@
 //!
 //! What the event says, and where each part comes from:
 //!
-//! - **`test_result`**: the hook event, gated by `shell::test_runner` — the command line must
-//!   contain a recognised runner *and* its exit status must be the runner's own.
+//! - **`test_result`**: the hook event, gated by `shell::verdict` — the command line must
+//!   contain a recognised runner *and* its exit status must be the runner's own — or, failing
+//!   the second, the runner's summary line in the payload's output.
 //! - **`model`, `requests`, `tokens`, `cost`**: the session transcript the payload names, read
 //!   with the collector's own `parse_line`, which takes the `usage` block, the model and the
 //!   timestamp from each assistant line and nothing else. The counts are the *attempt's* —
@@ -61,10 +74,13 @@ use crate::{
     collector::{
         billing::Decision,
         claude_code::{normalize_project_path, parse_line},
-        journal::{attributed_requests, record_routing_event},
+        journal::{attributed_requests, record_routing_event, record_withheld_test_run},
         supersedes, SourceRoots,
     },
-    harness::shell,
+    harness::{
+        shell::{self, Reason, Verdict},
+        summary,
+    },
     helpers::string,
     model::{accrue, CostStatus, Usage},
     pricing::{apply_estimated_pricing, PricingEngine},
@@ -85,14 +101,47 @@ pub struct Observation {
     pub agent_id: Option<String>,
     pub transcript_path: Option<PathBuf>,
     pub passed: bool,
+    /// The result is the runner's summary line, not the line's exit status.
+    pub from_summary: bool,
 }
 
-/// What a payload turned out to be: a test run, or one of the many things a Bash hook fires for
-/// that are not one. The reason is printed, so a hook that records nothing says why.
+/// What a payload turned out to be: a test run, a test run nothing can be said about, or one of
+/// the many things a Bash hook fires for that are not one. The reason is printed, so a hook that
+/// records nothing says why.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Observed(Observation),
+    /// A runner ran; neither the exit status nor the output says how it went. Counted.
+    Withheld {
+        reason: Reason,
+        agent: String,
+    },
     Skipped(String),
+}
+
+/// The `agent` an event or a tally row carries.
+fn agent_label(agent_type: Option<&str>) -> String {
+    match agent_type {
+        Some(agent_type) => format!("{AGENT}:{agent_type}"),
+        None => AGENT.to_string(),
+    }
+}
+
+/// What the runner printed, as far as the payload holds it: `stdout` and `stderr` of a call that
+/// exited zero, the `error` text of one that did not.
+fn output(payload: &Value, passed: bool) -> String {
+    if passed {
+        let response = payload.get("tool_response");
+        let part = |key| {
+            response
+                .and_then(|r| r.get(key))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+        };
+        format!("{}\n{}", part("stdout"), part("stderr"))
+    } else {
+        string(payload, &["error"]).unwrap_or_default()
+    }
 }
 
 /// Read one hook payload and decide whether it observed a test run.
@@ -134,19 +183,33 @@ pub fn observe(payload: &Value) -> Result<Outcome> {
             "the command was interrupted before it finished".to_string(),
         ));
     }
-    let Some(observable) = shell::test_runner(&command) else {
-        return Ok(Outcome::Skipped("not a test run".to_string()));
+    let agent_type = string(payload, &["agent_type"]).filter(|t| !t.is_empty());
+    // Where the status is the runner's, it decides and the output is not read. Where it is not,
+    // the runner's own summary line decides; and where there is none, the run is withheld.
+    let withheld = match shell::verdict(&command) {
+        Verdict::NoRunner => return Ok(Outcome::Skipped("not a test run".to_string())),
+        Verdict::Observable(observable) => {
+            let speaks = if passed {
+                observable.on_success
+            } else {
+                observable.on_failure
+            };
+            (!speaks).then_some(Reason::AndChain)
+        }
+        Verdict::Withheld(reason) => Some(reason),
     };
-    let speaks = if passed {
-        observable.on_success
-    } else {
-        observable.on_failure
+    let (passed, from_summary) = match withheld {
+        None => (passed, false),
+        Some(reason) => match summary::from_output(&command, &output(payload, passed)) {
+            Some(result) => (result, true),
+            None => {
+                return Ok(Outcome::Withheld {
+                    reason,
+                    agent: agent_label(agent_type.as_deref()),
+                })
+            }
+        },
     };
-    if !speaks {
-        return Ok(Outcome::Skipped(format!(
-            "the command line's exit status does not speak for the test runner in it: {command:?}"
-        )));
-    }
     let session_id = string(payload, &["session_id"])
         .ok_or_else(|| anyhow!("Bash payload without session_id"))?;
     let tool_use_id = string(payload, &["tool_use_id"])
@@ -155,10 +218,11 @@ pub fn observe(payload: &Value) -> Result<Outcome> {
         session_id,
         tool_use_id,
         cwd: string(payload, &["cwd"]),
-        agent_type: string(payload, &["agent_type"]).filter(|t| !t.is_empty()),
+        agent_type,
         agent_id: string(payload, &["agent_id"]).filter(|id| !id.is_empty()),
         transcript_path: string(payload, &["transcript_path"]).map(PathBuf::from),
         passed,
+        from_summary,
     }))
 }
 
@@ -267,10 +331,7 @@ pub fn event(observation: &Observation, attribution: &Attribution, created: i64)
         .model
         .clone()
         .unwrap_or_else(|| "unknown".to_string());
-    let agent = match &observation.agent_type {
-        Some(agent_type) => format!("{AGENT}:{agent_type}"),
-        None => AGENT.to_string(),
-    };
+    let agent = agent_label(observation.agent_type.as_deref());
     let provider = "anthropic";
     json!({
         "event_id": format!(
@@ -301,7 +362,10 @@ pub enum Recorded {
     Event {
         inserted: bool,
         passed: bool,
+        from_summary: bool,
     },
+    /// A test run that was counted and not recorded.
+    Withheld(Reason),
     Skipped(String),
 }
 
@@ -316,14 +380,25 @@ pub fn record_from_stdin(roots: &SourceRoots) -> Result<()> {
         Recorded::Event {
             inserted: true,
             passed,
+            from_summary,
         } => format!(
-            "Recorded a {} test run in {}",
+            "Recorded a {} test run in {}{}",
             if passed { "passing" } else { "failing" },
-            roots.journal.display()
+            roots.journal.display(),
+            if from_summary {
+                ", from the runner's summary line: the exit status was not the runner's"
+            } else {
+                ""
+            }
         ),
         Recorded::Event {
             inserted: false, ..
         } => "Already recorded; nothing to do".to_string(),
+        Recorded::Withheld(reason) => format!(
+            "Counted a test run and recorded nothing: the run was {}, and its output holds no summary \
+             line this tool can read",
+            reason.explain()
+        ),
         Recorded::Skipped(why) => format!("Nothing to record: {why}"),
     };
     crate::helpers::print_line(&line)?;
@@ -368,12 +443,17 @@ fn subagent_transcript(observation: &Observation) -> Option<PathBuf> {
 }
 
 /// The whole of the hook, on one payload. The fast path — every Bash call that is not a test
-/// run — decides from the payload alone: no journal, no transcript, no rate table.
+/// run — decides from the payload alone: no journal, no transcript, no rate table. A test run
+/// that cannot be recorded costs one small write, so that it can be seen to have happened.
 pub fn record(input: &str, roots: &SourceRoots) -> Result<Recorded> {
     let payload: Value =
         serde_json::from_str(input).context("the hook payload on stdin is not JSON")?;
     let observation = match observe(&payload)? {
         Outcome::Observed(observation) => observation,
+        Outcome::Withheld { reason, agent } => {
+            record_withheld_test_run(&roots.journal, &agent, reason.as_str(), now())?;
+            return Ok(Recorded::Withheld(reason));
+        }
         Outcome::Skipped(why) => return Ok(Recorded::Skipped(why)),
     };
 
@@ -433,6 +513,7 @@ pub fn record(input: &str, roots: &SourceRoots) -> Result<Recorded> {
     Ok(Recorded::Event {
         inserted: inserted > 0,
         passed: observation.passed,
+        from_summary: observation.from_summary,
     })
 }
 
@@ -480,7 +561,21 @@ mod tests {
     fn observed(outcome: Outcome) -> Observation {
         match outcome {
             Outcome::Observed(o) => o,
+            Outcome::Withheld { reason, .. } => panic!("withheld: {reason:?}"),
             Outcome::Skipped(why) => panic!("skipped: {why}"),
+        }
+    }
+
+    /// A payload Claude Code really sent, from `tests/fixtures/hook/`.
+    fn captured(name: &str) -> Value {
+        let path = format!("{}/tests/fixtures/hook/{name}", env!("CARGO_MANIFEST_DIR"));
+        serde_json::from_str(&std::fs::read_to_string(&path).expect(&path)).expect(&path)
+    }
+
+    fn withheld(outcome: Outcome) -> Reason {
+        match outcome {
+            Outcome::Withheld { reason, .. } => reason,
+            other => panic!("not withheld: {other:?}"),
         }
     }
 
@@ -511,19 +606,112 @@ mod tests {
     }
 
     /// `cargo test | tail` succeeds when `tail` does; `cargo build && cargo test` fails when the
-    /// build does. Neither status is the runner's, and neither is recorded.
+    /// build does. Neither status is the runner's, and with no summary line in the output
+    /// neither is recorded — but each is counted, with why.
     #[test]
-    fn a_status_that_is_not_the_runners_is_skipped() {
-        assert!(matches!(
-            observe(&success("cargo test 2>&1 | tail -20")).unwrap(),
-            Outcome::Skipped(why) if why.starts_with("not a test run")
-        ));
-        assert!(matches!(
-            observe(&failure("cargo build && cargo test")).unwrap(),
-            Outcome::Skipped(why) if why.contains("does not speak")
-        ));
+    fn a_status_that_is_not_the_runners_and_no_summary_is_withheld_with_the_reason() {
+        assert_eq!(
+            withheld(observe(&success("cargo test 2>&1 | tail -20")).unwrap()),
+            Reason::Pipe
+        );
+        assert_eq!(
+            withheld(observe(&success("cargo test; echo done")).unwrap()),
+            Reason::Sequence
+        );
+        // `error` here is `Exit code 1` and nothing else: the build failed before a test ran.
+        assert_eq!(
+            withheld(observe(&failure("cargo build && cargo test")).unwrap()),
+            Reason::AndChain
+        );
         // ...but the same chain's success is the runner's.
-        assert!(observed(observe(&success("cargo build && cargo test")).unwrap()).passed);
+        let chain = observed(observe(&success("cargo build && cargo test")).unwrap());
+        assert!(chain.passed && !chain.from_summary);
+        // The tally row names the subagent, as its events would.
+        let mut sub = success("cargo test | tail");
+        sub["agent_type"] = json!("Explore");
+        assert_eq!(
+            observe(&sub).unwrap(),
+            Outcome::Withheld {
+                reason: Reason::Pipe,
+                agent: "claude-code:Explore".to_string()
+            }
+        );
+    }
+
+    /// The payloads Claude Code sent for a piped run. The shell's status was `grep`'s and
+    /// `tail`'s, which succeeded every time — `PostToolUse` fired for the failing runs too — so
+    /// the result is the runner's summary line and nothing else.
+    #[test]
+    fn a_piped_run_is_recorded_from_the_runners_summary_line() {
+        for (name, passed) in [
+            ("libtest_pass_grep.json", true),
+            ("libtest_pass_tail.json", true),
+            ("libtest_fail_grep.json", false),
+            ("libtest_fail_tail.json", false),
+            ("libtest_fail_no_fail_fast_grep.json", false),
+        ] {
+            let payload = captured(name);
+            assert_eq!(payload["hook_event_name"], "PostToolUse", "{name}");
+            let observation = observed(observe(&payload).unwrap());
+            assert_eq!(observation.passed, passed, "{name}");
+            assert!(observation.from_summary, "{name}");
+        }
+        // `head -3` stopped before any summary line: counted, not recorded.
+        assert_eq!(
+            withheld(observe(&captured("libtest_pass_head_cut.json")).unwrap()),
+            Reason::Pipe
+        );
+    }
+
+    /// A bare run's status is the runner's, so the hook event decides and the output is not
+    /// read — even when it is there to read.
+    #[test]
+    fn a_bare_run_is_still_decided_by_the_event_that_fired() {
+        let pass = observed(observe(&captured("libtest_pass_bare.json")).unwrap());
+        assert!(pass.passed && !pass.from_summary);
+        let fail = observed(observe(&captured("libtest_fail_bare.json")).unwrap());
+        assert!(!fail.passed && !fail.from_summary);
+        // An output that contradicts the event changes nothing here.
+        let mut odd = captured("libtest_pass_bare.json");
+        odd["tool_response"]["stdout"] = json!("test result: FAILED. 0 passed; 1 failed");
+        assert!(observed(observe(&odd).unwrap()).passed);
+    }
+
+    /// A failed `&&` chain: the failure may be the build's. The `error` text carries the output,
+    /// and a summary line in it says the tests ran and how they went.
+    #[test]
+    fn a_failed_chain_is_recorded_when_its_output_holds_the_summary() {
+        let mut chain = captured("libtest_fail_bare.json");
+        chain["tool_input"]["command"] = json!("cargo build && cargo test");
+        let observation = observed(observe(&chain).unwrap());
+        assert!(!observation.passed && observation.from_summary);
+
+        // `cargo test && cargo clippy` where clippy failed: the tests passed, and say so.
+        let mut later = failure("cargo test && cargo clippy -- -D warnings");
+        later["error"] = json!(
+            "Exit code 101\ntest result: ok. 2 passed; 0 failed; 0 ignored\nerror: could not compile"
+        );
+        let observation = observed(observe(&later).unwrap());
+        assert!(observation.passed && observation.from_summary);
+    }
+
+    /// A summary line is only read for a line a runner heads. Output that merely contains one —
+    /// a `grep` over a log, a `cat` of CI output — is not a test run.
+    #[test]
+    fn output_that_quotes_a_summary_is_not_a_test_run() {
+        let mut payload = captured("libtest_pass_grep.json");
+        for command in [
+            "grep -rn \"test result\" target/ci.log",
+            "cat ci.log | tail -5",
+            "gh run view 1 --log | grep \"test result\"",
+        ] {
+            payload["tool_input"]["command"] = json!(command);
+            assert_eq!(
+                observe(&payload).unwrap(),
+                Outcome::Skipped("not a test run".to_string()),
+                "{command}"
+            );
+        }
     }
 
     #[test]

@@ -75,6 +75,11 @@ Kept on purpose, and reported:
   `created` alone.
 - **Undated rows** (`created <= 0`): their age is not known.
 
+One table prunes without being reported: `withheld_test_run`, the hook's tally of test runs it saw
+and could not record (UTC day, agent, reason, count -- see
+[`routing-analytics.md`](routing-analytics.md)). A day goes once the whole of it is older than the
+cutoff. It is a count nothing reads back row by row, so it has no line in the report.
+
 Two consequences. An identity is forgotten with its row, so replaying an old log after a prune
 records it again. And `--routing-json` still means all history -- all that was kept. `VACUUM`
 preserves the ids of both tables and rewrites the file in place, so neither the cursor nor an

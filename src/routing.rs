@@ -1,3 +1,4 @@
+use crate::collector::journal::WithheldRuns;
 use crate::model::{CostStatus, RoutingAggregates, RoutingEvent};
 use std::collections::BTreeMap;
 
@@ -190,6 +191,37 @@ pub fn defect_rate(agg: &RoutingAggregates) -> Option<f64> {
 
 pub fn load_routing_events(path: &std::path::Path) -> anyhow::Result<Vec<RoutingEvent>> {
     crate::collector::journal::load_routing(path)
+}
+
+/// Test runs a harness saw and could not record, summed by reason, most first.
+///
+/// The other half of `events`: a journal with two events and 800 withheld runs is a different
+/// fact from one with two events and none, and until this was counted both read as "two".
+pub fn withheld_by_reason(rows: &[WithheldRuns]) -> Vec<(String, u64)> {
+    let mut by_reason: std::collections::BTreeMap<&str, u64> = std::collections::BTreeMap::new();
+    for row in rows {
+        *by_reason.entry(row.reason.as_str()).or_default() += row.runs;
+    }
+    let mut sorted: Vec<(String, u64)> = by_reason
+        .into_iter()
+        .map(|(reason, runs)| (reason.to_string(), runs))
+        .collect();
+    sorted.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    sorted
+}
+
+/// The `withheld` block `--routing-json` and `--summary-json` both print.
+pub fn withheld_json(rows: &[WithheldRuns]) -> serde_json::Value {
+    let by_reason = withheld_by_reason(rows);
+    serde_json::json!({
+        "runs": by_reason.iter().map(|(_, runs)| runs).sum::<u64>(),
+        "by_reason": by_reason.iter().map(|(reason, runs)| serde_json::json!({
+            "reason": reason,
+            "runs": runs,
+            // A label this build does not know was written by a newer one; it is still counted.
+            "meaning": crate::harness::shell::Reason::parse(reason).map(|r| r.explain()),
+        })).collect::<Vec<_>>(),
+    })
 }
 
 /// One aggregate as the JSON row `--routing-json` and `--summary-json` both print.

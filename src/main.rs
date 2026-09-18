@@ -764,6 +764,47 @@ fn journal_path(cli: &ai_usage_tui::cli::Cli) -> Result<std::path::PathBuf> {
         })
 }
 
+/// What `--claude-code-hook` has recorded and what it saw and could not, for `--doctor`. Empty
+/// when it has done neither, which is every machine without the hook.
+fn hook_activity(journal: &std::path::Path) -> Vec<String> {
+    use ai_usage_tui::collector::journal::{load_routing, load_withheld_test_runs};
+    use ai_usage_tui::harness::{claude_code::AGENT, shell::Reason};
+
+    let ours = |agent: &str| agent == AGENT || agent.starts_with(&format!("{AGENT}:"));
+    let recorded = match load_routing(journal) {
+        Ok(events) => events.iter().filter(|event| ours(&event.agent)).count(),
+        Err(error) => return vec![format!("the hook's events could not be read: {error}")],
+    };
+    let withheld = match load_withheld_test_runs(journal) {
+        Ok(rows) => rows,
+        Err(error) => return vec![format!("the hook's tally could not be read: {error}")],
+    };
+    let withheld: Vec<_> = withheld
+        .into_iter()
+        .filter(|row| ours(&row.agent))
+        .collect();
+    let by_reason = ai_usage_tui::routing::withheld_by_reason(&withheld);
+    let total: u64 = by_reason.iter().map(|(_, runs)| runs).sum();
+    if recorded == 0 && total == 0 {
+        return Vec::new();
+    }
+    let mut lines = vec![format!(
+        "{recorded} test run(s) recorded, {total} seen and not recorded"
+    )];
+    for (reason, runs) in &by_reason {
+        let why = Reason::parse(reason).map_or("for a reason a newer build wrote", Reason::explain);
+        lines.push(format!("  {runs} {why}"));
+    }
+    if total > 0 {
+        lines.push(
+            "a run is recorded when its exit status is the runner's own, or its output still \
+             holds the runner's summary line: docs/routing-analytics.md"
+                .to_string(),
+        );
+    }
+    lines
+}
+
 fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
     use std::fmt::Write as _;
 
@@ -1240,6 +1281,12 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
                     let _ = writeln!(out, "  hook         installed      {command}");
                 }
             }
+            // What the hook has made of what it saw. "Installed" said nothing about whether it
+            // had ever recorded a run, and on the machine this was written on it had recorded
+            // two of 845: the rest were piped through `grep` and `tail`, and nothing said so.
+            for line in hook_activity(&roots.journal) {
+                let _ = writeln!(out, "  {:<12} {line}", "");
+            }
             match &found.statusline {
                 Some(command) => {
                     let _ = writeln!(out, "  statusline   installed      {command}");
@@ -1442,6 +1489,11 @@ fn export_routing(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
         events.retain(|event| filter.in_range(event.created));
     }
     let aggregates = ai_usage_tui::routing::aggregate(&events);
+    let mut withheld = ai_usage_tui::collector::journal::load_withheld_test_runs(&journal)?;
+    if cli.range_set {
+        let filter = ai_usage_tui::export::UsageFilter::new(cli);
+        withheld.retain(|row| filter.in_range(row.day + 86_399));
+    }
 
     if let Some(path) = &cli.routing_csv_path {
         // The four provenance columns are **appended**, never inserted, so a consumer reading by
@@ -1491,7 +1543,8 @@ fn export_routing(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
             "schema_version": ai_usage_tui::export::JSON_SCHEMA_VERSION,
             "source": format!("journal: {}", journal.display()),
             "events": events.len(),
-            "aggregates": rows
+            "aggregates": rows,
+            "withheld": ai_usage_tui::routing::withheld_json(&withheld)
         }))?)?;
     }
     Ok(())

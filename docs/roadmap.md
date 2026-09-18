@@ -851,6 +851,20 @@ guideline fixes followed in a second pull request the same day.
    reaches the site with the next release tag. Still open and stated in the piece: the journal
    holds three routing events, two from the hook, and nobody has looked at why so few.
 
+   **2026-09-18, later — looked at, and fixed.** The hook was right and blind: it records a run
+   only when the line's exit status is the runner's own, and every test command on this machine
+   is piped through `grep`/`tail`/`head`. Replaying the transcripts through v1.0.1: 1,074 lines
+   ran a runner, ten had a usable status, eight of those were capture sessions run without the
+   user's hooks, two are the journal's events. A captured *failing* `cargo test | grep` fires
+   `PostToolUse`, so the status could never be loosened; the hook now reads the runner's own
+   summary line from the payload's output (`src/harness/summary.rs`, four runners, each from
+   captured bytes) and tallies what it still cannot record (`withheld_test_run`, shown by
+   `--doctor`, the routing panel and both JSON exports). Same corpus: 396 recorded, 678 counted.
+   **Left open:** vitest/jest have no captured output, so `pnpm test` in a JS project stays
+   withheld unless the script prints another runner's summary -- a capture in a real Vitest
+   project is the next step, and the largest single group still unrecorded. A Sonnet-routed
+   period is still what the Opus-versus-Sonnet piece needs; the hook is no longer the blocker.
+
 **Not started, and deliberately:** the `--doctor` AUR detection below, recorded with the
 evidence and the design question it turns on. (The `claude-review` once-per-PR fix that stood
 beside it here has since been made; see the `claude-review` section above.)
