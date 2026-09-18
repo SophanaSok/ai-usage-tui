@@ -92,7 +92,9 @@ family parsed replaces the others. A rollout written while a second family was b
 that family on every line and the default one on none. So readings are keyed on `limit_id`, the
 three most recently written rollouts are searched, and a window from another family is labelled
 with its limit's name rather than shown as the account's. An API key gets no headers and writes
-`rate_limits: null`: no reading, not zero.
+`rate_limits: null`: no reading, not zero. Compressed rollouts are not searched for windows: one
+is compressed only after seven untouched days, and no window Codex reports is longer than that,
+so every reading inside has already reset.
 
 **The format is validated against real output.** The collector was written from the codex-rs
 source and a synthetic fixture. `tests/fixtures/codex_capture/` is what codex-cli 0.155.0 itself

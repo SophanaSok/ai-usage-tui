@@ -514,6 +514,14 @@ pub struct RateLimitReadout {
 ///
 /// API-key use sends no such headers and writes `rate_limits: null`; that is no reading, not a
 /// zero.
+///
+/// **Compressed rollouts are deliberately not searched**, though `load_codex` reads them. The CLI
+/// compresses a rollout only once nothing has touched it for seven days, and the longest window
+/// it reports is seven days: every reading in a `.jsonl.zst` describes a window that has since
+/// reset. There is also no tail to seek to in a zstd frame, so finding one would mean decoding a
+/// whole thread on every refresh, from a reader that keeps no state. A home whose newest
+/// rollouts are all compressed therefore shows no Codex row, which is the truth about it: no
+/// window there is still running.
 pub fn latest_rate_limits(home: &Path) -> RateLimitReadout {
     let mut readout = RateLimitReadout::default();
     let mut files: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
@@ -1296,6 +1304,14 @@ mod tests {
         // A window opening inside a multi-byte character is not an error.
         std::fs::write(&path, "caf\u{e9}\nlast\n").unwrap();
         assert_eq!(read_tail_lines(&path, 6).unwrap(), vec!["last"]);
+    }
+
+    /// Stated, not an oversight: see `latest_rate_limits`. A compressed rollout is a week cold,
+    /// and no window in it is still running.
+    #[test]
+    fn a_compressed_rollout_is_not_searched_for_windows() {
+        let readout = latest_rate_limits(&compressed_home());
+        assert_eq!(readout, RateLimitReadout::default());
     }
 
     #[test]
