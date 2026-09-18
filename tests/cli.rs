@@ -1129,6 +1129,39 @@ fn the_journal_and_the_log_are_created_owner_only() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The summary's `build.update` is `null` on every hermetic run, because the check is opt-in and
+/// nothing has cached one. So the populated shape is planted here and held to the glossary too --
+/// and the run proves the document is built from the cache alone, with no network to reach.
+#[test]
+fn the_summary_reports_a_cached_update_check_and_the_glossary_knows_it() {
+    let dir = scratch("summary-build");
+    let data = dir.join("data");
+    std::fs::create_dir_all(data.join("ai-usage-tui")).unwrap();
+    std::fs::write(
+        data.join("ai-usage-tui").join("update-check.json"),
+        r#"{"latest":"v999.0.0","checked":1787000000}"#,
+    )
+    .unwrap();
+    let mut command = bin();
+    command.arg("--summary-json");
+    hermetic(&mut command).env("XDG_DATA_HOME", &data);
+    let output = command.output().expect("run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+
+    assert_eq!(document["build"]["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(document["build"]["update"]["latest"], "v999.0.0");
+    assert_eq!(document["build"]["update"]["newer"], true);
+    assert_eq!(document["build"]["update"]["checked_at"], 1_787_000_000);
+    let problems = ai_usage_tui::schema::unknown("--summary-json", &document);
+    assert!(problems.is_empty(), "{problems:#?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A model name is another program's string, and `--record-event` takes one from anybody. One
 /// that a spreadsheet would run must reach the CSV as text, and must still be the same name in
 /// the JSON, which no spreadsheet reads.

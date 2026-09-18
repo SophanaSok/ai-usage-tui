@@ -286,8 +286,16 @@ pub fn print_summary(cli: &Cli, budgets: &crate::budget::BudgetEngine) -> Result
         .into_iter()
         .filter(|event| filter.in_range(event.created))
         .collect();
+    let (_, channel) = crate::update::current_channel();
     let document = crate::summary::build(&crate::summary::Inputs {
         schema_version: JSON_SCHEMA_VERSION,
+        build: crate::summary::Build {
+            version: env!("CARGO_PKG_VERSION"),
+            install_channel: channel.label(),
+            upgrade_command: channel.upgrade_command(),
+            // Read, never fetched: this command transmits nothing, whatever the config says.
+            update: crate::update::read_check_cache(),
+        },
         now,
         scope: crate::summary::Scope {
             range: cli.range.label(),

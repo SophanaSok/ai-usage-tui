@@ -393,8 +393,23 @@ pub struct Scope {
 }
 
 /// Everything `build` needs, gathered by the caller. No field is read from disk or the clock here.
+/// What this binary is and whether a newer one is known: the two things `--doctor` knew and no
+/// JSON document said.
+pub struct Build {
+    pub version: &'static str,
+    /// `update::Channel::label()`: how the running binary got where it is.
+    pub install_channel: &'static str,
+    /// The command that upgrades an install of that kind; `None` for a location not recognised,
+    /// where naming one would upgrade a copy the user is not running.
+    pub upgrade_command: Option<&'static str>,
+    /// The last answer `--check-update` (or an opted-in `--doctor`) cached. `None` when nothing
+    /// has ever asked: the check is opt-in, and building this document never makes it.
+    pub update: Option<crate::update::CachedCheck>,
+}
+
 pub struct Inputs<'a> {
     pub schema_version: u32,
+    pub build: Build,
     pub now: i64,
     pub scope: Scope,
     pub top: usize,
@@ -457,6 +472,16 @@ pub fn build(inputs: &Inputs<'_>) -> Value {
             "model": inputs.scope.model,
             "project": inputs.scope.project,
             "session": inputs.scope.session,
+        },
+        "build": {
+            "version": inputs.build.version,
+            "install_channel": inputs.build.install_channel,
+            "upgrade_command": inputs.build.upgrade_command,
+            "update": inputs.build.update.as_ref().map(|cached| json!({
+                "latest": cached.latest,
+                "checked_at": cached.checked,
+                "newer": crate::update::is_newer(inputs.build.version, &cached.latest),
+            })),
         },
         "sources": inputs.sources.iter().map(|source| json!({
             "id": source.id,
@@ -614,9 +639,46 @@ mod tests {
         }
     }
 
+    fn build_info(update: Option<crate::update::CachedCheck>) -> Build {
+        Build {
+            version: "0.20.0",
+            install_channel: "cargo",
+            upgrade_command: Some("cargo install ai-usage-tui --locked"),
+            update,
+        }
+    }
+
+    /// "Never checked" and "checked, nothing newer" are different answers, and only one of them
+    /// says this build is current.
+    #[test]
+    fn a_build_that_was_never_checked_says_null_not_up_to_date() {
+        let doc = document(&[], 0);
+        assert_eq!(doc["build"]["version"], "0.20.0");
+        assert_eq!(doc["build"]["install_channel"], "cargo");
+        assert!(doc["build"]["update"].is_null());
+
+        let with = |latest: &str| {
+            let mut inputs_update = None;
+            inputs_update.replace(crate::update::CachedCheck {
+                latest: latest.into(),
+                checked: 1_787_000_000,
+            });
+            build_document(&[], 0, build_info(inputs_update))["build"]["update"].clone()
+        };
+        assert_eq!(with("v0.21.0")["newer"], true);
+        assert_eq!(with("v0.21.0")["checked_at"], 1_787_000_000);
+        assert_eq!(with("v0.20.0")["newer"], false);
+        assert_eq!(with("v0.19.0")["newer"], false);
+    }
+
     fn document(usages: &[Usage], top: usize) -> Value {
+        build_document(usages, top, build_info(None))
+    }
+
+    fn build_document(usages: &[Usage], top: usize, build_info: Build) -> Value {
         build(&Inputs {
             schema_version: 1,
+            build: build_info,
             now: 1_787_000_100,
             scope: Scope {
                 range: "ALL TIME".into(),

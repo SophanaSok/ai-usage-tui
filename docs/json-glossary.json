@@ -246,6 +246,24 @@
             "detail": { "type": "string|null", "meaning": "How billing was decided for this source, or why it is off." }
           }
         },
+        "build": {
+          "type": "object",
+          "meaning": "The binary that wrote this document. What --doctor prints under THIS BUILD.",
+          "keys": {
+            "version": { "type": "string", "meaning": "This build's version." },
+            "install_channel": { "type": "string", "meaning": "How the running binary was installed, judged from where it is: cargo, Homebrew, Scoop, a system package, the install script, or an unrecognised location." },
+            "upgrade_command": { "type": "string|null", "meaning": "The command that upgrades an install of that kind. null when the location is not recognised: run none, and point at the releases page." },
+            "update": {
+              "type": "object|null",
+              "meaning": "The last cached answer of the opt-in update check. null means nothing has ever asked, not that this build is current. Writing this document never checks.",
+              "keys": {
+                "latest": { "type": "string", "meaning": "The newest release tag, as GitHub reported it." },
+                "checked_at": { "type": "integer", "meaning": "Unix seconds when it was asked. An old answer can only understate." },
+                "newer": { "type": "boolean", "meaning": "Whether latest is newer than version." }
+              }
+            }
+          }
+        },
         "pricing": {
           "type": "object",
           "meaning": "State of the pricing table.",
