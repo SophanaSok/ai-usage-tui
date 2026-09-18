@@ -1,7 +1,8 @@
 //! Subscription rate-limit windows, from every source that reports them.
 //!
-//! The rows come from `crate::limits::load`, which merges Omarchy's agents panel with the
-//! utilisation Claude Code caches in its own config. This module only draws them.
+//! The rows come from `crate::limits::load`, which merges Omarchy's agents panel with what the
+//! agents record themselves: the utilisation Claude Code caches in its own config and pushes to
+//! its status line, and the windows Codex writes into its rollouts. This module only draws them.
 //!
 //! Adding a panel: create a sibling module here, add a `Panel` variant in `app.rs`, a key
 //! binding in `mod.rs`, and a match arm in `draw`.
@@ -47,8 +48,8 @@ pub fn draw_limits(frame: &mut Frame, area: Rect, app: &App) {
                 muted,
             )));
             lines.push(Line::from(Span::styled(
-                "Omarchy's Agents panel writes them, and Claude Code caches its own in \
-                 ~/.claude.json once it has run.",
+                "Omarchy's Agents panel writes them, Claude Code caches its own in \
+                 ~/.claude.json once it has run, and Codex writes its own on a ChatGPT plan.",
                 muted,
             )));
         }

@@ -415,9 +415,11 @@ from both of:
 ```
 
 Select another Codex home with `--codex-dir PATH`, the `codex_dir` config
-setting, or `CODEX_HOME`. Only the session metadata, the model in force and
+setting, or `CODEX_HOME`. Rollouts the CLI has compressed to `.jsonl.zst`
+are read too. Only the session metadata, the model in force and
 each `token_count` event are read; prompts, tool output and reasoning
-summaries are not. Rows are `openai` / `PAID`, priced `estimated` from the
+summaries are not. The same events carry the plan's rate-limit windows, which
+feed the [Limits panel](#subscription-limits). Rows are `openai` / `PAID`, priced `estimated` from the
 bundled table, and a model absent from it stays `unavailable` — no rate is
 invented. Token conventions and event identity follow the CLI's own arithmetic:
 [Codex CLI](docs/provider-support.md#codex-cli).
@@ -674,7 +676,7 @@ time, the tab strip under the header says which, and `?` lists every key.
 | Spend over time | `g` | What does the trend look like day by day |
 | Burn rate | `w` | At this rate, when do I hit my budget |
 | Sessions | `s` | Which individual runs cost the most |
-| Limits | `l` | Subscription windows from Claude Code's cache and status line and Omarchy's agents panel: % used and reset countdown |
+| Limits | `l` | Subscription windows from Claude Code's cache and status line, Codex's session logs and Omarchy's agents panel: % used and reset countdown |
 
 On a project row, **`Enter`** shows just that project's sessions, and
 **`Backspace`** (or `Esc`) goes back to the list where you left it. The sessions
@@ -745,8 +747,8 @@ project, and no per-token price, is shown as `quota` rather than as `$0.00`.
 ### Subscription limits
 
 The `l` panel shows each subscription's rate-limit windows — how much of the 5-hour and weekly
-allowances is gone, and when each resets. Three sources feed it: two need no configuring, and
-the third is one line of Claude Code settings.
+allowances is gone, and when each resets. Four sources feed it: three need no configuring, and
+the fourth is one line of Claude Code settings.
 
 **Claude Code's own cache**, on every platform. Claude Code records its subscription utilisation
 in `~/.claude.json`, and this reads it: the session window, the weekly window, and any per-model
@@ -779,15 +781,25 @@ from a payload is cleared from the panel rather than frozen at its last figure; 
 reset has passed is dropped when read. See
 [`contrib/claude-code/README.md`](contrib/claude-code/README.md#status-line) to install it.
 
+**Codex's session logs**, on every platform. On a ChatGPT plan every response Codex gets carries
+the account's windows, and the CLI writes them into the rollout beside each call's token counts.
+This reads the newest: the 5-hour and weekly windows, and any window a model has of its own,
+labelled with the limit's name. Only the three most recently written rollouts are looked at, and
+only their last mebibyte, so a long history costs nothing on each refresh. An API key gets no
+such headers and writes none, so there is nothing to show and nothing wrong. A reading older
+than 30 minutes is dimmed, as Claude Code's is. `[collectors.codex] enabled = false` switches it
+off with the rest of Codex's files.
+
 **Omarchy's agents panel**, on [Omarchy](https://omarchy.org) — an Arch/Hyprland desktop whose bar
 meters every AI coding subscription on the machine. It covers agents beyond Claude Code, and
 `--omarchy-record` can publish this tool's own usage back into that panel. On any other machine
 this source is silently idle.
 
-Where two describe the same subscription they are merged into one row rather than two: fresh
-beats stale, and between two fresh readings the newer wins. `[omarchy] limits = false` turns the
-whole panel off, every source included, and `[collectors.claude_code] enabled = false` removes
-both Claude Code readings. `--doctor` has a `LIMITS` section naming where each source was looked
+Where two describe the same subscription they are merged into one row rather than two: a
+reading that has windows beats one that has none, then fresh beats stale, and between two fresh
+readings the newer wins. `[omarchy] limits = false` turns the
+whole panel off, every source included, `[collectors.claude_code] enabled = false` removes
+both Claude Code readings, and `[collectors.codex] enabled = false` removes Codex's. `--doctor` has a `LIMITS` section naming where each source was looked
 for.
 
 See [`docs/omarchy.md`](docs/omarchy.md).
@@ -1314,7 +1326,8 @@ On Windows, `USERPROFILE` (or `HOMEDRIVE` + `HOMEPATH`) stands in for `HOME`,
   [Why there is no Cursor collector](#why-there-is-no-cursor-collector).
 - Codex rollouts contain prompts, tool-call arguments and outputs, and
   reasoning summaries; only `session_meta`, `turn_context`, and the
-  `token_count` block are parsed, under the same planted-credential test as
+  `token_count` block (token counts, and the `rate_limits` windows beside
+  them) are parsed, under the same planted-credential test as
   Claude Code. `~/.codex/auth.json` is a credential file and is never opened;
   the environment is checked only for the presence of `OPENAI_API_KEY` and
   `CODEX_API_KEY`.
@@ -1417,7 +1430,8 @@ SOURCES
   `.jsonl` files, or point at the right directory with `--claude-dir PATH`.
 - **No Codex rows:** confirm `codex` has written `~/.codex/sessions` (or
   `$CODEX_HOME/sessions`), or point at the right home with `--codex-dir PATH`.
-  Compressed `.jsonl.zst` rollouts are not read.
+  A compressed rollout that does not decode is counted on the source line as
+  unreadable, by name.
 - **No GitHub Copilot rows:** `--doctor` names the store it looked for. A
   session only becomes durable usage once the CLI has written it: on older
   builds that means the session must have shut down, and a session still

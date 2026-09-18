@@ -47,7 +47,7 @@
 //!   `null` — not reported — because a hook cannot count them.
 
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     fs::File,
     io::{self, BufRead, BufReader, Read},
     path::{Path, PathBuf},
@@ -62,11 +62,11 @@ use crate::{
         billing::Decision,
         claude_code::{normalize_project_path, parse_line},
         journal::{attributed_requests, record_routing_event},
-        SourceRoots,
+        supersedes, SourceRoots,
     },
     harness::shell,
     helpers::string,
-    model::{accrue, CostStatus},
+    model::{accrue, CostStatus, Usage},
     pricing::{apply_estimated_pricing, PricingEngine},
     utils::now,
 };
@@ -177,9 +177,9 @@ pub struct Attribution {
 /// as the dashboard would price them.
 ///
 /// One API request is written as several assistant lines sharing a `requestId` — one per
-/// content block, each carrying the same usage — so requests are counted once, on that
-/// identity, before the cursor is applied or anything is summed, as the collector deduplicates
-/// them on merge. `skip` is what this session's earlier events already attributed; see the
+/// content block — so requests are counted once, on that identity, before the cursor is applied
+/// or anything is summed, as the collector deduplicates them on merge. The lines do not all
+/// carry the same usage: the fullest one is the request's. `skip` is what this session's earlier events already attributed; see the
 /// module documentation for why a count and not a time.
 pub fn attribute(
     transcript: &Path,
@@ -189,8 +189,9 @@ pub fn attribute(
 ) -> Result<Attribution> {
     let file = File::open(transcript)
         .with_context(|| format!("open transcript {}", transcript.display()))?;
-    let mut seen = HashSet::new();
-    let mut rows = Vec::new();
+    // Where each request's row is, or `None` for one the cursor skipped.
+    let mut seen: HashMap<String, Option<usize>> = HashMap::new();
+    let mut rows: Vec<Usage> = Vec::new();
     let mut model = None;
     let mut position = 0u64;
     for line in BufReader::new(file).split(b'\n') {
@@ -198,18 +199,29 @@ pub fn attribute(
         let Some(mut usage) = parse_line(&String::from_utf8_lossy(&line)) else {
             continue;
         };
+        usage.billing = decision.billing;
         if let Some(id) = &usage.event_id {
-            if !seen.insert(id.clone()) {
+            if let Some(held) = seen.get(id) {
+                // A later line of a request already counted. It is the same request, so the
+                // cursor does not move -- but in a subagent's transcript it is the line with the
+                // real count, and the first one held a placeholder. See `collector::supersedes`.
+                if let Some(index) = held {
+                    if supersedes(&usage, &rows[*index]) {
+                        rows[*index] = usage;
+                    }
+                }
                 continue;
             }
         }
         model = Some(usage.model.clone());
         position += 1;
-        if position <= skip {
-            continue;
+        let kept = position > skip;
+        if let Some(id) = &usage.event_id {
+            seen.insert(id.clone(), kept.then_some(rows.len()));
         }
-        usage.billing = decision.billing;
-        rows.push(usage);
+        if kept {
+            rows.push(usage);
+        }
     }
     apply_estimated_pricing(&mut rows, engine);
 
@@ -648,6 +660,32 @@ mod tests {
         );
         assert_eq!(attribution.requests, 1);
         assert_eq!(attribution.tokens, 13, "10 + 3, not the parent's 1430");
+    }
+
+    /// The subagent transcript Claude Code 2.1.276 wrote, redacted: two requests, each on two
+    /// lines, the first line of each holding `output_tokens` as it stood mid-stream (3, then 2)
+    /// and the second the real count (190, then 77).
+    fn captured_subagent() -> PathBuf {
+        PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/claude_capture/-home-user-project/\
+             f9945b4e-cf82-4035-8783-8ab7e06ed1e4/subagents/agent-a62eb0db18fe48bf8.jsonl"
+        ))
+    }
+
+    #[test]
+    fn a_request_is_attributed_at_its_full_count_not_its_first_lines() {
+        let engine = PricingEngine::bundled();
+        let whole = attribute(&captured_subagent(), 0, &subscription(), &engine).unwrap();
+        assert_eq!(whole.requests, 2);
+        // (10 + 190 + 11046) + (8 + 77 + 11046 + 1264). First-line-wins made it 23,379.
+        assert_eq!(whole.tokens, 11_246 + 12_395);
+
+        // The later line of a request the cursor skipped is still that request: it must not be
+        // counted as a new one, and must not come back as a row.
+        let rest = attribute(&captured_subagent(), 1, &subscription(), &engine).unwrap();
+        assert_eq!(rest.requests, 1);
+        assert_eq!(rest.tokens, 12_395);
     }
 
     #[test]

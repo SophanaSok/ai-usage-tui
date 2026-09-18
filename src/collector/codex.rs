@@ -29,7 +29,13 @@
 //! summaries. Only `session_meta`, `turn_context` and the `token_count` block are read; message
 //! content is never parsed, retained, or logged. Same invariant as the Claude Code collector.
 //!
-//! Files compressed to `.jsonl.zst` by the CLI's history compaction are not read.
+//! **Compressed rollouts.** With `local_thread_store_compression` on (off by default as of
+//! codex-cli 0.155.0), a worker replaces every rollout untouched for seven days with
+//! `<name>.jsonl.zst` -- one zstd frame, level 3, no checksum -- and removes the plain file.
+//! Measured, not read: the real CLI did it to the captured rollouts in a scratch home, and the
+//! collector then reported two of six calls and said nothing about the other four. They are read
+//! here through a streaming decoder. A thread that is resumed is decompressed back to `.jsonl`
+//! by the CLI before it appends, so a compressed file never grows.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -37,6 +43,7 @@ use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::classify::classify;
@@ -121,7 +128,7 @@ pub fn load_codex(
     let mut files = 0usize;
     cursors.skipped.begin_pass();
     for dir in roots.iter().filter(|dir| dir.exists()) {
-        for path in session_files(dir) {
+        for path in rollout_files(dir) {
             files += 1;
             match read_rollout(&path, cursors, decision) {
                 Ok(mut found) => usages.append(&mut found),
@@ -150,21 +157,108 @@ pub fn load_codex(
     Ok((usages, source))
 }
 
+/// Every rollout under `dir`: `*.jsonl`, and `*.jsonl.zst` once the CLI has compressed it.
+fn rollout_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if is_plain(&path) || is_compressed(&path) {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+fn is_plain(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| ext == "jsonl")
+}
+
+fn is_compressed(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".jsonl.zst"))
+}
+
 fn read_rollout(path: &Path, cursors: &mut Cursors, decision: &Decision) -> Result<Vec<Usage>> {
-    let mut file = File::open(path)?;
+    let file = File::open(path)?;
     let size = file.metadata()?.len();
     let mut cursor = cursors.files.get(path).cloned().unwrap_or_default();
 
-    // A shrinking file was rotated or rewritten. Everything remembered about it — not only
-    // the offset — describes a file that no longer exists.
-    if cursor.offset > size {
-        cursor = FileCursor::default();
-    }
-    file.seek(SeekFrom::Start(cursor.offset))?;
-
-    let mut reader = BufReader::new(file);
     let mut usages = Vec::new();
     let mut malformed = 0u64;
+    if is_compressed(path) {
+        // Cold by construction -- the CLI compresses a rollout nothing has touched for a week and
+        // decompresses it before appending -- so it is read once, whole, and its cursor records
+        // the compressed size as "done". Decoded as a stream: a long thread is never held in
+        // memory, and a frame that fails part-way is an error for the whole file, counted by
+        // the caller, rather than a quietly shorter one.
+        if cursor.offset == size && cursors.files.contains_key(path) {
+            return Ok(Vec::new());
+        }
+        cursor = FileCursor::default();
+        let decoder = ruzstd::decoding::StreamingDecoder::new(file)
+            .map_err(|error| anyhow::anyhow!("not a zstd frame: {error}"))?;
+        read_lines(
+            BufReader::new(decoder),
+            &mut cursor,
+            path,
+            decision,
+            &mut cursors.disagreements,
+            &mut usages,
+            &mut malformed,
+        )?;
+        cursor.offset = size;
+    } else {
+        // A shrinking file was rotated or rewritten. Everything remembered about it — not only
+        // the offset — describes a file that no longer exists.
+        if cursor.offset > size {
+            cursor = FileCursor::default();
+        }
+        let mut file = file;
+        file.seek(SeekFrom::Start(cursor.offset))?;
+        read_lines(
+            BufReader::new(file),
+            &mut cursor,
+            path,
+            decision,
+            &mut cursors.disagreements,
+            &mut usages,
+            &mut malformed,
+        )?;
+    }
+
+    // Counted only once the cursor is saved: a read that fails part-way keeps the old cursor, and
+    // the retry would otherwise count the same lines again.
+    cursors.files.insert(path.to_path_buf(), cursor);
+    for _ in 0..malformed {
+        cursors.skipped.malformed();
+    }
+    for usage in &usages {
+        cursors.skipped.note(usage);
+    }
+    Ok(usages)
+}
+
+/// Feed every complete line of `reader` through the cursor, advancing its offset by what was
+/// consumed.
+fn read_lines(
+    mut reader: impl BufRead,
+    cursor: &mut FileCursor,
+    path: &Path,
+    decision: &Decision,
+    disagreements: &mut u64,
+    usages: &mut Vec<Usage>,
+    malformed: &mut u64,
+) -> Result<()> {
     let mut line = String::new();
     loop {
         line.clear();
@@ -183,25 +277,15 @@ fn read_rollout(path: &Path, cursors: &mut Cursors, decision: &Decision) -> Resu
             continue;
         }
         let Ok(json) = serde_json::from_str::<Value>(trimmed) else {
-            malformed += 1;
+            *malformed += 1;
             continue;
         };
-        if let Some(mut usage) = parse_value(&json, &mut cursor, path, &mut cursors.disagreements) {
+        if let Some(mut usage) = parse_value(&json, cursor, path, disagreements) {
             usage.billing = decision.billing;
             usages.push(usage);
         }
     }
-
-    // Counted only once the cursor is saved: a read that fails part-way keeps the old cursor, and
-    // the retry would otherwise count the same lines again.
-    cursors.files.insert(path.to_path_buf(), cursor);
-    for _ in 0..malformed {
-        cursors.skipped.malformed();
-    }
-    for usage in &usages {
-        cursors.skipped.note(usage);
-    }
-    Ok(usages)
+    Ok(())
 }
 
 /// Feed one rollout line through the cursor. Context lines update it and yield nothing; a
@@ -250,15 +334,7 @@ fn parse_value(
         _ => {}
     }
 
-    // Older writers nested the item one level deeper under `response_item`.
-    let payload = if kind == "response_item" {
-        payload.get("payload").unwrap_or(payload)
-    } else {
-        payload
-    };
-    if payload.get("type").and_then(Value::as_str) != Some("token_count") {
-        return None;
-    }
+    let payload = token_count_payload(json)?;
     // A rate-limit-only update carries `info: null`.
     let info = payload.get("info").filter(|info| info.is_object())?;
     let last = info.get("last_token_usage").filter(|u| u.is_object())?;
@@ -340,7 +416,11 @@ fn parse_value(
 /// The thread UUID from `rollout-<local timestamp>-<uuid>.jsonl`, for a file whose
 /// `session_meta` has not been seen. A revert writes `<thread>_<rollout>`; the thread wins.
 fn session_id_from_filename(path: &Path) -> Option<String> {
-    let stem = path.file_stem()?.to_str()?;
+    let name = path.file_name()?.to_str()?;
+    let stem = name
+        .strip_suffix(".jsonl.zst")
+        .or_else(|| name.strip_suffix(".jsonl"))
+        .unwrap_or(name);
     let tail = stem.rsplit('-').take(5).collect::<Vec<_>>();
     if tail.len() != 5 {
         return None;
@@ -348,6 +428,249 @@ fn session_id_from_filename(path: &Path) -> Option<String> {
     let candidate: String = tail.into_iter().rev().collect::<Vec<_>>().join("-");
     let candidate = candidate.split('_').next()?.to_string();
     (candidate.len() == 36).then_some(candidate)
+}
+
+/// How many of the most recently written rollouts are searched for `rate_limits`.
+///
+/// The freshest reading is in whichever thread was used last, and that is nearly always the
+/// newest file. More than one is read because Codex keeps a single snapshot per thread and the
+/// last header family parsed wins (see `latest_rate_limits`), so a thread on a model with its own
+/// limit never writes the default family at all, and the thread before it may hold it.
+const RATE_LIMIT_FILES: usize = 3;
+
+/// How much of the end of a rollout is searched.
+///
+/// This runs on every dashboard refresh and from `--json`, with no state to remember a file by,
+/// so it must not re-read a long thread's whole history each time. A `token_count` line is about
+/// a kilobyte and one follows every API call, so the last mebibyte holds the thread's newest
+/// reading unless the call was followed by more than a mebibyte of tool output -- in which case
+/// this finds an older reading or none, and the next API call puts it right.
+const RATE_LIMIT_TAIL_BYTES: u64 = 1024 * 1024;
+
+/// The limit id of Codex's default header family (`x-codex-primary-used-percent` and its
+/// siblings). An absent `limit_id` means this one: that is the CLI's own default.
+pub const DEFAULT_LIMIT_ID: &str = "codex";
+
+/// The slice of a `token_count` event's `rate_limits` block that is read. `credits`,
+/// `plan_type` and the rest are not declared, so they are never deserialised.
+#[derive(Debug, Deserialize)]
+struct RateLimitsBlock {
+    limit_id: Option<String>,
+    limit_name: Option<String>,
+    primary: Option<WindowBlock>,
+    secondary: Option<WindowBlock>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WindowBlock {
+    used_percent: Option<f64>,
+    window_minutes: Option<i64>,
+    /// Unix epoch **seconds**, and an integer: a float or a string here is a format change, and
+    /// serde refuses it rather than this guessing at a unit.
+    resets_at: Option<i64>,
+}
+
+/// One window of one reading, as the CLI wrote it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RateLimitWindow {
+    /// 0..100, finite and non-negative; anything else was refused.
+    pub used_percent: f64,
+    pub window_minutes: Option<i64>,
+    pub resets_at: Option<i64>,
+    /// The block's `secondary` window rather than its `primary`.
+    pub secondary: bool,
+}
+
+/// The newest `rate_limits` block found for one limit id.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RateLimitReading {
+    pub limit_id: String,
+    pub limit_name: Option<String>,
+    /// The event's own `timestamp`, Unix seconds. `None` when the line had none that parses.
+    pub at: Option<i64>,
+    pub windows: Vec<RateLimitWindow>,
+}
+
+/// What `latest_rate_limits` found.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RateLimitReadout {
+    /// The newest reading per limit id, the default family first.
+    pub readings: Vec<RateLimitReading>,
+    /// A rollout could not be opened, or a `rate_limits` block was not the shape this reads.
+    /// Counted and named by file, never quoted: a rollout line holds the user's prompts.
+    pub problems: Vec<String>,
+}
+
+/// The newest rate-limit reading Codex wrote, per limit id.
+///
+/// Every `token_count` event carries the thread's current `rate_limits` snapshot, built from the
+/// response's `x-<limit>-primary-*` / `-secondary-*` headers. Measured against codex-cli 0.155.0
+/// (`tests/fixtures/codex_capture/`), and not what the source suggests at a
+/// glance: **a response can carry several header families and the thread keeps one snapshot, so
+/// the last family parsed replaces the others.** A rollout written while a second family was
+/// being sent holds that family on every line and the default `codex` family on none. So a
+/// reader that takes "the last `rate_limits`" reports some other limit as the account's, and
+/// this keys every reading on its `limit_id`.
+///
+/// API-key use sends no such headers and writes `rate_limits: null`; that is no reading, not a
+/// zero.
+///
+/// **Compressed rollouts are deliberately not searched**, though `load_codex` reads them. The CLI
+/// compresses a rollout only once nothing has touched it for seven days, and the longest window
+/// it reports is seven days: every reading in a `.jsonl.zst` describes a window that has since
+/// reset. There is also no tail to seek to in a zstd frame, so finding one would mean decoding a
+/// whole thread on every refresh, from a reader that keeps no state. A home whose newest
+/// rollouts are all compressed therefore shows no Codex row, which is the truth about it: no
+/// window there is still running.
+pub fn latest_rate_limits(home: &Path) -> RateLimitReadout {
+    let mut readout = RateLimitReadout::default();
+    let mut files: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+    for dir in [home.join("sessions"), home.join("archived_sessions")] {
+        for path in session_files(&dir) {
+            if let Ok(modified) = std::fs::metadata(&path).and_then(|meta| meta.modified()) {
+                files.push((modified, path));
+            }
+        }
+    }
+    files.sort_by(|a, b| b.cmp(a));
+
+    let mut newest: HashMap<String, RateLimitReading> = HashMap::new();
+    for (_, path) in files.into_iter().take(RATE_LIMIT_FILES) {
+        let mut unreadable = 0usize;
+        match read_tail_lines(&path, RATE_LIMIT_TAIL_BYTES) {
+            Ok(lines) => {
+                for line in lines {
+                    match rate_limit_reading(&line) {
+                        Ok(Some(reading)) => {
+                            let slot = newest.get(&reading.limit_id);
+                            // `>=`: within one file later lines are newer, and two events can
+                            // share a millisecond.
+                            if slot.is_none_or(|held| reading.at >= held.at) {
+                                newest.insert(reading.limit_id.clone(), reading);
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(()) => unreadable += 1,
+                    }
+                }
+            }
+            Err(error) => readout
+                .problems
+                .push(format!("{}: {error}", path.display())),
+        }
+        if unreadable > 0 {
+            readout.problems.push(format!(
+                "{}: {unreadable} rate_limits block(s) not in a shape this build reads",
+                path.display()
+            ));
+        }
+    }
+
+    let mut readings: Vec<RateLimitReading> = newest.into_values().collect();
+    readings.sort_by(|a, b| {
+        (a.limit_id != DEFAULT_LIMIT_ID, &a.limit_id)
+            .cmp(&(b.limit_id != DEFAULT_LIMIT_ID, &b.limit_id))
+    });
+    readout.readings = readings;
+    readout
+}
+
+/// The complete lines in the last `window` bytes of a file.
+///
+/// Starting mid-file lands mid-line, so the first line is dropped unless the read began at the
+/// start. A last line with no newline is a write in flight and is dropped too. Read as bytes and
+/// converted lossily: the window can open inside a multi-byte character, and that line is the
+/// one being discarded anyway.
+fn read_tail_lines(path: &Path, window: u64) -> std::io::Result<Vec<String>> {
+    use std::io::Read;
+    let mut file = File::open(path)?;
+    let size = file.metadata()?.len();
+    let start = size.saturating_sub(window);
+    file.seek(SeekFrom::Start(start))?;
+    let mut bytes = Vec::new();
+    file.take(window).read_to_end(&mut bytes)?;
+    let text = String::from_utf8_lossy(&bytes);
+    let mut lines: Vec<&str> = text.split_inclusive('\n').collect();
+    if lines.last().is_some_and(|line| !line.ends_with('\n')) {
+        lines.pop();
+    }
+    if start > 0 && !lines.is_empty() {
+        lines.remove(0);
+    }
+    Ok(lines
+        .into_iter()
+        .map(|line| line.trim().to_string())
+        .collect())
+}
+
+/// The reading on one rollout line. `Ok(None)` is a line with none -- any other kind of line, or
+/// a `token_count` whose `rate_limits` is null. `Err` is a block that is there and could not be
+/// read, which the caller counts.
+fn rate_limit_reading(line: &str) -> std::result::Result<Option<RateLimitReading>, ()> {
+    // Most of a rollout is message content. This keeps it from being parsed at all, which is
+    // both the cost and the privacy argument.
+    if !line.contains("\"rate_limits\"") {
+        return Ok(None);
+    }
+    let Ok(json) = serde_json::from_str::<Value>(line) else {
+        return Ok(None);
+    };
+    let Some(payload) = token_count_payload(&json) else {
+        return Ok(None);
+    };
+    let Some(block) = payload.get("rate_limits").filter(|block| !block.is_null()) else {
+        return Ok(None);
+    };
+    let block: RateLimitsBlock = serde_json::from_value(block.clone()).map_err(|_| ())?;
+
+    let mut windows = Vec::new();
+    for (window, secondary) in [(block.primary, false), (block.secondary, true)] {
+        let Some(window) = window else { continue };
+        // A window with no percentage has nothing to draw, and one that is negative or not
+        // finite is not a percentage.
+        let Some(used_percent) = window.used_percent.filter(|p| p.is_finite() && *p >= 0.0) else {
+            return Err(());
+        };
+        windows.push(RateLimitWindow {
+            used_percent,
+            window_minutes: window.window_minutes,
+            resets_at: window.resets_at,
+            secondary,
+        });
+    }
+    if windows.is_empty() {
+        // Credits only, or a family with nothing in it. Not a window and not a fault.
+        return Ok(None);
+    }
+    let limit_id = block
+        .limit_id
+        .map(|id| id.trim().to_ascii_lowercase())
+        .filter(|id| !id.is_empty())
+        .unwrap_or_else(|| DEFAULT_LIMIT_ID.to_string());
+    Ok(Some(RateLimitReading {
+        limit_id,
+        limit_name: block
+            .limit_name
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty()),
+        at: string(&json, &["timestamp"])
+            .as_deref()
+            .and_then(parse_created_at),
+        windows,
+    }))
+}
+
+/// The payload of a `token_count` event, wherever this writer put it.
+fn token_count_payload(json: &Value) -> Option<&Value> {
+    let kind = json.get("type").and_then(Value::as_str).unwrap_or("");
+    let payload = json.get("payload").unwrap_or(json);
+    // Older writers nested the item one level deeper under `response_item`.
+    let payload = if kind == "response_item" {
+        payload.get("payload").unwrap_or(payload)
+    } else {
+        payload
+    };
+    (payload.get("type").and_then(Value::as_str) == Some("token_count")).then_some(payload)
 }
 
 pub struct CodexCollector {
@@ -739,6 +1062,262 @@ mod tests {
         .unwrap();
         assert!(rows.is_empty());
         assert!(source.contains("no session logs"), "{source}");
+    }
+
+    // ---- compressed rollouts -----------------------------------------------------------
+
+    /// The redacted capture, compressed as the CLI compresses one: `zstd -3 --no-check`, one
+    /// frame with its content size. The real `.jsonl.zst` the CLI wrote cannot be committed --
+    /// it is the unredacted rollout -- but it was read by this code and gave the same six calls
+    /// as the plain files it replaced, and its frame header matches this one field for field.
+    fn compressed_home() -> PathBuf {
+        PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/codex_compressed"
+        ))
+    }
+
+    #[test]
+    fn a_compressed_rollout_gives_the_rows_the_plain_one_gave() {
+        let plain_home = capture_home(&[CAPTURE_OTHER_FAMILY]);
+        let (plain, _) =
+            load_codex(Some(plain_home.path()), &mut Cursors::new(), &per_token()).unwrap();
+        let mut cursors = Cursors::new();
+        let (compressed, status) =
+            load_codex(Some(&compressed_home()), &mut cursors, &per_token()).unwrap();
+        assert_eq!(plain.len(), 2);
+        assert_eq!(
+            format!("{compressed:?}"),
+            format!("{plain:?}"),
+            "same calls, same ids, same thread"
+        );
+        assert!(status.contains("(1 sessions)"), "{status}");
+        assert!(!status.contains("unreadable"), "{status}");
+
+        // Cold files are read once. A second pass finds the cursor and decodes nothing.
+        let (again, _) = load_codex(Some(&compressed_home()), &mut cursors, &per_token()).unwrap();
+        assert!(again.is_empty());
+    }
+
+    #[test]
+    fn a_compressed_rollout_that_does_not_decode_is_counted_and_named() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let day = dir.path().join("sessions/2026/09/18");
+        std::fs::create_dir_all(&day).unwrap();
+        let source = compressed_home().join(
+            "sessions/2026/09/18/rollout-2026-09-18T10-28-44-01a0b590-400c-7d90-9713-4cff3fb43730.jsonl.zst",
+        );
+        let bytes = std::fs::read(source).unwrap();
+        // Cut off mid-frame, and one that was never zstd at all.
+        std::fs::write(day.join("rollout-cut.jsonl.zst"), &bytes[..bytes.len() / 2]).unwrap();
+        std::fs::write(day.join("rollout-text.jsonl.zst"), format!("{META}\n")).unwrap();
+
+        let (rows, status) =
+            load_codex(Some(dir.path()), &mut Cursors::new(), &per_token()).unwrap();
+        assert!(
+            rows.is_empty(),
+            "half a frame is not half a rollout: {rows:#?}"
+        );
+        assert!(status.contains("2 file(s) unreadable"), "{status}");
+    }
+
+    #[test]
+    fn a_compressed_file_without_session_meta_still_takes_its_id_from_its_name() {
+        let path = Path::new(
+            "/x/rollout-2026-09-18T10-28-44-01a0b590-400c-7d90-9713-4cff3fb43730.jsonl.zst",
+        );
+        assert_eq!(
+            session_id_from_filename(path).as_deref(),
+            Some("01a0b590-400c-7d90-9713-4cff3fb43730")
+        );
+    }
+
+    // ---- rate limits -------------------------------------------------------------------
+
+    /// The two rollouts the real CLI wrote (`scripts/codex-standin.py`), by the second in
+    /// their names.
+    const CAPTURE_OTHER_FAMILY: &str = "10-28-44";
+    const CAPTURE_DEFAULT_FAMILY: &str = "10-29-27";
+
+    /// Copy the captured rollouts whose names contain one of `which` into a fresh Codex home,
+    /// with modification times one minute apart in the order given. A checkout gives every file
+    /// the same instant, more or less, and the reader sorts on it.
+    fn capture_home(which: &[&str]) -> tempfile::TempDir {
+        let source = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/codex_capture/sessions/2026/09/18"
+        ));
+        let home = tempfile::tempdir().unwrap();
+        let sessions = home.path().join("sessions/2026/09/18");
+        std::fs::create_dir_all(&sessions).unwrap();
+        for (index, needle) in which.iter().enumerate() {
+            let from = std::fs::read_dir(&source)
+                .unwrap()
+                .flatten()
+                .map(|entry| entry.path())
+                .find(|path| path.to_string_lossy().contains(needle))
+                .expect("the captured rollout");
+            let to = sessions.join(from.file_name().unwrap());
+            std::fs::copy(&from, &to).unwrap();
+            let at = std::time::UNIX_EPOCH + Duration::from_secs(1_789_752_000 + 60 * index as u64);
+            File::options()
+                .write(true)
+                .open(&to)
+                .unwrap()
+                .set_modified(at)
+                .unwrap();
+        }
+        home
+    }
+
+    #[test]
+    fn the_captured_rollouts_give_one_reading_per_limit_id() {
+        let home = capture_home(&[CAPTURE_OTHER_FAMILY, CAPTURE_DEFAULT_FAMILY]);
+        let readout = latest_rate_limits(home.path());
+        assert!(readout.problems.is_empty(), "{:?}", readout.problems);
+        let ids: Vec<&str> = readout
+            .readings
+            .iter()
+            .map(|r| r.limit_id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["codex", "codex_other"],
+            "the default family first"
+        );
+
+        let default = &readout.readings[0];
+        // The second event of the thread, not the first: 13.0, where the first said 12.0.
+        assert_eq!(
+            default.windows,
+            vec![
+                RateLimitWindow {
+                    used_percent: 13.0,
+                    window_minutes: Some(300),
+                    resets_at: Some(1_789_763_367),
+                    secondary: false,
+                },
+                RateLimitWindow {
+                    used_percent: 40.5,
+                    window_minutes: Some(10_080),
+                    resets_at: Some(1_790_098_167),
+                    secondary: true,
+                },
+            ]
+        );
+        assert_eq!(default.at, parse_created_at("2026-09-18T17:29:27.475Z"));
+        assert_eq!(default.limit_name, None);
+
+        let other = &readout.readings[1];
+        assert_eq!(other.limit_name.as_deref(), Some("codex_other"));
+        assert_eq!(other.windows.len(), 1, "its `secondary` is null");
+        assert_eq!(other.windows[0].window_minutes, Some(60));
+    }
+
+    /// What the capture found and the source did not suggest. The stand-in sent both header
+    /// families on every response of this thread, and the CLI wrote only the second into the
+    /// rollout -- on every line. Read as "the thread's rate limits", a 2%-used one-hour window
+    /// would be shown as the account's.
+    #[test]
+    fn a_thread_that_only_wrote_another_family_is_not_read_as_the_default_one() {
+        let home = capture_home(&[CAPTURE_OTHER_FAMILY]);
+        let readout = latest_rate_limits(home.path());
+        let ids: Vec<&str> = readout
+            .readings
+            .iter()
+            .map(|r| r.limit_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["codex_other"]);
+    }
+
+    #[test]
+    fn a_newer_file_does_not_hide_a_family_it_never_wrote() {
+        // The other-family thread is the newer file here; the default family is still found in
+        // the one before it.
+        let home = capture_home(&[CAPTURE_DEFAULT_FAMILY, CAPTURE_OTHER_FAMILY]);
+        let ids: Vec<String> = latest_rate_limits(home.path())
+            .readings
+            .into_iter()
+            .map(|r| r.limit_id)
+            .collect();
+        assert_eq!(ids, vec!["codex", "codex_other"]);
+    }
+
+    #[test]
+    fn a_null_block_is_no_reading_and_an_absent_limit_id_is_the_default_family() {
+        assert_eq!(rate_limit_reading(COUNT_2), Ok(None), "rate_limits: null");
+        assert_eq!(rate_limit_reading(USER), Ok(None));
+        let reading = rate_limit_reading(COUNT_1)
+            .unwrap()
+            .expect("a primary window");
+        assert_eq!(reading.limit_id, DEFAULT_LIMIT_ID);
+        assert_eq!(reading.windows[0].used_percent, 12.5);
+        // `info: null`, which yields no usage row, still carries a reading.
+        let limits_only = rate_limit_reading(LIMITS_ONLY).unwrap().expect("a reading");
+        assert_eq!(limits_only.windows[0].window_minutes, None);
+    }
+
+    #[test]
+    fn a_block_in_another_shape_is_counted_not_read() {
+        let float_reset = r#"{"timestamp":"2026-08-18T10:00:08.000Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":{"used_percent":13.0,"resets_at":1787422800.5}}}}"#;
+        let text_percent = r#"{"timestamp":"2026-08-18T10:00:08.000Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":{"used_percent":"13"}}}}"#;
+        let negative = r#"{"timestamp":"2026-08-18T10:00:08.000Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":{"used_percent":-1.0}}}}"#;
+        let no_percent = r#"{"timestamp":"2026-08-18T10:00:08.000Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":{"window_minutes":300}}}}"#;
+        for line in [float_reset, text_percent, negative, no_percent] {
+            assert_eq!(rate_limit_reading(line), Err(()), "{line}");
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let path = rollout_path(home.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, format!("{float_reset}\n{COUNT_1}\n{negative}\n")).unwrap();
+        let readout = latest_rate_limits(home.path());
+        assert_eq!(
+            readout.readings.len(),
+            1,
+            "the readable block is still read"
+        );
+        assert_eq!(readout.problems.len(), 1);
+        assert!(
+            readout.problems[0].contains("2 rate_limits block(s)"),
+            "{:?}",
+            readout.problems
+        );
+        assert!(
+            !readout.problems[0].contains("used_percent"),
+            "a problem quotes no line"
+        );
+    }
+
+    #[test]
+    fn the_tail_drops_the_line_it_opened_inside_and_the_one_still_being_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tail.jsonl");
+        std::fs::write(&path, "first line\nsecond\nthird\nfourth, unfinished").unwrap();
+        // The whole file: only the unfinished line goes.
+        assert_eq!(
+            read_tail_lines(&path, 1024).unwrap(),
+            vec!["first line", "second", "third"]
+        );
+        // A window opening inside "second": that line goes as well.
+        assert_eq!(read_tail_lines(&path, 28).unwrap(), vec!["third"]);
+        // A window opening inside a multi-byte character is not an error.
+        std::fs::write(&path, "caf\u{e9}\nlast\n").unwrap();
+        assert_eq!(read_tail_lines(&path, 6).unwrap(), vec!["last"]);
+    }
+
+    /// Stated, not an oversight: see `latest_rate_limits`. A compressed rollout is a week cold,
+    /// and no window in it is still running.
+    #[test]
+    fn a_compressed_rollout_is_not_searched_for_windows() {
+        let readout = latest_rate_limits(&compressed_home());
+        assert_eq!(readout, RateLimitReadout::default());
+    }
+
+    #[test]
+    fn a_home_with_no_rollouts_has_no_reading_and_no_problem() {
+        let readout = latest_rate_limits(Path::new("/nonexistent/codex-home"));
+        assert_eq!(readout, RateLimitReadout::default());
     }
 
     #[test]

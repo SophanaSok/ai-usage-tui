@@ -4,18 +4,40 @@ pub fn string(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter()
         .find_map(|key| value.get(*key).and_then(Value::as_str).map(String::from))
 }
-/// A count under any of `keys`, or `None` when the record carries none of them.
+/// The largest count believed. No request is near it, and above it a float no longer holds an
+/// integer exactly -- so a figure past this is a format change or a damaged file, not a reading.
+pub const MAX_COUNT: u64 = 1 << 53;
+
+/// A JSON value as a token count, or `None` when it is not one.
+///
+/// A whole number from zero to [`MAX_COUNT`], written as an integer or as a float (`1200.0` is
+/// what some writers emit). Everything else is refused: a negative, a fraction, a string, a
+/// number too large to be one. Each of those used to become a figure -- `-1` read as `0`, `1.5`
+/// as `1`, and `1e308` or anything past `u64::MAX` as 18,446,744,073,709,551,615 tokens, which
+/// then overflowed the first total it was added to. Found by `collector::mutation`.
+fn as_count(field: &Value) -> Option<u64> {
+    let whole = match field.as_u64() {
+        Some(whole) => whole,
+        None => {
+            let float = field.as_f64()?;
+            if !float.is_finite() || float < 0.0 || float.fract() != 0.0 {
+                return None;
+            }
+            // Saturates above `u64::MAX`, which the bound below then refuses.
+            float as u64
+        }
+    };
+    (whole <= MAX_COUNT).then_some(whole)
+}
+
+/// A count under any of `keys`, or `None` when the record carries none of them -- or carries
+/// one that is not a count (see `as_count`).
 ///
 /// `number` answers `0` for an absent key, which is right for a field a source only sometimes
 /// reports (cache, reasoning) and wrong for one it always does: there, absent means the format
 /// changed, and `0` is an invented reading of it.
 pub fn count(value: &Value, keys: &[&str]) -> Option<u64> {
-    keys.iter().find_map(|key| {
-        let field = value.get(*key)?;
-        field
-            .as_u64()
-            .or_else(|| field.as_f64().map(|number| number.max(0.0) as u64))
-    })
+    keys.iter().find_map(|key| as_count(value.get(*key)?))
 }
 
 /// `count`, noting in `missing` when the field was not there. For the fields a source always
@@ -27,17 +49,9 @@ pub fn required(value: &Value, keys: &[&str], missing: &mut bool) -> u64 {
     })
 }
 
+/// A count a source only sometimes reports: `0` when it is absent, or is not a count.
 pub fn number(value: &Value, keys: &[&str]) -> u64 {
-    keys.iter()
-        .find_map(|key| {
-            value.get(*key).and_then(Value::as_u64).or_else(|| {
-                value
-                    .get(*key)
-                    .and_then(Value::as_f64)
-                    .map(|value| value as u64)
-            })
-        })
-        .unwrap_or(0)
+    count(value, keys).unwrap_or(0)
 }
 
 /// Write a line to stdout, returning the I/O error instead of panicking on it.
@@ -174,5 +188,50 @@ mod tests {
         ));
         assert!(!is_broken_pipe(&error));
         assert!(!is_broken_pipe(&anyhow::anyhow!("unrelated")));
+    }
+}
+
+#[cfg(test)]
+mod count_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_count_is_a_whole_number_in_range_and_nothing_else() {
+        let record = json!({
+            "int": 1200, "float": 1200.0, "zero": 0, "max": MAX_COUNT,
+            "negative": -1, "fraction": 1.5, "huge_float": 1e308, "past_max": MAX_COUNT + 1,
+            "i64_max": i64::MAX, "text": "1200", "null": null, "object": {},
+        });
+        for (key, expected) in [
+            ("int", 1200),
+            ("float", 1200),
+            ("zero", 0),
+            ("max", MAX_COUNT),
+        ] {
+            assert_eq!(count(&record, &[key]), Some(expected), "{key}");
+        }
+        for key in [
+            "negative",
+            "fraction",
+            "huge_float",
+            "past_max",
+            "i64_max",
+            "text",
+            "null",
+            "object",
+            "absent",
+        ] {
+            assert_eq!(count(&record, &[key]), None, "{key}");
+            assert_eq!(number(&record, &[key]), 0, "{key}");
+            let mut missing = false;
+            assert_eq!(required(&record, &[key], &mut missing), 0);
+            assert!(
+                missing,
+                "{key}: a required count that is not one flags the row"
+            );
+        }
+        // A key that is there and unreadable does not stop a later spelling being read.
+        assert_eq!(count(&record, &["text", "int"]), Some(1200));
     }
 }

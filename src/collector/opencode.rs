@@ -137,7 +137,12 @@ pub fn load_opencode_since(
         let tokens = info.get("tokens").unwrap_or(&Value::Null);
         let cache = tokens.get("cache").unwrap_or(&Value::Null);
         let mut category = classify(&provider, &model);
-        let cost = info.get("cost").and_then(Value::as_f64);
+        // A cost is a finite amount that is not negative. Anything else is not OpenCode
+        // reporting a price, and is not carried into a total as one.
+        let cost = info
+            .get("cost")
+            .and_then(Value::as_f64)
+            .filter(|cost| cost.is_finite() && *cost >= 0.0);
         if category == Category::Unknown && cost.map(|value| value > 0.0).unwrap_or(false) {
             category = Category::Paid;
         }

@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Condvar, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread::{self, JoinHandle};
@@ -6,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use crate::collector::{usage_key, UsageKey};
+use crate::collector::{supersedes, usage_key, UsageKey};
 use crate::logging;
 use crate::model::Usage;
 use crate::pricing::{apply_estimated_pricing, PricingEngine};
@@ -152,9 +153,10 @@ pub struct CollectorState {
     /// row ever collected on every refresh, changed or not -- all of history, five strings a
     /// row, every thirty seconds.
     generation: u64,
-    /// Membership index over `usages`, maintained alongside it. Rebuilding this per poll and
-    /// scanning it linearly made merges quadratic in total history, on every poll, forever.
-    seen: HashSet<UsageKey>,
+    /// Where each event sits in `usages`, maintained alongside it. Rebuilding this per poll and
+    /// scanning it linearly made merges quadratic in total history, on every poll, forever. An
+    /// index and not a set, because a later reading of an event can replace the one held.
+    seen: HashMap<UsageKey, usize>,
     pub sources: Vec<String>,
     pub health: HashMap<String, Health>,
     /// Pricing is immutable per process; loading it inside the write lock on every poll
@@ -167,7 +169,7 @@ impl CollectorState {
         Self {
             usages: Vec::new(),
             generation: 0,
-            seen: HashSet::new(),
+            seen: HashMap::new(),
             sources: Vec::new(),
             health: HashMap::new(),
             pricing,
@@ -201,12 +203,33 @@ impl CollectorState {
         warning: Option<String>,
     ) -> usize {
         let start = self.usages.len();
+        let mut replaced = false;
         for u in usages {
-            if self.seen.insert(usage_key(&u)) {
-                self.usages.push(u);
+            match self.seen.entry(usage_key(&u)) {
+                Entry::Vacant(slot) => {
+                    slot.insert(self.usages.len());
+                    self.usages.push(u);
+                }
+                // A poll can catch a request half-written and the next poll the rest of it;
+                // see `supersedes`. The row that replaces one already priced arrives unpriced
+                // and sits below `start`, where the caller's `price_from` will not reach -- so
+                // it is priced here.
+                Entry::Occupied(slot) => {
+                    let index = *slot.get();
+                    if supersedes(&u, &self.usages[index]) {
+                        self.usages[index] = u;
+                        if index < start {
+                            apply_estimated_pricing(
+                                std::slice::from_mut(&mut self.usages[index]),
+                                &self.pricing,
+                            );
+                        }
+                        replaced = true;
+                    }
+                }
             }
         }
-        if self.usages.len() > start {
+        if self.usages.len() > start || replaced {
             self.generation += 1;
         }
         if !self.sources.contains(&source) {
@@ -787,6 +810,48 @@ mod tests {
         state.merge("a", vec![u1.clone()], "a: ok".into(), None);
         state.merge("a", vec![u1], "a: ok".into(), None);
         assert_eq!(state.usages.len(), 1);
+    }
+
+    /// A poll can land between the lines of one request. The first line's count is a
+    /// placeholder in a subagent's transcript, so the row merged from it has to give way.
+    #[test]
+    fn a_fuller_reading_from_a_later_poll_replaces_the_row_and_is_priced() {
+        let mut state = CollectorState::for_test();
+        let first_line = Usage {
+            event_id: Some("req_1".into()),
+            provider: "anthropic".into(),
+            model: "claude-haiku-4-5-20251001".into(),
+            category: crate::classify::classify("anthropic", "claude-haiku-4-5-20251001"),
+            requests: 1,
+            input: 10,
+            output: 3,
+            cost_status: crate::model::CostStatus::Unavailable,
+            ..Default::default()
+        };
+        let last_line = Usage {
+            output: 190,
+            ..first_line.clone()
+        };
+        let start = state.merge("claude_code", vec![first_line.clone()], "s".into(), None);
+        state.price_from(start);
+        let placeholder_cost = state.usages[0].cost.expect("priced");
+        let before = state.generation;
+
+        let start = state.merge("claude_code", vec![last_line], "s".into(), None);
+        state.price_from(start);
+        assert_eq!(state.usages.len(), 1, "still one request");
+        assert_eq!(state.usages[0].output, 190);
+        assert!(
+            state.usages[0].cost.expect("the replacement is priced") > placeholder_cost,
+            "priced at its own size, not left unpriced below `start`"
+        );
+        assert!(state.generation > before, "the dashboard has to copy again");
+
+        // The placeholder arriving again -- a replayed or forked transcript -- changes nothing.
+        let settled = state.generation;
+        state.merge("claude_code", vec![first_line], "s".into(), None);
+        assert_eq!(state.usages[0].output, 190);
+        assert_eq!(state.generation, settled);
     }
 
     #[test]

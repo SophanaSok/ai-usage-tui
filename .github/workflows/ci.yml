@@ -113,6 +113,42 @@ jobs:
           shellcheck scripts/*.sh
           scripts/test-publish-release.sh
 
+  # Reported, never gated. A threshold turns coverage into something to be satisfied, and the
+  # cheapest way to satisfy one is a test that runs a line without checking it -- the opposite of
+  # the rule here that a test must fail against its bug. What the table is for is reading: a
+  # module near zero is a module nothing exercises, which is how the Zen catalogue fetch was found
+  # still writing through a shared temporary after that had been fixed everywhere else.
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master, 2026-09-17
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: coverage
+      # Prebuilt, for the reason cargo-deny is: a from-source install costs minutes per run.
+      - uses: taiki-e/install-action@4076c08d76dba979c11a7285295b0716c1d67908 # v2.87.15
+        with:
+          tool: cargo-llvm-cov
+      - name: Line coverage by file
+        run: |
+          cargo llvm-cov --all-targets --locked --summary-only | tee coverage.txt
+          {
+            echo '### Line coverage'
+            echo
+            echo '```'
+            awk '$1 == "TOTAL" { print "total", $10 }' coverage.txt
+            echo
+            echo 'Least covered:'
+            # Column 10 is line coverage; the rows of the table are the ones ending in a dash.
+            awk '$NF == "-" && $1 != "TOTAL" { print $10, $1 }' coverage.txt | sort -n | head -8
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   audit:
     name: Advisories
     runs-on: ubuntu-latest

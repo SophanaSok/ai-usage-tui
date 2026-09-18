@@ -155,10 +155,21 @@ impl Cursor {
     }
 }
 
-/// SQLite integers are signed; a negative token count is corruption and zero is the honest
-/// reading of it.
+/// A column as a token count, or `None` when it is not one.
+///
+/// SQLite integers are signed and a column holds whatever it was handed, so a count is a value
+/// from zero to `helpers::MAX_COUNT` and nothing else. A negative one used to be read as `0` and
+/// an `i64::MAX` as nine quintillion tokens; both are a damaged or changed store, and for the
+/// two columns every build writes that makes the row `incomplete`, not smaller or enormous.
+fn as_count(value: Option<i64>) -> Option<u64> {
+    u64::try_from(value?)
+        .ok()
+        .filter(|count| *count <= crate::helpers::MAX_COUNT)
+}
+
+/// An optional column: `0` when it is absent or is not a count.
 fn count(value: Option<i64>) -> u64 {
-    value.unwrap_or(0).max(0) as u64
+    as_count(value).unwrap_or(0)
 }
 
 /// Whether `table` exists in this database.
@@ -253,16 +264,17 @@ fn usage_from_event_row(row: &rusqlite::Row<'_>, decision: &Decision) -> Option<
     // The input and output columns are on every build seen; `NULL` there -- a column the schema
     // probe could not find is selected as `NULL` -- is a format change, not a zero. The three
     // below them are optional and genuinely absent on older builds.
-    let raw_input: Option<i64> = row.get(2).ok().flatten();
-    let raw_output: Option<i64> = row.get(3).ok().flatten();
+    let raw_input = as_count(row.get(2).ok().flatten());
+    let raw_output = as_count(row.get(3).ok().flatten());
     let incomplete = raw_input.is_none() || raw_output.is_none();
     let cache_read = count(row.get(4).ok().flatten());
     let cache_write = count(row.get(5).ok().flatten());
     let reasoning = count(row.get(6).ok().flatten());
-    let input = count(raw_input)
+    let input = raw_input
+        .unwrap_or(0)
         .saturating_sub(cache_read)
         .saturating_sub(cache_write);
-    let output = count(raw_output).saturating_sub(reasoning);
+    let output = raw_output.unwrap_or(0).saturating_sub(reasoning);
 
     // A row with zeros in every bucket says nothing, and is counted as skipped by the caller. One
     // that is empty because its input or output is `NULL` is a request of unknown size: no row in

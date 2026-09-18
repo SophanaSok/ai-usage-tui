@@ -151,7 +151,8 @@ other collector table.
 ## Codex collector
 
 Reads Codex CLI rollouts under `$CODEX_HOME/sessions/` and `archived_sessions/` (default
-`~/.codex`). Polls every 30 seconds by default. `.jsonl.zst` files are not read.
+`~/.codex`). Polls every 30 seconds by default. A rollout the CLI has compressed to `.jsonl.zst`
+is decoded as a stream and read once; its cursor records the compressed size as done.
 
 The per-file cursor is more than a byte offset: it remembers the offset, the model, the thread id,
 the working directory, and the last running total. A bare offset is not enough because the model
@@ -323,9 +324,21 @@ Two more producers feed the same `LimitsReport` through `src/limits::load`, on t
 Claude Code's `~/.claude.json` cache (`cachedUsageUtilization`, stale after 30 minutes), and the
 `--statusline` cache — `statusline-limits.json` in the data directory, rewritten by Claude Code's
 status line on each redraw and read by `src/statusline::readout_at` under the same 30-minute
-rule. One subscription is one row: `limits::merge` keeps the fresher reading, then the newer, and
-only on a tie prefers the config cache. `[collectors.claude_code] enabled = false` removes both
-Claude Code readings; `[omarchy] limits = false` turns the whole panel off.
+rule. A fourth reads Codex's own rollouts (`collector::codex::latest_rate_limits`): the three most
+recently written files, the last mebibyte of each, the newest `rate_limits` block per `limit_id`.
+It is stateless, so that bound is what keeps a refresh from re-reading a long thread.
+
+One subscription is one row: `limits::merge` keeps a reading that has windows over one that has
+none, then the fresher, then the newer, and only on a tie asks the caller which source ranks
+first. `[collectors.claude_code] enabled = false` removes both Claude Code readings,
+`[collectors.codex] enabled = false` Codex's; `[omarchy] limits = false` turns the whole panel
+off.
+
+A request can reach a collector more than once. Claude Code writes an assistant message a line
+per content block under one `requestId`, and in a subagent's transcript the earlier lines carry
+`output_tokens` as it stood mid-stream. `collector::supersedes` is the rule -- the reading with
+more tokens replaces the one held -- and the background merge applies it across polls, re-pricing
+the row it replaces, because a poll can land between the two lines.
 
 ## TUI integration
 

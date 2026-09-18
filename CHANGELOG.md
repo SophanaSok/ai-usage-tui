@@ -4,6 +4,27 @@
 
 ### Added
 
+- **Codex's rate-limit windows, on every platform.** On a ChatGPT plan Codex writes the
+  account's 5-hour and weekly windows into every `token_count` event of its rollouts, and nothing
+  read them, so Codex's row in the Limits panel existed only on Omarchy. They are read now -- the
+  newest block per limit, from the three most recently written rollouts -- and filed under the id
+  Omarchy uses, so the two readings of one plan are one row. `--json`, `--summary-json` and
+  `--doctor` (a `codex` row under `LIMITS`) carry them too. An API key gets no such headers and
+  shows nothing. The format was taken from bytes this time: no Codex account was needed, because
+  `scripts/codex-standin.py` answers the Responses API on localhost and the real CLI writes a
+  real rollout (`tests/fixtures/codex_capture`, recipe in `docs/provider-support.md`). That
+  confirmed the synthetic fixture the collector was built on and found one thing reading the
+  source had not: a response can carry several limit families, the thread keeps one snapshot, and
+  the last family parsed replaces the rest -- so "the last `rate_limits` in the file" can be a
+  2%-used one-hour window for some other limit, on every line. Readings are keyed on `limit_id`.
+
+- **Codex rollouts the CLI has compressed are read.** With `local_thread_store_compression` on
+  (off by default as of codex-cli 0.155.0) every rollout untouched for a week becomes
+  `<name>.jsonl.zst` and the plain file is removed. Tried against the real CLI, the collector then
+  reported two of six calls and said nothing about the rest; a week of history would have left the
+  dashboard at each start. They are decoded as a stream, read once, and one that does not decode
+  is counted as unreadable by name. One new dependency, `ruzstd`: decoder only, pure Rust, MIT.
+
 - **A terminal is sent the colours it says it can draw.** The palette is 24-bit and went to
   every terminal as such; one that does not understand the sequence draws whatever it makes of
   it. The depth is now read once at startup -- `COLORTERM`, then `WT_SESSION`, then `TERM` -- and
@@ -55,6 +76,31 @@
 
 ### Fixed
 
+- **A subagent's output tokens were counted from a placeholder.** Claude Code writes one
+  request as a line per content block, all under one `requestId`, and deduplication kept the
+  first line seen. In a subagent's transcript the first line holds `output_tokens` as it stood
+  mid-stream -- `3`, where the closing line says `190`. Found by the first real transcript
+  committed as a fixture (`tests/fixtures/claude_capture`; until now Claude Code, the largest
+  source, was tested against strings written into the tests, which said every line carries the
+  same usage). On the machine it was found on: 916 of 16,523 requests, all in subagents, 7.5% of
+  all output tokens. **Output totals for Claude Code will rise after upgrading, by whatever share
+  of your work ran in subagents; nothing else moves.** The reading with more tokens now wins, in
+  the one-shot read, across polls in the dashboard (the row is replaced and re-priced), and in
+  the routing hook's attribution, which had the same defect and the same comment.
+
+- **A value that is not a count is no longer read as one.** `-1` was `0`, `1.5` was `1`, and
+  `1e308` or anything past `u64::MAX` was 18,446,744,073,709,551,615 tokens, which overflowed the
+  first total it met -- a panic in a debug build, a wrapped figure in a release one. A count is
+  now a whole number from 0 to 2^53; anything else in a field a source always reports marks the
+  row `incomplete`, as an absent one does. Gemini and Copilot each read numbers their own way
+  with the same flaw and now share the rule, and a negative or non-finite OpenCode `cost` is
+  absent instead of a price. No figure moved on 23,464 real rows. Found by the new mutation
+  tests, below.
+
+- **The Zen model catalogue was the last cache written through a shared temporary.** Two
+  dashboards refreshing together raced on `zen-models.json.tmp`; it goes through the same
+  per-process temporary as every other cache. Found by reading the first coverage table.
+
 - **A poll reads what is new, and the dashboard copies what changed.** Three places re-did all
   of history on a timer. Gemini's collector tracked a byte offset and then read the whole
   telemetry log into memory every thirty seconds to slice its tail off; it now seeks and reads
@@ -81,6 +127,15 @@
   write into the backup for the rest of its life. `--uninstall` removes the backup with the log.
 
 ### Changed
+
+- **The parsers of other tools' formats are tested by damaging real fixtures.**
+  `src/collector/mutation.rs` takes each source's captured file apart one value at a time --
+  every key deleted, every value replaced with a null, a negative, a fraction, `1e308`,
+  `i64::MAX`, a string, a container -- plants the result in a scratch home and reads it through
+  the registry's own `load`, then prices and totals it. It walks the registry, so a new source
+  without a corpus fails by name; it is deterministic and adds no dependency. Coverage is
+  measured (`just coverage`, and a `Coverage` CI job that prints the table to its summary:
+  93.7% of lines) and deliberately not gated.
 
 - **The dashboard uses the screen it has.** The six tiles were seven rows tall for two lines of
   text, and four of them spent the second line repeating the first (`3.3M` over `3.3M tokens`);

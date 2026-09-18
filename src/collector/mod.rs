@@ -5,13 +5,16 @@ pub mod codex;
 pub mod copilot;
 pub mod gemini;
 pub mod journal;
+#[cfg(test)]
+mod mutation;
 pub mod opencode;
 pub mod pricing_refresh;
 pub mod registry;
 pub mod skipped;
 pub mod zen;
 
-use std::collections::HashSet;
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -162,6 +165,12 @@ impl SourceRoots {
     /// session-log root, so a test that points at a fixture never resolves the developer's own.
     pub fn claude_json_path(&self) -> Option<PathBuf> {
         config_json_path(self.claude_json.as_deref(), self.claude_dir.as_deref())
+    }
+
+    /// Codex's home in force: `--codex-dir`, else `$CODEX_HOME`, else `~/.codex`. The collector
+    /// and the limits reader both resolve it here, so they cannot look in different places.
+    pub fn codex_home(&self) -> Option<PathBuf> {
+        self.codex_dir.clone().or_else(codex::codex_home)
     }
 
     /// Decide Codex's billing. Codex has no config document this tool will read — its
@@ -340,11 +349,24 @@ fn merge(sources: Vec<(SourceReport, Vec<Usage>)>) -> Vec<Usage> {
     // 3). Later sources are matched against what is already there, in source order.
     let mut sources = sources.into_iter();
     let mut usages: Vec<Usage> = sources.next().map(|(_, rows)| rows).unwrap_or_default();
-    let mut seen: HashSet<UsageKey> = usages.iter().map(usage_key).collect();
+    let mut seen: HashMap<UsageKey, usize> = usages
+        .iter()
+        .enumerate()
+        .map(|(index, usage)| (usage_key(usage), index))
+        .collect();
     for (_, rows) in sources {
         for usage in rows {
-            if seen.insert(usage_key(&usage)) {
-                usages.push(usage);
+            match seen.entry(usage_key(&usage)) {
+                Entry::Vacant(slot) => {
+                    slot.insert(usages.len());
+                    usages.push(usage);
+                }
+                Entry::Occupied(slot) => {
+                    let held = &mut usages[*slot.get()];
+                    if supersedes(&usage, held) {
+                        *held = usage;
+                    }
+                }
             }
         }
     }
@@ -373,6 +395,31 @@ pub enum UsageKey {
         cache_write: u64,
         created: i64,
     },
+}
+
+/// Whether a second reading of one event should replace the one already held.
+///
+/// A source can write one request more than once while it is still arriving. Claude Code does:
+/// an assistant message goes to the transcript a line per content block, every line under the
+/// same `requestId`, and in a subagent's transcript the earlier lines carry the count as it
+/// stood when they were written -- `output_tokens: 3`, then `190` on the line that closes the
+/// message (`tests/fixtures/claude_capture`). Keeping the first line seen, which is what
+/// deduplication did, kept the placeholder: measured on the machine this was found on, 916 of
+/// 16,523 requests, every one in a subagent, and 7.5% of all output tokens never counted.
+///
+/// So the reading with more tokens wins. Counts only grow while a response streams, which makes
+/// "more" the same as "later" without depending on the order files or polls are read in -- and a
+/// forked or resumed transcript replays old lines after new ones. Rows that are equal, which is
+/// every other source's duplicates, leave the first in place as before.
+pub fn supersedes(incoming: &Usage, held: &Usage) -> bool {
+    let tokens = |u: &Usage| {
+        u.input
+            .saturating_add(u.output)
+            .saturating_add(u.reasoning)
+            .saturating_add(u.cache_read)
+            .saturating_add(u.cache_write)
+    };
+    tokens(incoming) > tokens(held)
 }
 
 pub fn usage_key(usage: &Usage) -> UsageKey {
@@ -508,6 +555,62 @@ mod tests {
             roots.claude_decision().reason,
             crate::collector::billing::Decision::REASON_UNKNOWN,
             "disabling the Omarchy reader also removes it as a billing signal"
+        );
+    }
+    fn claude_capture_roots() -> SourceRoots {
+        let mut roots = SourceRoots::nowhere();
+        roots.claude_dir = Some(std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/claude_capture"
+        )));
+        roots.claude_billing = BillingSetting::Api;
+        roots
+    }
+
+    /// The transcript Claude Code 2.1.276 wrote for a session that delegated to a subagent.
+    /// Ten assistant lines, five requests; in the subagent's file the first line of each request
+    /// carries `output_tokens` 3 and 2, and the second 190 and 77.
+    #[test]
+    fn a_captured_session_counts_each_request_once_at_its_full_size() {
+        let (usages, _) = load_usage(&claude_capture_roots()).unwrap();
+        assert_eq!(usages.len(), 5, "{usages:#?}");
+        let mut output: Vec<u64> = usages.iter().map(|u| u.output).collect();
+        output.sort_unstable();
+        assert_eq!(output, vec![52, 77, 91, 166, 190]);
+        for usage in &usages {
+            assert!(!usage.incomplete);
+            assert!(usage.created > 0, "every line is dated");
+            assert_eq!(usage.model, "claude-haiku-4-5-20251001");
+            assert_eq!(usage.project.as_deref(), Some("/home/user/project"));
+            assert_eq!(
+                usage.session_id.as_deref(),
+                Some("f9945b4e-cf82-4035-8783-8ab7e06ed1e4"),
+                "a subagent's requests belong to the parent session"
+            );
+            assert!(
+                usage.cost.is_some_and(|cost| cost > 0.0),
+                "priced after the merge"
+            );
+        }
+    }
+
+    #[test]
+    fn the_fuller_reading_wins_whichever_is_seen_first() {
+        let small = Usage {
+            event_id: Some("req_1".into()),
+            input: 10,
+            output: 3,
+            ..Default::default()
+        };
+        let full = Usage {
+            output: 190,
+            ..small.clone()
+        };
+        assert!(supersedes(&full, &small));
+        assert!(!supersedes(&small, &full));
+        assert!(
+            !supersedes(&full, &full.clone()),
+            "equal rows leave the first in place"
         );
     }
 }

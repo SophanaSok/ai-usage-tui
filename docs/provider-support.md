@@ -45,8 +45,15 @@ Reads OpenAI usage from Codex CLI's session logs ("rollouts") at
 `~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<thread-id>.jsonl` and under
 `~/.codex/archived_sessions/` (override the home with `--codex-dir`, the `codex_dir` config
 setting, or `CODEX_HOME`); `sessions/` and `archived_sessions/` are scanned recursively beneath
-it. Enabled by default; disable via `[collectors.codex] enabled = false`. Files the CLI has
-compressed to `.jsonl.zst` are not read.
+it. Enabled by default; disable via `[collectors.codex] enabled = false`.
+
+**Compressed rollouts are read.** With `local_thread_store_compression` on -- off by default and
+"under development" as of codex-cli 0.155.0 -- a worker replaces every rollout untouched for seven
+days with `<name>.jsonl.zst` (one zstd frame, level 3, no checksum) and removes the plain file. A
+collector that reads only `*.jsonl` loses a week of history at each start and says nothing; this
+one was measured doing exactly that, reporting two of six calls. They are decoded as a stream and
+read once: the CLI decompresses a thread before appending to it, so a compressed file never grows.
+One that does not decode is counted as unreadable and named.
 
 Each rollout is tailed by byte offset, with a partial trailing line left for the next poll. Only
 three line kinds are read: `session_meta` (thread id, `cwd`), `turn_context` (the model in force
@@ -69,6 +76,59 @@ counter did not move by a call's own figure. Rows are `openai` / `PAID`, priced 
 the bundled table — the `gpt-5`, `gpt-5.1`, `gpt-5.2`, `gpt-5.3-codex`, `gpt-5.4`, `gpt-5.5`, and
 `gpt-5.6` families, including their `-codex`, `-mini`, `-nano`, and `-pro` variants where
 published — and a model absent from it stays `unavailable`; no rate is invented.
+
+**Rate-limit windows.** On a ChatGPT plan each response carries `x-codex-primary-*` and
+`x-codex-secondary-*` headers, and the CLI writes the resulting snapshot into every `token_count`
+event as `rate_limits`. `src/collector/codex.rs::latest_rate_limits` reads, from each block, only
+`limit_id`, `limit_name` and the two windows' `used_percent`, `window_minutes` and `resets_at`
+(epoch seconds, an integer -- a float or a string is refused and counted, not coerced); `credits`
+and `plan_type` are never deserialised. `src/limits.rs` names a window by its length -- 300
+minutes is the session window, 10,080 the weekly one, anything else is described as what it is
+-- and files the snapshot under `codex`, so it merges with Omarchy's record for the same plan.
+
+One thing the capture showed that the source did not: **a response can carry more than one header
+family** (`x-codex-*`, `x-codex-other-*`, ...), the thread keeps a single snapshot, and the last
+family parsed replaces the others. A rollout written while a second family was being sent carries
+that family on every line and the default one on none. So readings are keyed on `limit_id`, the
+three most recently written rollouts are searched, and a window from another family is labelled
+with its limit's name rather than shown as the account's. An API key gets no headers and writes
+`rate_limits: null`: no reading, not zero. Compressed rollouts are not searched for windows: one
+is compressed only after seven untouched days, and no window Codex reports is longer than that,
+so every reading inside has already reset.
+
+**The format is validated against real output.** The collector was written from the codex-rs
+source and a synthetic fixture. `tests/fixtures/codex_capture/` is what codex-cli 0.155.0 itself
+wrote, redacted; every assumption about the token events held, and a newer line kind,
+`token_usage_record`, turned up beside them (one per response, with the `response_id`; not read,
+because `token_count` already carries the same figures).
+
+### Capturing a Codex rollout without an account
+
+No ChatGPT plan or API key is needed. `scripts/codex-standin.py` answers the Responses API on
+localhost -- a tool call, then a message, with usage and the rate-limit headers -- so the real CLI
+writes a real rollout and nothing is billed:
+
+```sh
+mkdir -p /tmp/cx/home /tmp/cx/work
+cat > /tmp/cx/home/config.toml <<'TOML'
+model = "gpt-5-codex"
+model_provider = "standin"
+
+[model_providers.standin]
+name = "standin"
+base_url = "http://127.0.0.1:18459/v1"
+wire_api = "responses"
+TOML
+scripts/codex-standin.py 18459 /tmp/cx/server.log &     # NO_OTHER=1 sends one header family
+(cd /tmp/cx/work && env -u OPENAI_API_KEY CODEX_HOME=/tmp/cx/home \
+    codex exec --skip-git-repo-check -s read-only 'Run echo standin and then say Done.' </dev/null)
+scripts/redact-codex-rollout.py /tmp/cx/home/sessions/*/*/*/rollout-*.jsonl > redacted.jsonl
+```
+
+To see compression, back-date the rollouts (`touch -d '10 days ago'`) and run once more with
+`--enable local_thread_store_compression`. The token counts and percentages are the stand-in's;
+the bytes are the CLI's. Never commit the rollout itself: it holds the CLI's instructions, the
+prompt and the working directory, and the compressed file is the same rollout.
 
 **Privacy:** rollouts hold prompts, tool-call arguments and outputs, and reasoning summaries; none
 of it is parsed or retained. `~/.codex/auth.json` is a credential file and is never opened.

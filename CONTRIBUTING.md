@@ -286,6 +286,39 @@ that looked right.
   the README's first paragraph.
 - **Tests must discriminate.** A regression test that also passes against the buggy code is
   worse than no test. Restore the bug in a scratch copy and confirm the test fails.
+- **A new source needs a mutation corpus.** `src/collector/mutation.rs` takes every source's real
+  fixture, damages it one value at a time -- each key deleted, each value replaced with a null, a
+  negative, a fraction, `1e308`, `i64::MAX`, a string, a container -- and reads the result through
+  the registry's own `load`. It walks the registry, so a source without a corpus fails it by
+  name: say which fixture to take apart and how to plant the damaged records in a scratch home.
+  Read a count through `helpers::count` / `required` / `number` and most of it passes unaided;
+  every defect it found on its first run was a parser reading numbers its own way.
+- **Coverage is measured and not gated.** `just coverage` (the `Coverage` CI job prints the same
+  table to its summary). There is no threshold to meet: read it for a module near zero, which is
+  a module nothing exercises. What stays low is what needs a terminal or the network.
+
+### Capturing a Claude Code transcript
+
+`tests/fixtures/claude_capture/` is a real session, redacted. To take another -- a new Claude
+Code version, a line kind the parser has not met -- run it from a scratch directory so the
+transcript holds nothing of yours, with no user settings so your hooks stay out of it:
+
+```sh
+mkdir -p /tmp/cccap/.claude && cd /tmp/cccap
+printf 'test:\n\t@echo 3 passed\n' > Makefile && echo '{}' > .claude/settings.json
+claude --model haiku --setting-sources project --allowedTools 'Bash,Task' \
+  -p 'Delegate to a subagent: have it run `make test` and report. Do not run it yourself.' </dev/null
+# the transcript is under ~/.claude/projects/-tmp-cccap/, the subagent's beside it in
+# <session>/subagents/. Give each file its own range of stand-in ids:
+scripts/redact-claude-transcript.py SESSION.jsonl        > tests/fixtures/claude_capture/.../SESSION.jsonl
+scripts/redact-claude-transcript.py agent-XXXX.jsonl 101 > tests/fixtures/claude_capture/.../agent-XXXX.jsonl
+```
+
+It is a real request against your account, a few thousand Haiku tokens. The redactor keeps each
+line's identifiers and an assistant line's `usage` block byte for byte, reduces content to the
+type of each block, and names every key it dropped -- read its output before committing it. The
+delegation matters: the subagent's transcript is where one request's lines disagree about
+`output_tokens`, which is what this fixture was captured to pin.
 
 ## Pull requests
 

@@ -308,7 +308,11 @@ pub struct Usage {
 
 impl Usage {
     pub fn total_tokens(&self) -> u64 {
-        self.input + self.output + self.reasoning + self.cache_read + self.cache_write
+        self.input
+            .saturating_add(self.output)
+            .saturating_add(self.reasoning)
+            .saturating_add(self.cache_read)
+            .saturating_add(self.cache_write)
     }
 }
 
