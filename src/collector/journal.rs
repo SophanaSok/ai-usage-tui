@@ -1359,7 +1359,7 @@ pub struct PruneReport {
 ///   `local_month_start`, which is how far back a monthly budget reads.
 /// - **The usage row with the highest id.** `id` is `INTEGER PRIMARY KEY` without
 ///   `AUTOINCREMENT`, so a new row takes `MAX(id) + 1`. Delete the highest and its id is handed
-///   out again -- below the [`JournalCursor`] of a dashboard that is open, to a row it will never
+///   out again -- below the `JournalCursor` of a dashboard that is open, to a row it will never
 ///   read. `created` is the caller's, so a replayed old log really can own the highest ids.
 /// - **Routing rows of a Claude Code session that has newer rows.** The hook sums a session's
 ///   rows to know which requests it has already attributed ([`attributed_requests`]); take the
