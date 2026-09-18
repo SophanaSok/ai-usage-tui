@@ -1061,6 +1061,74 @@ fn the_text_output_path_also_survives_a_closed_pipe() {
     assert!(status.success(), "got {status}");
 }
 
+/// SQLite creates a database at the umask, so the journal is made first. End to end, because
+/// the unit test cannot show that SQLite then opens the empty file it finds, or that the log and
+/// the `-wal` beside the journal follow.
+#[cfg(unix)]
+#[test]
+fn the_journal_and_the_log_are_created_owner_only() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = scratch("private-files");
+    let journal = dir.join("data").join("usage.db");
+    let log = dir.join("diagnostics.log");
+    let fixture = format!(
+        "{}/tests/fixtures/usage_events.ndjson",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let output = bin()
+        .arg("--record-event")
+        .arg("--journal")
+        .arg(&journal)
+        .env("AI_USAGE_LOG", &log)
+        .stdin(std::fs::File::open(&fixture).unwrap())
+        .output()
+        .expect("run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        journal_rows(&journal).len(),
+        2,
+        "the journal SQLite found empty still works"
+    );
+
+    let mut checked = 0;
+    for entry in std::fs::read_dir(journal.parent().unwrap())
+        .unwrap()
+        .flatten()
+    {
+        let mode = entry.metadata().unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "{}", entry.path().display());
+        checked += 1;
+    }
+    assert!(checked >= 1);
+    if log.exists() {
+        let mode = std::fs::metadata(&log).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the log");
+    }
+
+    // A journal that was already wider is left as it is, and the doctor says so.
+    std::fs::set_permissions(&journal, std::fs::Permissions::from_mode(0o644)).unwrap();
+    record(&journal, &fixture, "--record-event");
+    let mode = std::fs::metadata(&journal).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o644);
+    let mut doctor = bin();
+    doctor.arg("--doctor");
+    hermetic_with(
+        &mut doctor,
+        std::path::Path::new("/nonexistent/opencode.db"),
+        &journal,
+    );
+    let text = String::from_utf8(doctor.output().expect("doctor").stdout).unwrap();
+    assert!(
+        text.contains("mode 644") && text.contains("chmod 600"),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A model name is another program's string, and `--record-event` takes one from anybody. One
 /// that a spreadsheet would run must reach the CSV as text, and must still be the same name in
 /// the JSON, which no spreadsheet reads.

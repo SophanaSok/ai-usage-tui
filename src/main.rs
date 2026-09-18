@@ -823,6 +823,19 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
                     let _ = writeln!(out, "  {:<12} {:<19}  size unknown: {error}", "", "");
                 }
             }
+            // A journal made before this tool created its files owner-only, or copied from
+            // somewhere. Said, not changed: the file is the user's, as `--uninstall` holds.
+            if let Some(mode) = ai_usage_tui::helpers::wider_than_private(&roots.journal) {
+                let _ = writeln!(
+                    out,
+                    "  {:<12} {:<19}  mode {:03o}: other accounts on this machine can read it; \
+                     `chmod 600 {}` makes it private",
+                    "",
+                    "",
+                    mode,
+                    roots.journal.display()
+                );
+            }
         }
         if !report.present {
             if let Some(hint) = absence_hint(report.id) {
