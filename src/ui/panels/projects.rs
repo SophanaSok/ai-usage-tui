@@ -14,13 +14,16 @@ use ratatui::{
 use crate::model::{CLOUD, CYAN, YELLOW};
 use crate::ui::aggregate::project_labels;
 use crate::ui::app::App;
-use crate::ui::theme::{panel, MUTED};
-use crate::utils::format_count;
+use crate::ui::theme::{
+    draw_scrollbar, panel_with_count, row_count, tokens_cell, tokens_column, MUTED,
+};
 
 pub fn draw_projects(frame: &mut Frame, area: Rect, app: &App) {
     let projects = app.projects();
     let paths: Vec<String> = projects.iter().map(|p| p.project.clone()).collect();
     let labels = project_labels(&paths);
+    let peak = projects.iter().map(|p| p.tokens).max().unwrap_or(0);
+    let count = row_count(projects.len(), app.search_status(), "projects");
     let rows = projects
         .iter()
         .zip(labels)
@@ -45,7 +48,7 @@ pub fn draw_projects(frame: &mut Frame, area: Rect, app: &App) {
             };
             Row::new(vec![
                 Cell::from(label),
-                Cell::from(format_count(p.tokens)),
+                tokens_cell(p.tokens, peak, CYAN, area),
                 Cell::from(cost),
                 Cell::from(p.requests.to_string()),
                 Cell::from(p.sessions.to_string()),
@@ -56,7 +59,7 @@ pub fn draw_projects(frame: &mut Frame, area: Rect, app: &App) {
         .style(Style::default().fg(MUTED).add_modifier(Modifier::BOLD));
     let widths = [
         Constraint::Min(24),
-        Constraint::Length(11),
+        Constraint::Length(tokens_column(area)),
         Constraint::Length(12),
         Constraint::Length(7),
         Constraint::Length(6),
@@ -71,8 +74,9 @@ pub fn draw_projects(frame: &mut Frame, area: Rect, app: &App) {
         Table::new(rows, widths)
             .header(header)
             .column_spacing(1)
-            .block(panel(title, CYAN)),
+            .block(panel_with_count(title, CYAN, count)),
         area,
         &mut state,
     );
+    draw_scrollbar(frame, area, projects.len(), app.selected);
 }

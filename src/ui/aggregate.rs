@@ -299,3 +299,59 @@ pub fn session_totals(usages: &[Usage]) -> Vec<SessionTotals> {
     sessions.sort_by_key(|s| std::cmp::Reverse(s.last_seen));
     sessions
 }
+
+/// Split `width` cells between `weights` in proportion, for the share strip under the tiles.
+///
+/// Three rules, each of which a plain `width * w / total` breaks. A weight above zero gets at
+/// least one cell: rounding a small category down to nothing draws "there was none", which is a
+/// number the data does not support. A weight of zero gets none. And the cells sum to `width`
+/// exactly, by largest remainder, so the strip neither stops short of the edge nor overruns it.
+///
+/// Returns an empty vector when there is nothing to draw: no weight at all, or fewer cells than
+/// categories that need one. No strip is the honest rendering of both.
+pub fn share_cells(weights: &[u64], width: u16) -> Vec<u16> {
+    let total: u128 = weights.iter().map(|w| u128::from(*w)).sum();
+    let present = weights.iter().filter(|w| **w > 0).count();
+    if total == 0 || present > usize::from(width) {
+        return Vec::new();
+    }
+    // One cell each is set aside first, and only the rest is shared out in proportion.
+    let spare = u128::from(width) - present as u128;
+    let mut cells: Vec<u16> = Vec::with_capacity(weights.len());
+    let mut remainders: Vec<(u128, usize)> = Vec::new();
+    for (index, weight) in weights.iter().enumerate() {
+        if *weight == 0 {
+            cells.push(0);
+            continue;
+        }
+        let scaled = spare * u128::from(*weight);
+        cells.push(1 + (scaled / total) as u16);
+        remainders.push((scaled % total, index));
+    }
+    let assigned: u32 = cells.iter().map(|c| u32::from(*c)).sum();
+    let mut left = u32::from(width) - assigned;
+    // Largest remainder first; ties go to the earlier category so the result is deterministic.
+    remainders.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    for (_, index) in remainders {
+        if left == 0 {
+            break;
+        }
+        cells[index] += 1;
+        left -= 1;
+    }
+    cells
+}
+
+/// A share of a whole as a reader sees it: `21%`, `<1%` for a share that is real but rounds to
+/// nothing, and `None` for no share at all -- which the caller renders as a dash, not `0%`.
+pub fn share_label(part: u64, whole: u64) -> Option<String> {
+    if part == 0 || whole == 0 {
+        return None;
+    }
+    let pct = part as f64 / whole as f64 * 100.0;
+    Some(if pct < 1.0 {
+        "<1%".to_string()
+    } else {
+        format!("{pct:.0}%")
+    })
+}

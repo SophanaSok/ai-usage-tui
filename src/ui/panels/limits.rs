@@ -89,13 +89,7 @@ pub fn draw_limits(frame: &mut Frame, area: Rect, app: &App) {
 
 fn window_line<'a>(snapshot: &LimitsSnapshot, window: &LimitWindow) -> Line<'a> {
     let muted = Style::default().fg(MUTED);
-    let figure = if snapshot.stale {
-        muted
-    } else if window.is_alarming() {
-        Style::default().fg(RED).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-    };
+    let figure = figure_style(snapshot, window);
     let resets = match window.resets_in_secs {
         Some(secs) if secs <= 0 => "reset passed".to_string(),
         Some(secs) => format_duration(secs),
@@ -112,6 +106,21 @@ fn window_line<'a>(snapshot: &LimitsSnapshot, window: &LimitWindow) -> Line<'a> 
         Span::styled(format!("{:<11} ", resets), muted),
         Span::styled(snapshot.tier.clone(), muted),
     ])
+}
+
+/// How a window's figures are drawn: dimmed when the snapshot is stale, red when the window is
+/// alarming, plain otherwise. Stale wins -- a number describing some earlier moment must not
+/// raise an alarm about this one.
+///
+/// Shared with the rail's meters in `breakdown`, so the two cannot disagree about the same window.
+pub(crate) fn figure_style(snapshot: &LimitsSnapshot, window: &LimitWindow) -> Style {
+    if snapshot.stale {
+        Style::default().fg(MUTED)
+    } else if window.is_alarming() {
+        Style::default().fg(RED).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    }
 }
 
 fn snapshot_footer(snapshot: &LimitsSnapshot) -> String {
@@ -132,7 +141,7 @@ fn snapshot_footer(snapshot: &LimitsSnapshot) -> String {
     parts.join(" · ")
 }
 
-fn truncate(text: &str, width: usize) -> String {
+pub(crate) fn truncate(text: &str, width: usize) -> String {
     if text.chars().count() <= width {
         text.to_string()
     } else {

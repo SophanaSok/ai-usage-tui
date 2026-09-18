@@ -60,7 +60,7 @@ pub use theme::cost_display;
 use panels::{
     alerts::draw_alert_banner, breakdown::draw_breakdown, budgets::draw_budgets, burn::draw_burn,
     header::draw_header, limits::draw_limits, metrics::draw_metrics, models::draw_models,
-    projects::draw_projects, routing::draw_routing, sessions::draw_sessions,
+    projects::draw_projects, routing::draw_routing, sessions::draw_sessions, tabs::draw_tabs,
     timeseries::draw_timeseries,
 };
 use theme::{panel, MUTED};
@@ -166,8 +166,9 @@ where
     Ok(())
 }
 
-/// The fewest rows the dashboard lays out in: header 3, metric tiles 7, body 8, footer 2 -- plus
-/// one for the alert banner while a budget alert is actionable (`required_height`).
+/// The fewest rows the dashboard lays out in: header 1, tab strip 1, hero row 5, body 11,
+/// footer 2 -- plus one for the alert banner while a budget alert is actionable
+/// (`required_height`).
 ///
 /// Below it ratatui does not complain -- it squeezes the constraints, and panels collapse to zero
 /// height one after another in silence, which on a short pane reads as a dashboard with nothing in
@@ -220,22 +221,27 @@ fn draw_in_colour(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Length(1),
             Constraint::Length(alert_banner_height),
-            Constraint::Length(7),
-            Constraint::Min(8),
+            Constraint::Length(5),
+            Constraint::Min(11),
             Constraint::Length(2),
         ])
         .split(area);
     draw_header(frame, chunks[0], app);
+    draw_tabs(frame, chunks[1], app);
     if alert_banner_height > 0 {
-        draw_alert_banner(frame, chunks[1], app);
+        draw_alert_banner(frame, chunks[2], app);
     }
-    draw_metrics(frame, chunks[2], app);
+    draw_metrics(frame, chunks[3], app);
     let body = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(36), Constraint::Percentage(64)])
-        .split(chunks[3]);
+        .constraints([
+            Constraint::Length(rail_width(area.width)),
+            Constraint::Min(0),
+        ])
+        .split(chunks[4]);
     draw_breakdown(frame, body[0], app);
     match app.panel {
         Panel::Routing => draw_routing(frame, body[1], app),
@@ -247,10 +253,18 @@ fn draw_in_colour(frame: &mut Frame, app: &App) {
         Panel::Limits => draw_limits(frame, body[1], app),
         Panel::Models => draw_models(frame, body[1], app),
     }
-    frame.render_widget(footer(area.width, app.search_status()), chunks[4]);
+    frame.render_widget(footer(area.width, app.search_status()), chunks[5]);
     if app.show_help {
         draw_help(frame, area);
     }
+}
+
+/// The left rail's width: a little over a third of the screen, and no more than its contents
+/// use. It was a flat 36%, which on a wide terminal handed a nine-line list fifty columns and
+/// took them from the table beside it -- the pane that does have more to show.
+fn rail_width(width: u16) -> u16 {
+    const WIDEST: u16 = 40;
+    (u32::from(width) * 36 / 100).min(u32::from(WIDEST)) as u16
 }
 
 /// What a pane shorter than `required_height` shows: why nothing else is there, that a budget

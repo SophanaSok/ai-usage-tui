@@ -39,9 +39,21 @@ fn no_color_draws_no_colour_and_keeps_the_selection_visible() {
         "{} cells still carry colour",
         coloured.len()
     );
+    // The selected row itself, not any cell: the active tab is reverse video in every mode, so
+    // "some cell is reversed" would hold with the selection gone.
+    let width = usize::from(buffer.area.width);
+    let selected_row = buffer
+        .content()
+        .chunks(width)
+        .find(|row| {
+            row.iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+                .contains("claude-opus-5")
+        })
+        .expect("the selected model is on screen");
     assert!(
-        buffer
-            .content()
+        selected_row
             .iter()
             .any(|cell| cell.modifier.contains(Modifier::REVERSED)),
         "the selected row was only ever a background colour; without colour it must be reverse video"

@@ -13,8 +13,10 @@ use ratatui::{
 
 use crate::model::CYAN;
 use crate::ui::app::App;
-use crate::ui::theme::{cost_display, panel, MUTED};
-use crate::utils::format_count;
+use crate::ui::theme::{
+    cost_display, draw_scrollbar, panel, panel_with_count, row_count, tokens_cell, tokens_column,
+    MUTED,
+};
 
 pub fn draw_models(frame: &mut Frame, area: Rect, app: &App) {
     let rows = app.rows();
@@ -23,6 +25,8 @@ pub fn draw_models(frame: &mut Frame, area: Rect, app: &App) {
         frame.render_widget(empty_state(app).block(panel("MODEL ACTIVITY", CYAN)), area);
         return;
     }
+    let peak = rows.iter().map(|u| u.total_tokens()).max().unwrap_or(0);
+    let count = row_count(rows.len(), app.search_status(), "models");
     let table_rows = rows.iter().enumerate().map(|(index, u)| {
         let style = if index == app.selected {
             Style::default().bg(crate::ui::theme::SELECTED)
@@ -31,8 +35,11 @@ pub fn draw_models(frame: &mut Frame, area: Rect, app: &App) {
         };
         Row::new(vec![
             Cell::from(format!("{} / {}", u.provider, u.model)),
-            Cell::from(u.category.label()),
-            Cell::from(format_count(u.total_tokens())),
+            Cell::from(Span::styled(
+                u.category.label(),
+                Style::default().fg(u.category.color()),
+            )),
+            tokens_cell(u.total_tokens(), peak, u.category.color(), area),
             Cell::from(cost_display(u)),
             Cell::from(u.requests.to_string()),
         ])
@@ -43,7 +50,7 @@ pub fn draw_models(frame: &mut Frame, area: Rect, app: &App) {
     let widths = [
         Constraint::Min(24),
         Constraint::Length(9),
-        Constraint::Length(11),
+        Constraint::Length(tokens_column(area)),
         Constraint::Length(11),
         Constraint::Length(7),
     ];
@@ -54,10 +61,11 @@ pub fn draw_models(frame: &mut Frame, area: Rect, app: &App) {
         Table::new(table_rows, widths)
             .header(header)
             .column_spacing(1)
-            .block(panel("MODEL ACTIVITY", CYAN)),
+            .block(panel_with_count("MODEL ACTIVITY", CYAN, count)),
         area,
         &mut state,
     );
+    draw_scrollbar(frame, area, rows.len(), app.selected);
 }
 
 /// What the default panel says when it has no rows, and what to do about it.
