@@ -639,9 +639,14 @@ mod tests {
         ] {
             assert!(keys.contains(&expected), "missing {expected}: {keys:?}");
         }
+        // The four keys and no others. Sorted before comparing: the order a JSON object's
+        // keys come back in is a property of the parser's map, not of Omarchy's contract, and
+        // this assertion once held only because that map happened to sort.
         let bucket = json["modelUsage"]["m"].as_object().unwrap();
+        let mut bucket_keys: Vec<&str> = bucket.keys().map(String::as_str).collect();
+        bucket_keys.sort_unstable();
         assert_eq!(
-            bucket.keys().collect::<Vec<_>>(),
+            bucket_keys,
             [
                 "cacheCreationInputTokens",
                 "cacheReadInputTokens",

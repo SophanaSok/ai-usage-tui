@@ -1091,3 +1091,55 @@ fn the_agent_integration_names_only_flags_that_exist() {
         .join(".claude-plugin/plugin.json")
         .is_file());
 }
+
+/// `--uninstall` removes the files `docs/stability.md` calls the tool's own, and no others.
+///
+/// The two lists are one list. A cache added later without a line in `stability.md` is one the
+/// contract does not cover; one added to `stability.md` and not to `install::own_files` is one
+/// `--uninstall` leaves behind while saying it is done.
+#[test]
+fn uninstall_removes_exactly_the_files_stability_calls_the_tools_own() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let stability = std::fs::read_to_string(root.join("docs/stability.md")).expect("stability");
+    let start = stability
+        .find("**Files the tool keeps for itself.**")
+        .expect("the bullet exists");
+    let span = &stability[start..];
+    let span = &span[..span.find("\n- **").unwrap_or(span.len())];
+    let listed: std::collections::BTreeSet<&str> = span
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .filter(|token| token.contains('.') && !token.starts_with("--"))
+        .collect();
+    assert!(
+        span.contains("`AI_USAGE_LOG`"),
+        "the log is named by its variable:\n{span}"
+    );
+
+    let own = ai_usage_tui::install::own_files(std::path::PathBuf::from("/j"), None);
+    let removed: std::collections::BTreeSet<String> = own
+        .caches
+        .iter()
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        removed.len() >= 5,
+        "own_files resolved nothing: is HOME unset? {removed:?}"
+    );
+    for name in &listed {
+        assert!(
+            removed.contains(*name),
+            "stability.md lists {name} as the tool's own, and --uninstall does not remove it"
+        );
+    }
+    for name in &removed {
+        if name == "ai-usage-tui.log" {
+            continue;
+        }
+        assert!(
+            listed.contains(name.as_str()),
+            "--uninstall removes {name}, which stability.md does not list under the tool's own files"
+        );
+    }
+}

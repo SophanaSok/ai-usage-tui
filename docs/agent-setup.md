@@ -4,11 +4,15 @@ You are reading this because someone asked you to configure `ai-usage-tui` for t
 data source, the Claude Code hook or status line, a timer. It is printed by
 `ai-usage-tui --agent-guide setup`. To *read* their usage instead, run `ai-usage-tui --agent-guide`.
 
-The tool never edits another program's files, and it has no install command. You make the
-change; the tool tells you whether it worked. That division is deliberate, so keep to it:
+The tool edits another program's file in one case only: `--install-hook` and
+`--install-statusline`, with `--uninstall-hook` and `--uninstall-statusline` to undo them, merge this tool's own entries into
+Claude Code's `settings.json`, change nothing else in it, and report what they wrote. Every other
+change is yours to make; the tool tells you whether it worked. That division is deliberate, so
+keep to it:
 
 - **Show the change and ask before you edit anything outside this tool's own config** --
-  `~/.claude/settings.json`, systemd units, a crontab. Say what it does and how to undo it.
+  `~/.claude/settings.json`, systemd units, a crontab. Say what it does and how to undo it. The
+  install commands count: name the command and the file it will write before running one.
 - **If you cannot edit a file** (agents are often denied their own settings file), give the user
   the exact block below and where it goes. Do not work around a denial.
 - **Say so when something uses the network.** Nothing does by default.
@@ -22,6 +26,8 @@ Everything not listed here only reads local files and prints.
 | `--record-ollama`, `--record-usage`, `--record-event`, `--record-routing`, `--claude-code-hook` | the journal, `usage.db` | no |
 | `--statusline` | `statusline-limits.json` in the data directory | no |
 | `--omarchy-record` | one record in Omarchy's agents directory | no |
+| `--install-hook`, `--uninstall-hook`, `--install-statusline`, `--uninstall-statusline` | Claude Code's `settings.json`, in its config directory: this tool's own entries, and nothing else in the file | no |
+| `--uninstall` | removes the two entries above and this tool's caches; names the journal and the config file and deletes neither | no |
 | `--csv PATH`, `--routing-csv PATH` | that file (`-` is stdout) | no |
 | `--refresh-pricing`, `--refresh-zen` | a pricing or catalog cache | yes: opencode.ai |
 | `--check-update` | `update-check.json` | yes: api.github.com |
@@ -82,8 +88,14 @@ reached its `warn` level, and `2` when the check itself failed. Setting `webhook
 Optional. With this hook, every test command Claude Code runs in Bash is journaled as pass or
 fail against the model that ran it, which is what fills `routing` in the summary. It reads the
 hook's payload and, from the session transcript, the model and token counts of the requests
-behind the run -- usage blocks only, never message content. Add to `~/.claude/settings.json` (every
-project) or a project's `.claude/settings.json`:
+behind the run -- usage blocks only, never message content.
+
+Run `ai-usage-tui --install-hook`, after naming the file to the user. It appends to
+`PostToolUse` and `PostToolUseFailure` in `~/.claude/settings.json` and never replaces them,
+writes nothing when the entries are already there, writes the binary's absolute path when
+`ai-usage-tui` is not on `PATH`, and prints the path and the command it wrote. `--doctor` then
+shows `hook  installed` under `CLAUDE CODE`. Or, for a project's `.claude/settings.json` or by
+hand, add this:
 
 ```json
 {
@@ -124,12 +136,17 @@ absolute path from `--doctor`.
 Verify: a new Claude Code session must run a test command *bare* -- `cargo test`, `pytest`,
 `npm test`. A run piped into `tail` or `head` is deliberately not recorded, because the pipe hides
 the exit status. Then `ai-usage-tui --routing-json` shows `events` one higher. To remove it,
-delete the two entries; events already journaled stay until the journal is deleted.
+`ai-usage-tui --uninstall-hook`, which leaves every other hook in place; events already
+journaled stay until the journal is deleted.
 
 ## 4. Claude Code: subscription limits from the status line
 
 Optional, and usually unnecessary: the tool already reads the limits Claude Code caches in
 `~/.claude.json`. The status line gives fresher numbers while a session is open.
+
+Run `ai-usage-tui --install-statusline`, after naming the file to the user. It sets `statusLine`
+when there is none, and refuses -- naming what is there -- when the user already has one, so
+you do not need to check first. Or by hand:
 
 ```json
 {
@@ -140,10 +157,11 @@ Optional, and usually unnecessary: the tool already reads the limits Claude Code
 }
 ```
 
-`statusLine` is a single object. **If the user already has one, stop and ask** -- this would
-replace it. It only runs in an interactive session, so you cannot verify it from a headless one:
-after the user's next session, `--doctor` shows `statusline  found` under `LIMITS`. To remove it,
-delete the key.
+`statusLine` is a single object. **If the user already has one, stop and ask** -- a hand merge
+would replace it. It only runs in an interactive session, so you cannot verify the readout from
+a headless one: `--doctor` shows `statusline  installed` under `CLAUDE CODE` at once, and
+`statusline  found` under `LIMITS` after the user's next session. To remove it,
+`ai-usage-tui --uninstall-statusline`, which leaves a status line that is not this tool's.
 
 ## 5. Timers (systemd user units)
 
@@ -244,6 +262,7 @@ tool does not measure them, there is nothing to record, and saying so is the rig
 
 ## 7. Undoing all of it
 
-The config file, the journal and the caches are the only things this tool keeps; `--doctor`
-prints where. Deleting the data directory forgets journaled usage and nothing else: the agents'
-own logs are never touched. Remove hooks, the status line and timers as above.
+`ai-usage-tui --uninstall` removes the hook, the status line and the caches, then prints the
+journal's and the config file's paths with the `rm` that would delete them -- and does not run
+it. Journaled usage is the user's; delete it only if they say so. Deleting it forgets journaled
+usage and nothing else: the agents' own logs are never touched. Remove timers as above.

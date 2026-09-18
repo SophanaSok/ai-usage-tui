@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`--install-hook` and `--install-statusline` put this tool into Claude Code's settings;
+  `--uninstall-hook`, `--uninstall-statusline` and `--uninstall` take it out.** Routing
+  analytics, the feature nothing else here has, sat behind a hand-run `jq -s '.[0] * .[1]'`
+  merge into `~/.claude/settings.json` -- and `jq`'s `*` replaces arrays, so a user with any
+  other `PostToolUse` hook lost it, which three documents had to warn about; and nothing could say
+  whether the hook was installed at all. The commands append to the two event lists and never
+  replace them, write nothing on a second run, keep every other key in the order it was found,
+  keep the file's permission bits -- its `env` block may hold keys, and nothing of the file but
+  this tool's own entries is ever printed -- and refuse a file that is not a JSON object, naming
+  the file and the position and changing nothing. The command written is the bare `ai-usage-tui`
+  when a binary of that name is on `PATH` and the running binary's absolute path when not, and
+  the report says which, because the two age differently. `--install-statusline` refuses to
+  replace another program's status line and names it; `--uninstall-statusline` leaves one that is
+  not this tool's. `--uninstall` removes both entries and the caches `docs/stability.md` calls the
+  tool's own -- a test holds the two lists together -- then prints the journal's and the config
+  file's paths with the `rm` that would delete them, and does not run it: those are the user's.
+  `--doctor` gained a `CLAUDE CODE` section, asked of the same detector the installers use, so
+  what it calls installed is exactly what `--uninstall-hook` removes; a hook on one event of the
+  two is reported as such. The command is the consent, as for `--check-update`: no config key, no
+  prompt, and the dashboard never writes there. The setup guide, the README and
+  `contrib/claude-code/README.md` now name the commands first and keep the hand merge as the
+  alternative.
+
+### Changed
+
+- **JSON objects keep the order their keys were written in.** `serde_json` now builds with
+  `preserve_order`, which the installers need to hand a user's `settings.json` back as they found
+  it. The visible effect elsewhere: a document built key by key (`--check-budgets`, the
+  `--schema` glossary) prints its keys in the order the code names them rather than
+  alphabetically. No promise covered the order, and a reader that parses JSON does not see it.
+
 ## [0.20.0] - 2026-09-17
 
 ### Added

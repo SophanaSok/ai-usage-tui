@@ -30,6 +30,7 @@ use ai_usage_tui::{
     config::{apply_config, ConfigFile},
     export::{csv_field, print_once},
     helpers::{is_broken_pipe, print_line},
+    install::{CommandForm, Integration, Outcome, SettingsState},
     ui::run,
 };
 
@@ -152,6 +153,24 @@ fn dispatch() -> Result<()> {
             path.display()
         ))?;
         return Ok(());
+    }
+    // The installers: the one place this tool writes into another program's file, and only
+    // here, on a person's keystroke -- the command is the consent, as above. After the config
+    // so `--config` is honoured; before the sources, because none is read.
+    if cli.install_hook {
+        return install_claude(&cli, Integration::Hook, true);
+    }
+    if cli.uninstall_hook {
+        return install_claude(&cli, Integration::Hook, false);
+    }
+    if cli.install_statusline {
+        return install_claude(&cli, Integration::StatusLine, true);
+    }
+    if cli.uninstall_statusline {
+        return install_claude(&cli, Integration::StatusLine, false);
+    }
+    if cli.uninstall {
+        return uninstall_everything(&cli);
     }
     if let Some(path) = ai_usage_tui::logging::log_path() {
         ai_usage_tui::logging::info(
@@ -500,6 +519,140 @@ fn write_omarchy_records(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> R
 /// Every line comes from the same traversal the dashboard and the exporters use
 /// (`collector::diagnose`), so this can never describe a set of sources the rest of the tool
 /// does not actually read. It reads exactly what a normal collection reads, and writes nothing.
+/// Where Claude Code's `settings.json` is for this run, or why that could not be said.
+fn claude_settings_path(cli: &ai_usage_tui::cli::Cli) -> Result<std::path::PathBuf> {
+    ai_usage_tui::install::settings_path(cli.claude_dir.as_deref()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "could not determine a home directory; pass --claude-dir or set CLAUDE_CONFIG_DIR"
+        )
+    })
+}
+
+/// `--install-hook`, `--uninstall-hook`, `--install-statusline`, `--uninstall-statusline`.
+///
+/// Every outcome is a line, including the ones that wrote nothing: a second install is not an
+/// error, and neither is removing what was never there, so a setup script can run either
+/// without checking first. What *is* an error -- a settings file that does not parse, another
+/// program's status line -- names the file and changes nothing.
+fn install_claude(cli: &ai_usage_tui::cli::Cli, what: Integration, install: bool) -> Result<()> {
+    let path = claude_settings_path(cli)?;
+    let label = what.label();
+    if install {
+        let command = ai_usage_tui::install::command_for(what)?;
+        match ai_usage_tui::install::install(&path, what, &command.text)? {
+            Outcome::Installed => {
+                print_line(&format!("Installed the {label} in {}", path.display()))?;
+                print_line(&format!(
+                    "  command: {} ({})",
+                    command.text,
+                    match command.form {
+                        CommandForm::OnPath => "ai-usage-tui is on PATH",
+                        CommandForm::AbsoluteExe =>
+                            "ai-usage-tui is not on PATH, so the absolute path was written",
+                    }
+                ))?;
+                print_line(&format!(
+                    "  Claude Code reads the file at start: restart a session, or check with {}.",
+                    match what {
+                        Integration::Hook => "/hooks",
+                        Integration::StatusLine => "/statusline",
+                    }
+                ))?;
+            }
+            Outcome::AlreadyInstalled(found) => print_line(&format!(
+                "The {label} is already installed in {}: {found}; nothing to do",
+                path.display()
+            ))?,
+            other => anyhow::bail!("unexpected outcome of an install: {other:?}"),
+        }
+    } else {
+        match ai_usage_tui::install::uninstall(&path, what)? {
+            Outcome::Removed => {
+                print_line(&format!("Removed the {label} from {}", path.display()))?;
+            }
+            Outcome::NotInstalled => print_line(&format!(
+                "No {label} of this tool in {}; nothing to do",
+                path.display()
+            ))?,
+            Outcome::NoFile => {
+                print_line(&format!("{} does not exist; nothing to do", path.display()))?;
+            }
+            Outcome::NotOurs(theirs) => print_line(&format!(
+                "The status line in {} is not this tool's ({theirs}); left alone",
+                path.display()
+            ))?,
+            other => anyhow::bail!("unexpected outcome of an uninstall: {other:?}"),
+        }
+    }
+    Ok(())
+}
+
+/// `--uninstall`: the two Claude Code entries, then this tool's own caches. The journal and the
+/// config are the user's data and are named, with the command that would delete them, not
+/// deleted. The binary is not touched either -- the channel that installed it removes it.
+fn uninstall_everything(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
+    install_claude(cli, Integration::Hook, false)?;
+    install_claude(cli, Integration::StatusLine, false)?;
+
+    let config = cli
+        .config_path
+        .clone()
+        .or_else(ai_usage_tui::config::config_path);
+    let own = ai_usage_tui::install::own_files(journal_path(cli)?, config);
+    let mut failed = 0;
+    for (path, result) in ai_usage_tui::install::remove_caches(&own.caches) {
+        match result {
+            Ok(true) => print_line(&format!("Removed {}", path.display()))?,
+            Ok(false) => print_line(&format!("Not present: {}", path.display()))?,
+            Err(error) => {
+                failed += 1;
+                print_line(&format!("Could not remove {}: {error}", path.display()))?;
+            }
+        }
+    }
+
+    print_line("Kept your data:")?;
+    let mut present = Vec::new();
+    for (label, path) in [
+        ("journal", Some(&own.journal)),
+        ("config", own.config.as_ref()),
+    ] {
+        match path {
+            Some(path) if path.exists() => {
+                print_line(&format!("  {label:<8} {}", path.display()))?;
+                present.push(path.display().to_string());
+            }
+            Some(path) => print_line(&format!("  {label:<8} {} (not present)", path.display()))?,
+            None => print_line(&format!("  {label:<8} (no location could be resolved)"))?,
+        }
+    }
+    if !present.is_empty() {
+        print_line("To delete it too:")?;
+        print_line(&format!(
+            "  rm {}",
+            present
+                .iter()
+                .map(|path| format!("'{}'", path.replace('\'', "'\\''")))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ))?;
+    }
+    let (exe, channel) = ai_usage_tui::update::current_channel();
+    print_line(&format!(
+        "The binary is unchanged: {}, installed by {}",
+        exe.map_or_else(
+            || "<path could not be determined>".to_string(),
+            |path| path.display().to_string()
+        ),
+        channel.label()
+    ))?;
+    anyhow::ensure!(
+        failed == 0,
+        "{failed} cache file(s) could not be removed (see above)"
+    );
+    Ok(())
+}
+
 /// Where the journal lives for a run: the flag, the config, then the platform default.
 ///
 /// Three commands write to it, and each one used to resolve the path itself.
@@ -810,8 +963,8 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
                 );
                 let _ = writeln!(
                     out,
-                    "  {:<12} {:<19}  fed by Claude Code's status line; see \
-                     contrib/claude-code/statusline-settings.json",
+                    "  {:<12} {:<19}  fed by Claude Code's status line; \
+                     `ai-usage-tui --install-statusline` registers it",
                     "", ""
                 );
             }
@@ -832,6 +985,62 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
         }
     } else {
         let _ = writeln!(out, "  {:<12} disabled ([omarchy] limits = false)", "panel");
+    }
+
+    // Whether Claude Code runs this tool: the hook that feeds routing and the status line that
+    // feeds the limits. Asked of the same detector the installers use, so what this calls
+    // installed is exactly what `--uninstall-hook` would remove. Until this existed the only
+    // way to know was to open the file, and the setup guide said "check with /hooks".
+    let _ = writeln!(out, "\nCLAUDE CODE");
+    match claude_settings_path(cli) {
+        Ok(settings) => {
+            let found = match ai_usage_tui::install::detect_at(&settings) {
+                SettingsState::Missing => {
+                    let _ = writeln!(out, "  settings     absent         {}", settings.display());
+                    None
+                }
+                SettingsState::Unreadable(problem) => {
+                    let _ = writeln!(out, "  settings     unreadable     {problem}");
+                    None
+                }
+                SettingsState::Parsed(found) => {
+                    let _ = writeln!(out, "  settings     found          {}", settings.display());
+                    Some(found)
+                }
+            };
+            let found = found.unwrap_or_default();
+            match found.hook.as_slice() {
+                [] => {
+                    let _ = writeln!(
+                        out,
+                        "  hook         not installed  `ai-usage-tui --install-hook` registers it"
+                    );
+                }
+                [(event, command)] => {
+                    let _ = writeln!(
+                        out,
+                        "  hook         {event} only  {command}; `ai-usage-tui --install-hook` adds the other event"
+                    );
+                }
+                [(_, command), ..] => {
+                    let _ = writeln!(out, "  hook         installed      {command}");
+                }
+            }
+            match &found.statusline {
+                Some(command) => {
+                    let _ = writeln!(out, "  statusline   installed      {command}");
+                }
+                None => {
+                    let _ = writeln!(
+                        out,
+                        "  statusline   not installed  `ai-usage-tui --install-statusline` registers it"
+                    );
+                }
+            }
+        }
+        Err(error) => {
+            let _ = writeln!(out, "  settings     {error}");
+        }
     }
 
     // How this copy was installed, and how to upgrade it. Always shown and always offline: it is

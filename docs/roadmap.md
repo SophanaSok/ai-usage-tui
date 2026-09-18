@@ -301,9 +301,11 @@ takes, `AGENTS.md`'s "Extending it" and a project skill; and guards that ask the
 bindings table and the parser rather than a list kept in the test. Decisions worth keeping:
 
 - **Both decisions above still hold, and have a corollary: the tool writes into no other
-  program's files.** The agent edits `~/.claude/settings.json`; the guide tells it how to merge
-  and how to verify. `--install-hook` (item 4 below) is still open, and is a different thing: a
-  command a *person* runs.
+  program's files, except on an explicit keystroke.** `--install-hook` and `--install-statusline`
+  (item 4 below, resolved 2026-09-18) merge this tool's own entries into `~/.claude/settings.json`
+  and change nothing else there; the dashboard never does, and the guide tells an agent to name
+  the command and the file before running one. Everything else the agent edits by hand, and the
+  guide tells it how to merge and how to verify.
 - **Nothing installed names a topic.** A copied skill or pasted block outlives its binary, and a
   release before topics rejects one. The default guide lists them; a test refuses one anywhere
   else.
@@ -401,7 +403,23 @@ bindings table and the parser rather than a list kept in the test. Decisions wor
    SHA, and the MSRV job on `dtolnay/rust-toolchain@master`. `release.yml` granted
    `contents: write` to every job, and `ci.yml` had no `permissions:` block. The "Protect main"
    ruleset existed with `enforcement: disabled`.
-4. **Onboarding.** Routing analytics, the differentiating feature, sits behind a hand-run `jq`
+4. **Resolved (2026-09-18). Onboarding.** `--install-hook` / `--uninstall-hook`,
+   `--install-statusline` / `--uninstall-statusline` and `--uninstall` (`src/install.rs`). The
+   decisions: the command is the consent, as the update story settled -- no config key, no
+   prompt, the TUI never writes there; both installers append and never replace, write nothing
+   when the entry is there, keep every other key in the order found (`serde_json` now builds with
+   `preserve_order`), keep the file's permission bits, refuse a file that is not a JSON object,
+   and never print a byte of it but this tool's own entries; the command written is the bare name
+   when a binary of that name is on `PATH` and the running binary's absolute path otherwise, and
+   the report says which; `--install-statusline` refuses to replace another program's status line
+   and names it; `--uninstall` removes the two entries and the caches `docs/stability.md` calls
+   the tool's own (a test holds the two lists together), then prints the journal's and the config
+   file's paths with the `rm` that would delete them, and does not run it. `--doctor` gained a
+   `CLAUDE CODE` section from the same detector the installers use, so what it calls installed is
+   what `--uninstall-hook` removes. What `include_str!` gives: the installer merges the shipped
+   `contrib/claude-code/*.json`, the same bytes the setup guide shows.
+
+   *As filed:* Routing analytics, the differentiating feature, sits behind a hand-run `jq`
    merge into `~/.claude/settings.json`. An `--install-hook` / `--uninstall-hook` pair, and an
    uninstall path for the data directory, would close it. The consent question is the one the update
    story settled: the command is the consent.
