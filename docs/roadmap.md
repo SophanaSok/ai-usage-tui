@@ -465,7 +465,64 @@ bindings table and the parser rather than a list kept in the test. Decisions wor
    *As filed:* `usage.db` has no retention or `VACUUM`; the collector's in-memory rows grow
    for the life of the process; Gemini re-reads its whole telemetry file into memory each poll
    (`gemini.rs`, `read_to_string`); the opt-in log never rotates.
-6. **Coverage.** Codex rollouts carry `rate_limits` on every token event and nothing reads them, so
+6. **Resolved (2026-09-18). Coverage.** Five findings, and three of them turned up a defect
+   nobody had filed -- which is the argument for the item.
+
+   *A captured Claude Code transcript* (`tests/fixtures/claude_capture`, 2.1.276, a session that
+   delegates to a subagent). Its first read found that **a subagent's output tokens were counted
+   from a placeholder**: one request is a line per content block under one `requestId`, the
+   inline fixtures and the hook's own comment said every line carries the same usage, and in a
+   subagent's transcript the first line says `output_tokens: 3` where the closing one says `190`.
+   Deduplication kept the first. On this machine: 916 of 16,523 requests, every one in a subagent,
+   7.5% of all output tokens. `collector::supersedes` -- the reading with more tokens wins, which
+   is "later" without depending on read order -- is applied in the one-shot merge, across polls
+   (the row is replaced and re-priced, because a poll lands between the two lines), and in the
+   hook's attribution, where the second line must not move the skipped-request cursor.
+
+   *Codex `rate_limits`.* Read by `codex::latest_rate_limits`, a fourth producer for
+   `limits::load`. There is no Codex account here, so the Gemini trick was repeated:
+   `scripts/codex-standin.py` answers the Responses API and the real CLI wrote real rollouts
+   (`tests/fixtures/codex_capture`). That validated the synthetic fixture the collector had been
+   built on -- every token assumption held -- and found that **the thread keeps one snapshot and
+   the last header family parsed replaces the rest**, so a rollout can carry another limit's
+   window on every line and the default family on none. Keyed on `limit_id`; three newest
+   rollouts, last mebibyte of each, because `limits::load` is stateless and runs every refresh.
+   Settled here: `plan_type` and `credits` are not read (null in every captured block, so nothing
+   to measure a rule against); a windowless snapshot never wins a merge, because Omarchy rewrites
+   its "Sign-in expired" record every fifteen minutes and would have evicted any older reading.
+
+   *`.jsonl.zst`.* Behind `local_thread_store_compression`, off by default in 0.155.0. With it on,
+   the real CLI compressed the back-dated captures and deleted the originals, and the collector
+   reported two of six calls without a word. Read now, streamed, once per file (`ruzstd`: decoder
+   only, pure Rust). The real compressed file is the unredacted rollout and cannot be committed;
+   the fixture is the redacted one compressed to the same frame shape, and the real files were
+   read by the same code.
+
+   *Mutation tests* (`src/collector/mutation.rs`). Not a fuzzer and not `proptest`: every real
+   fixture, one value damaged at a time, read through the registry's own `load`, priced and
+   totalled. Deterministic, no dependency, names the record and the value, and walks the registry
+   so a new source cannot skip it. First run: a count of `1e308` became `u64::MAX` tokens and
+   overflowed `total_tokens`; `-1` was `0`; Gemini and Copilot had private copies of the same
+   flaw; OpenCode carried a cost of `-1` into totals. A count is now a whole number to 2^53 or it
+   is not a count. No real figure moved.
+
+   *Coverage measurement.* `just coverage` and a `Coverage` CI job, reported to the job summary
+   and **not gated, by decision**: a threshold is satisfied most cheaply by a test that runs a
+   line without checking it. 93.7% of lines at first measurement; what is low needs a terminal
+   (`ui/mod.rs`, `main.rs`) or the network (`pricing_refresh`, `update`, `zen`). Reading the table
+   is how the Zen catalogue was found still writing through a shared temporary.
+
+   Left, and small. Claude Code's `usage` now carries `output_tokens_details.thinking_tokens`
+   (63 of 166 in the capture); it is not split into the reasoning bucket because whether it sits
+   inside `output_tokens` has not been measured, only assumed. Codex writes a `token_usage_record`
+   line per response, with a `response_id` that would be a better identity than the content-based
+   one; not read, since `token_count` carries the same figures and older CLIs write only that.
+   Codex rows are always `provider: openai` although `session_meta.model_provider` names the
+   provider in force. A rate-limit reading more than a mebibyte from the end of its rollout is
+   not found until the next call. `number()` still answers `0` for an optional count that is
+   present and unreadable, where `required` flags the row.
+
+   *As filed:* Codex rollouts carry `rate_limits` on every token event and nothing reads them, so
    Codex windows exist only on Omarchy. Claude Code, the largest source, has no captured transcript
    fixture file, only inline strings. No fuzz or property tests over the parsers of other tools'
    formats; no coverage measurement. `.jsonl.zst` Codex rollouts are not read.
