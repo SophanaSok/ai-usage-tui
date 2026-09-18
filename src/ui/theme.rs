@@ -15,6 +15,7 @@ use ratatui::{
 };
 
 use crate::model::{CostStatus, Usage};
+use crate::utils::ColourDepth;
 
 pub const MUTED: Color = Color::Rgb(125, 145, 160);
 pub const PANEL: Color = Color::Rgb(18, 28, 37);
@@ -26,6 +27,95 @@ pub const SELECTED: Color = Color::Rgb(37, 57, 67);
 pub const BORDER: Color = Color::Rgb(48, 72, 84);
 /// The strip behind the header, the tab row and the alert banner.
 pub const HEADER_BG: Color = Color::Rgb(10, 18, 24);
+
+/// A palette colour as a terminal with fewer colours can draw it. `TrueColour` is the identity.
+///
+/// Only `Rgb` needs mapping, with one exception: on sixteen colours `White` becomes the
+/// terminal's default foreground. Backgrounds are handed back to the terminal there, and white
+/// text on a light theme's background is no text at all.
+pub fn downgrade(color: Color, depth: ColourDepth, background: bool) -> Color {
+    match (depth, color) {
+        (ColourDepth::TrueColour, _) => color,
+        (ColourDepth::Indexed256, Color::Rgb(r, g, b)) => Color::Indexed(nearest_256(r, g, b)),
+        (ColourDepth::Indexed256, _) => color,
+        (ColourDepth::Ansi16, Color::White) if !background => Color::Reset,
+        (ColourDepth::Ansi16, Color::Rgb(..)) => ansi16(color),
+        (ColourDepth::Ansi16, _) => color,
+    }
+}
+
+/// The named palette first, by meaning rather than by distance: nearest-match puts `MUTED` and
+/// `BORDER` on the same grey, and the alarm red is the one colour here a test pins. Anything
+/// unnamed falls through to the nearest of the sixteen.
+fn ansi16(color: Color) -> Color {
+    use crate::model::{CLOUD, CYAN, GREEN, RED, YELLOW};
+    match color {
+        // The chrome backgrounds are the terminal's own; the selection is the one background
+        // that carries meaning, so it stays a colour.
+        c if c == PANEL || c == HEADER_BG => Color::Reset,
+        c if c == SELECTED => Color::DarkGray,
+        c if c == BORDER => Color::DarkGray,
+        c if c == MUTED => Color::Gray,
+        c if c == CYAN => Color::LightCyan,
+        c if c == GREEN => Color::LightGreen,
+        c if c == YELLOW => Color::LightYellow,
+        c if c == RED => Color::LightRed,
+        c if c == CLOUD => Color::LightMagenta,
+        Color::Rgb(r, g, b) => nearest_ansi(r, g, b),
+        other => other,
+    }
+}
+
+/// xterm's 256: a 6x6x6 cube at 16..=231 and a grey ramp at 232..=255. The nearer of the two.
+fn nearest_256(r: u8, g: u8, b: u8) -> u8 {
+    const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+    let level = |v: u8| {
+        (0..6usize)
+            .min_by_key(|i| (i32::from(LEVELS[*i]) - i32::from(v)).abs())
+            .unwrap_or(0)
+    };
+    let distance = |a: (u8, u8, u8)| {
+        let d = |x: u8, y: u8| (i32::from(x) - i32::from(y)).pow(2);
+        d(a.0, r) + d(a.1, g) + d(a.2, b)
+    };
+    let (ri, gi, bi) = (level(r), level(g), level(b));
+    let cube = (LEVELS[ri], LEVELS[gi], LEVELS[bi]);
+    let mean = (u16::from(r) + u16::from(g) + u16::from(b)) / 3;
+    let step = ((mean.saturating_sub(8) + 5) / 10).min(23) as u8;
+    let grey = 8 + 10 * step;
+    if distance((grey, grey, grey)) < distance(cube) {
+        232 + step
+    } else {
+        (16 + 36 * ri + 6 * gi + bi) as u8
+    }
+}
+
+fn nearest_ansi(r: u8, g: u8, b: u8) -> Color {
+    const TABLE: [(Color, (u8, u8, u8)); 16] = [
+        (Color::Black, (0, 0, 0)),
+        (Color::Red, (205, 0, 0)),
+        (Color::Green, (0, 205, 0)),
+        (Color::Yellow, (205, 205, 0)),
+        (Color::Blue, (0, 0, 238)),
+        (Color::Magenta, (205, 0, 205)),
+        (Color::Cyan, (0, 205, 205)),
+        (Color::Gray, (229, 229, 229)),
+        (Color::DarkGray, (127, 127, 127)),
+        (Color::LightRed, (255, 0, 0)),
+        (Color::LightGreen, (0, 255, 0)),
+        (Color::LightYellow, (255, 255, 0)),
+        (Color::LightBlue, (92, 92, 255)),
+        (Color::LightMagenta, (255, 0, 255)),
+        (Color::LightCyan, (0, 255, 255)),
+        (Color::White, (255, 255, 255)),
+    ];
+    let d = |x: u8, y: u8| (i32::from(x) - i32::from(y)).pow(2);
+    TABLE
+        .iter()
+        .min_by_key(|(_, (tr, tg, tb))| d(*tr, r) + d(*tg, g) + d(*tb, b))
+        .map(|(color, _)| *color)
+        .unwrap_or(Color::Reset)
+}
 
 pub fn panel<'a>(title: &'a str, color: Color) -> Block<'a> {
     Block::default()

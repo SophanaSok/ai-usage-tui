@@ -144,3 +144,83 @@ fn a_range_with_nothing_in_it_is_told_apart_from_no_data() {
         "data exists; doctor is the wrong advice"
     );
 }
+
+/// Every colour went to every terminal as 24-bit. One that says it draws fewer gets the frame
+/// mapped down, and a colour path that bypasses the pass shows up here as an `Rgb` cell.
+#[test]
+fn a_terminal_with_fewer_colours_is_sent_none_it_cannot_draw() {
+    use crate::utils::ColourDepth;
+    let mut app = test_app(vec![
+        usage(None, None, Some(1.0), 100),
+        Usage {
+            model: "claude-opus-5".into(),
+            ..usage(None, None, Some(2.0), 200)
+        },
+    ]);
+    app.recompute();
+    app.set_limits_for_test(fixture_limits(false));
+
+    for depth in [ColourDepth::Indexed256, ColourDepth::Ansi16] {
+        app.colour_depth = depth;
+        let buffer = render(&app, 120, 30);
+        let too_deep = buffer
+            .content()
+            .iter()
+            .filter(|cell| {
+                let rgb = |c: Color| matches!(c, Color::Rgb(..));
+                let indexed = |c: Color| matches!(c, Color::Indexed(_));
+                rgb(cell.fg)
+                    || rgb(cell.bg)
+                    || (depth == ColourDepth::Ansi16 && (indexed(cell.fg) || indexed(cell.bg)))
+            })
+            .count();
+        assert_eq!(too_deep, 0, "{depth:?}");
+
+        // The selection is a background and nothing else, so it has to survive as one.
+        let width = usize::from(buffer.area.width);
+        let selected = buffer
+            .content()
+            .chunks(width)
+            .find(|row| {
+                row.iter()
+                    .map(|cell| cell.symbol())
+                    .collect::<String>()
+                    .contains("claude-opus-5")
+            })
+            .expect("the selected model is on screen");
+        assert!(
+            selected.iter().any(|cell| cell.bg != Color::Reset),
+            "{depth:?}: the selected row lost its background"
+        );
+    }
+
+    // `NO_COLOR` outranks the depth: no colour means none, whatever the terminal can draw.
+    app.no_color = true;
+    let buffer = render(&app, 120, 30);
+    assert!(buffer
+        .content()
+        .iter()
+        .all(|cell| cell.fg == Color::Reset && cell.bg == Color::Reset));
+}
+
+/// The named palette maps by meaning. Nearest-match alone puts the muted text and the borders
+/// on one grey, and lets the alarm red drift to whatever is closest.
+#[test]
+fn sixteen_colours_keep_the_palettes_distinctions() {
+    use crate::model::{CLOUD, CYAN, GREEN, RED, YELLOW};
+    use crate::ui::theme::{downgrade, BORDER, MUTED};
+    use crate::utils::ColourDepth::Ansi16;
+    let mapped: Vec<Color> = [CYAN, GREEN, YELLOW, RED, CLOUD, MUTED, BORDER]
+        .into_iter()
+        .map(|c| downgrade(c, Ansi16, false))
+        .collect();
+    for (i, a) in mapped.iter().enumerate() {
+        assert!(!matches!(a, Color::Rgb(..) | Color::Reset), "{a:?}");
+        for b in &mapped[i + 1..] {
+            assert_ne!(a, b, "two palette colours collapsed into one");
+        }
+    }
+    assert_eq!(downgrade(RED, Ansi16, false), Color::LightRed);
+    // White text over a background handed back to the terminal would vanish on a light theme.
+    assert_eq!(downgrade(Color::White, Ansi16, false), Color::Reset);
+}

@@ -86,6 +86,70 @@ pub fn no_color_in(env: Env<'_>) -> bool {
     non_empty(env, "NO_COLOR").is_some()
 }
 
+/// How many colours the terminal can be trusted to draw.
+///
+/// The dashboard's palette is 24-bit. It used to be sent as such to every terminal, and one that
+/// does not understand the sequence draws whatever it makes of it -- usually the wrong colour,
+/// sometimes none. There is no query that answers this reliably, so it is read from what the
+/// terminal says about itself, and the answer that needs the least from the terminal wins when
+/// it says nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ColourDepth {
+    /// 24-bit: the palette as designed.
+    #[default]
+    TrueColour,
+    /// The 256-colour cube: each colour's nearest neighbour, close enough to pass at a glance.
+    Indexed256,
+    /// The terminal's own sixteen. Backgrounds are left to the terminal as well, since its
+    /// theme may be light and these were chosen against a dark one.
+    Ansi16,
+}
+
+impl ColourDepth {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::TrueColour => "truecolor",
+            Self::Indexed256 => "256 colours",
+            Self::Ansi16 => "16 colours",
+        }
+    }
+}
+
+/// The colour depth, and the variable it was read from -- `--doctor` prints both, because "why
+/// does it look different over ssh" is answered by the second.
+///
+/// `COLORTERM=truecolor` (or `24bit`) is the de facto declaration; `WT_SESSION` is Windows
+/// Terminal, which supports it and does not always say so; a `TERM` ending in `-direct` is
+/// terminfo's name for the same thing. `256color` in `TERM` is the middle tier. `ssh` and `sudo`
+/// commonly drop `COLORTERM`, which is why the middle tier exists: those sessions keep `TERM`.
+pub fn colour_depth_in(env: Env<'_>) -> (ColourDepth, &'static str) {
+    // Each variable is named at its `non_empty` call, not passed through a helper: the README's
+    // environment table is checked against exactly that call shape.
+    let lower = |value: Option<OsString>| {
+        value
+            .map(|value| value.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default()
+    };
+    let colorterm = lower(non_empty(env, "COLORTERM"));
+    if colorterm.contains("truecolor") || colorterm.contains("24bit") {
+        return (ColourDepth::TrueColour, "COLORTERM");
+    }
+    if non_empty(env, "WT_SESSION").is_some() {
+        return (ColourDepth::TrueColour, "WT_SESSION");
+    }
+    let term = lower(non_empty(env, "TERM"));
+    if term.ends_with("-direct") {
+        return (ColourDepth::TrueColour, "TERM");
+    }
+    if term.contains("256color") {
+        return (ColourDepth::Indexed256, "TERM");
+    }
+    (
+        ColourDepth::Ansi16,
+        "no COLORTERM, and TERM names no colour depth",
+    )
+}
+
 pub fn home_dir_in(env: Env<'_>) -> Option<PathBuf> {
     if let Some(home) = non_empty(env, "HOME") {
         return Some(PathBuf::from(home));
@@ -209,6 +273,40 @@ mod tests {
             no_color_in(&zero),
             "no-color.org: any non-empty value, even `0`"
         );
+    }
+
+    #[test]
+    fn colour_depth_is_what_the_terminal_says_and_sixteen_when_it_says_nothing() {
+        fn env_of(
+            pairs: &'static [(&'static str, &'static str)],
+        ) -> impl Fn(&str) -> Option<std::ffi::OsString> {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| std::ffi::OsString::from(value))
+            }
+        }
+        let depth = |pairs| colour_depth_in(&env_of(pairs)).0;
+        assert_eq!(
+            depth(&[("COLORTERM", "truecolor")]),
+            ColourDepth::TrueColour
+        );
+        assert_eq!(depth(&[("COLORTERM", "24bit")]), ColourDepth::TrueColour);
+        assert_eq!(depth(&[("WT_SESSION", "abc")]), ColourDepth::TrueColour);
+        assert_eq!(depth(&[("TERM", "xterm-direct")]), ColourDepth::TrueColour);
+        // What an ssh session that dropped COLORTERM still has.
+        assert_eq!(
+            depth(&[("TERM", "xterm-256color")]),
+            ColourDepth::Indexed256
+        );
+        assert_eq!(
+            depth(&[("TERM", "tmux-256color"), ("COLORTERM", "")]),
+            ColourDepth::Indexed256,
+            "an empty COLORTERM declares nothing"
+        );
+        assert_eq!(depth(&[("TERM", "linux")]), ColourDepth::Ansi16);
+        assert_eq!(depth(&[]), ColourDepth::Ansi16);
     }
 
     #[test]

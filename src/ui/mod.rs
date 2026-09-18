@@ -181,6 +181,18 @@ pub(super) fn draw(frame: &mut Frame, app: &App) {
     draw_in_colour(frame, app);
     if app.no_color {
         strip_colour(frame.buffer_mut());
+    } else if app.colour_depth != crate::utils::ColourDepth::TrueColour {
+        downgrade_colour(frame.buffer_mut(), app.colour_depth);
+    }
+}
+
+/// The palette, mapped down to what the terminal draws -- the same single pass as
+/// `strip_colour`, for the same reason: a branch in every panel's styles is a branch the next
+/// panel forgets, and a pass over the finished frame cannot be forgotten.
+fn downgrade_colour(buffer: &mut ratatui::buffer::Buffer, depth: crate::utils::ColourDepth) {
+    for cell in buffer.content.iter_mut() {
+        cell.fg = theme::downgrade(cell.fg, depth, false);
+        cell.bg = theme::downgrade(cell.bg, depth, true);
     }
 }
 
