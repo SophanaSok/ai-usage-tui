@@ -1,40 +1,58 @@
 # What a Max subscription bought: one machine, nineteen days
 
-*Written 2026-09-02 from the author's own machine, with `ai-usage-tui` at commit `6f97237`
-(v0.13.0 plus the unreleased changes) and the pricing snapshot refreshed from LiteLLM the same
-day. Every figure below comes out of `ai-usage-tui --json --all` and `git`; the commands are at
-the end so the numbers can be re-derived, and they will drift as the transcripts grow.*
+*Written 2026-09-18 from the author's own machine, with `ai-usage-tui` 1.0.0 (commit `eb264e8`)
+and the pricing table bundled with it, dated 2026-09-17. Every figure below comes out of
+`ai-usage-tui --json --all`, `ai-usage-tui --summary-json --all` and `git`; the commands are at
+the end so the numbers can be re-derived, and they will drift as the transcripts grow — and,
+as it turns out, as they are deleted.*
 
-## The question this does not answer yet
+This is the second edition. The first was written on 2026-09-02, at v0.13.0, over 2026-08-15 to
+09-02. Its tables cannot be re-derived any more, which is one of the findings below, so this
+edition is measured afresh over the window the machine still holds rather than patched. The
+first edition is in this file's `git` history.
+
+## The question this still does not answer
 
 The roadmap asked for one measurement: *was Opus worth five times Sonnet on this codebase?* —
 dollars per passing test, per model, from the routing journal. That is the panel the tool was
-built around, and it cannot be filled in from this machine today, for two reasons that are
-worth stating before any number.
+built around. The first edition could not fill it in because the
+[`--claude-code-hook`](routing-analytics.md) that records a test run's pass or fail had never
+been installed on the author's own machine. It is installed now — `ai-usage-tui --install-hook`
+is one command, and `--doctor` reports `hook installed` — and the honest state of the journal is
+three events: one passing run under Opus 5, one under Fable 5.1, and one hand-recorded in July.
+Three events are not a measurement.
 
-First, the routing journal here holds one event, hand-recorded in July. The
-[`--claude-code-hook`](routing-analytics.md) that records a test run's pass or fail was never
-installed on this machine — the author built it and did not eat it. Second, on a Max
-subscription there are no dollars per request. Every Claude Code request here is billed
-against a quota, and the tool's own rule ([README, *What it shows*](../README.md#what-it-shows))
-is that such a row is `quota`, never `$0.00` and never a number invented from a list price. So
-even with the hook installed, `$/SUCCESS` on this machine reads `on quota` by design.
+The second reason has not changed and will not. On a Max subscription there are no dollars per
+request. Every Claude Code request here is billed against a quota, and the tool's own rule
+([README, *What it shows*](../README.md#what-it-shows)) is that such a row is `quota`, never
+`$0.00` and never a number invented from a list price. Both hook events land in a
+routing aggregate whose `cost_basis` is `"quota"`, so `$/SUCCESS` on this machine reads `on quota` by design.
 
 What the transcripts *do* support is the other half of the picture: what the subscription was
-used for, at what API-equivalent rate, on which projects, and what came out the other end of
-the repository this tool lives in. That is this piece. The Opus-versus-Sonnet piece waits on
-hook data, which starts accumulating the day the hook is installed.
+used for, at what API-equivalent rate, on which projects, what came out the other end of the
+repository this tool lives in — and, new in this edition, what running the tool for a month
+made visible that nothing else on the machine was showing.
 
 ## Method, and one word about the money
 
-`ai-usage-tui --json --all` reads every Claude Code transcript under `~/.claude/projects`
-(835 sessions here), OpenCode's message store, and the local Ollama and llama.cpp journals,
-and prints one row per request. The Claude rows carry `cost_status: "quota"` and a field
-called `api_equivalent_cost`: what the same request would have cost at Anthropic's published
-API list rate — input, output, cache write and cache read priced separately. It is kept beside
-the row and never summed into cost or budgets, because it is a counterfactual, not spend.
-Everything below that is denominated in dollars is that counterfactual, and it is labelled as
-such. The subscription's actual price is on
+`ai-usage-tui --json --all` reads every source it knows and prints one row per request. On this
+machine `--doctor` says what that means: Claude Code's transcripts under `~/.claude/projects`
+(362 sessions), OpenCode's message store, GitHub Copilot's session store (6 rows), the local
+Ollama and llama.cpp journals, and Omarchy's agents-panel records for limits. Codex CLI is
+installed and has written no session logs; Gemini CLI records nothing until its telemetry is
+switched on, and `--doctor` prints the setting that does it; Cursor is detected and deliberately
+not read, because it keeps no reliable local token counts.
+
+The tool itself is not the one the first edition used. Between v0.13.0 and v1.0.0 it gained
+`--install-hook`, the compact `--summary-json` that the limits and routing figures below come
+from, `--prune-journal`, and a written promise ([`stability.md`](stability.md)) that the flags
+and JSON keys used at the end of this piece will not break before a 2.0.
+
+The Claude rows carry `cost_status: "quota"` and a field called `api_equivalent_cost`: what the
+same request would have cost at Anthropic's published API list rate — input, output, cache
+write and cache read priced separately. It is kept beside the row and never summed into cost or
+budgets, because it is a counterfactual, not spend. Everything below that is denominated in
+dollars is that counterfactual unless it says otherwise. The subscription's actual price is on
 [Anthropic's pricing page](https://claude.com/pricing) — Max plans "from $100 per month"; this
 machine is on the 20x tier, the dearer of the two.
 
@@ -45,173 +63,237 @@ an agentic session re-reads its context on every turn.
 
 ## What was used
 
-Nineteen days, 2026-08-15 to 2026-09-02, fifteen of them with any Claude traffic.
+Nineteen days, 2026-08-31 to 2026-09-18, fifteen of them with any Claude traffic: 16,870
+requests in 109 sessions across 72 working directories.
 
 | Model | Requests | Sessions | Output tokens | Cache reads | API-equivalent |
 |---|---:|---:|---:|---:|---:|
-| Claude Opus 5 | 18,889 | 78 | 11.5M | 4.56B | $2,944.58 |
-| Claude Fable 5 | 3,532 | 38 | 2.6M | 580M | $1,007.12 |
-| Claude Fable 5.1 (from 09-02) | 994 | 6 | 383K | 84M | $112.00 |
-| Claude Sonnet 5 | 216 | 5 | 28K | 21M | $10.07 |
-| Claude Opus 4.8 | 10 | 3 | 12K | 1.8M | $5.91 |
-| Claude Haiku 4.5 | 249 | 13 | 8K | 9.7M | $1.81 |
-| **All Claude** | **23,890** | | | | **$4,081.49** |
+| Claude Opus 5 | 11,780 | 75 | 8.3M | 3.12B | $1,985.69 |
+| Claude Fable 5.1 | 4,112 | 45 | 4.3M | 945M | $698.37 |
+| Claude Sonnet 5 | 535 | 10 | 193K | 199M | $70.86 |
+| Claude Fable 5 (to 09-02) | 196 | 2 | 162K | 30M | $45.57 |
+| Claude Haiku 4.5 | 247 | 16 | 34K | 9.5M | $1.90 |
+| **All Claude** | **16,870** | | | | **$2,802.39** |
 
-Three things stand out.
+**Cache reads are still the bill.** Of Opus 5's $1,986, about $1,562 is cache reads — 3.12
+billion tokens at $0.50 per million — against $207 of output and $217 of cache writes. The
+model wrote 8.3 million tokens and re-read 378 times that. Across every source the export's
+cache-hit figure is 91.2% and output is 0.33% of all tokens.
 
-**Cache reads are the bill.** Of Opus 5's $2,945, roughly $2,280 is cache reads — 4.56 billion
-tokens at $0.50 per million — against about $290 of output and $380 of cache writes. The
-model wrote 11 million tokens and re-read 400 times that. That is what a long agentic session
-looks like at list price, and it is the number a per-token budget would have to reckon with.
+**Sonnet was used seven times as much and it is still not a routing policy.** 535 requests in
+ten sessions, $71, against 216 requests and $10 in the first edition. It is 2.5% of the total.
+The question the roadmap asked presupposes a period in which the cheaper model did a real share
+of the work, and this was not one.
 
-**Sonnet was barely used.** 216 requests in five sessions, $10. There is no Opus-versus-Sonnet
-comparison to make on this machine because there was no Sonnet period; the question the
-roadmap asked presupposes a routing policy that was not in force here.
-
-**The newest model was unpriced for a day.** Claude Fable 5.1 arrived on 09-02 and the bundled
-pricing table, nine days old, did not know it: 994 requests sat as `quota` with no
-API-equivalent figure until the snapshot was refreshed. The tool showed the gap rather than a
-zero — which is the point of the provenance rule — but a reader of the day's numbers would
-have seen $3,970 where $4,081 was true.
+**The work moved to the newest model.** Fable 5.1 arrived on 09-02. Over the last five days it
+is $401 of $956; on 09-17 and 09-18 it is the larger share.
 
 ### By project
 
-Every project the transcripts name, folded to the top ten; the remaining forty-odd paths —
-config directories, scratch checkouts, one-request sessions in `$HOME` — add up to $178.73.
+The top ten of 72 working directories; the other sixty-two — config directories, scratch
+checkouts, one-request sessions in `$HOME` — add up to $274.03.
 
 | Project | Requests | Sessions | API-equivalent | Opus | Fable | Sonnet |
 |---|---:|---:|---:|---:|---:|---:|
-| `Projects/games/oneplusone` | 8,233 | 10 | $1,529.36 | $1,390 | $139 | $0 |
-| `Projects/md-viewer` | 4,819 | 16 | $776.14 | $602 | $173 | $1.23 |
-| `Projects/ai-usage-tui` | 4,665 | 14 | $733.90 | $413 | $321 | $0 |
-| `Projects/games/algebraic` | 1,891 | 6 | $263.08 | $254 | $0 | $7.88 |
-| `Projects/json-data-drift-analyzer` | 671 | 3 | $210.08 | $10 | $201 | $0 |
-| `~` (home directory) | 958 | 28 | $154.02 | $50 | $104 | $0 |
-| `models` | 666 | 10 | $120.09 | $63 | $57 | $0 |
-| `Projects/games/wildkin` | 287 | 1 | $44.67 | $45 | $0 | $0 |
-| `Projects/kickstart.nvim` | 256 | 4 | $41.98 | $27 | $15 | $0 |
-| `Projects/marquee-site` | 231 | 2 | $29.44 | $23 | $7 | $0 |
+| `Projects/ai-usage-tui` | 4,161 | 21 | $565.28 | $240 | $325 | $0 |
+| `Projects/proof` | 2,431 | 15 | $555.62 | $462 | $70 | $24 |
+| `Projects/json-data-drift-analyzer` | 2,298 | 5 | $482.32 | $457 | $25 | $0 |
+| `Projects/md-viewer` | 2,078 | 9 | $289.77 | $213 | $75 | $1.23 |
+| `Projects/games/algebraic` | 1,891 | 6 | $263.81 | $254 | $0 | $8.04 |
+| `Projects/multiverse` | 834 | 8 | $156.24 | $94 | $62 | $0 |
+| `Projects/games/brick-breaker` | 498 | 2 | $73.59 | $58 | $14 | $2.18 |
+| `Projects/marquee-site` | 516 | 5 | $54.33 | $41 | $14 | $0 |
+| `Projects/proof/apps/mobile` | 178 | 4 | $50.00 | $16 | $1.57 | $32.83 |
+| `Projects/job-posting-bot` | 194 | 2 | $37.40 | $1.03 | $36 | $0 |
+
+A project is the working directory a session was started in, exactly as the transcript spells
+it, so `Projects/proof` and `Projects/proof/apps/mobile` are two rows. The tool does not guess
+that they are one repository.
 
 ### By day
 
-| Day | Requests | Sessions | API-equivalent | of which Opus |
-|---|---:|---:|---:|---:|
-| 08-15 | 48 | 1 | $4 | $2 |
-| 08-16 | 751 | 3 | $229 | $5 |
-| 08-17 | 378 | 6 | $50 | $19 |
-| 08-18 | 222 | 3 | $36 | $13 |
-| 08-19 | 2,035 | 5 | $534 | $446 |
-| 08-20 | 1,725 | 11 | $213 | $181 |
-| 08-21 | 978 | 8 | $143 | $99 |
-| 08-22 | 241 | 2 | $26 | $26 |
-| 08-25 | 2,551 | 17 | $410 | $97 |
-| 08-26 | 1,216 | 13 | $261 | $110 |
-| 08-27 | 2,590 | 6 | $516 | $516 |
-| 08-28 | 5,431 | 6 | $915 | $864 |
-| 08-31 | 1,508 | 5 | $206 | $203 |
-| 09-01 | 1,346 | 12 | $155 | $147 |
-| 09-02 | 2,873 | 16 | $382 | $224 |
+| Day | Requests | Sessions | API-equivalent | of which Opus | of which Fable |
+|---|---:|---:|---:|---:|---:|
+| 08-31 | 1,508 | 5 | $206 | $203 | $0 |
+| 09-01 | 1,346 | 12 | $155 | $147 | $0 |
+| 09-02 | 3,139 | 17 | $422 | $241 | $181 |
+| 09-03 | 1,242 | 14 | $189 | $67 | $121 |
+| 09-04 | 603 | 4 | $95 | $60 | $33 |
+| 09-08 | 1,095 | 3 | $164 | $164 | $0 |
+| 09-09 | 1,109 | 3 | $289 | $289 | $0 |
+| 09-10 | 900 | 1 | $224 | $224 | $0 |
+| 09-11 | 145 | 1 | $13 | $13 | $0 |
+| 09-13 | 279 | 1 | $89 | $82 | $7 |
+| 09-14 | 1,782 | 18 | $370 | $217 | $96 |
+| 09-15 | 557 | 5 | $100 | $77 | $23 |
+| 09-16 | 832 | 7 | $137 | $80 | $57 |
+| 09-17 | 1,469 | 19 | $244 | $97 | $146 |
+| 09-18 | 864 | 8 | $105 | $26 | $79 |
 
-The heaviest day, 08-28, was six sessions and $915 of API-equivalent — more than a fifth of
-the whole range in one day, and fifty times everything Sonnet has ever cost here. 08-23, 08-24,
-08-29 and 08-30 are missing from the table because no transcript on this machine carries a
-request on those days; see *The holes* below for why that matters.
+09-18 is a part day: the export was taken mid-afternoon, in a session that is itself in the
+table. The heaviest day, 09-02, is 15% of the range. 09-10 is one session and $224. The four
+missing days — 09-05 to 09-07 and 09-12 — are a weekend, the Monday after it and a Saturday,
+and the repository has no commits on them either, so unlike the first edition's gaps they look like
+days off rather than work the machine cannot see.
 
 ### Escalations
 
 The tool derives one more thing from the transcripts without any setup: sessions that reached
-for a pricier model than they opened with. Over the whole range, 11 of 102 examined sessions
-did (10.8%) — ten went from Opus 5 to Fable 5, one from Sonnet 5 to Opus 5 — and every one
-of them is `on quota after`, because there is no per-request price to attach. Over the last
-seven days it was 2 of 42 (4.8%).
+for a pricier model than they opened with. Over the whole range, 8 of 109 examined sessions did
+(7.3%) — seven went from Opus 5 to Fable 5.1, one from Sonnet 5 to Opus 5 — and every request
+after the switch is `on quota`, because there is no per-request price to attach. Over the last
+seven days it was 7 of 55 (12.7%): all but one of the escalations happened in the last week.
 
 ## What came out: this repository
 
 `ai-usage-tui` is the one project in the table whose output is public and countable, so it is
-the one place the two sides can be put next to each other. It cost $733.90 of API-equivalent
-across fourteen sessions: Opus 5 for $412.83 (2,599 requests, 12 sessions), Fable 5 for
-$247.57 (1,303 requests, 6 sessions), Fable 5.1 for $73.50 on the last day.
+the one place the two sides can be put next to each other. It cost $565.28 of API-equivalent
+across twenty-one sessions: Fable 5.1 for $315.77 (2,199 requests, 13 sessions), Opus 5 for
+$240.25 (1,883 requests, 14 sessions), Fable 5 for $9.17 and Haiku 4.5 for nine cents.
 
-Over the same nineteen days the repository gained 130 non-merge commits, 80 merged pull
-requests, and thirteen tagged releases (v0.3.0 through v0.13.0). 125 of the 130 commits carry a
-model in their co-author trailer: 93 name Opus 5, 26 name Fable 5, 6 name Fable 5.1.
+Over the same nineteen days the repository gained 129 non-merge commits, 70 merged pull
+requests, and eleven tagged releases (v0.12.0 through v1.0.0). 126 of the 129 commits carry a
+model in their co-author trailer: 77 name Fable 5.1, 47 name Opus 5, 2 name Fable 5.
 
-That is a ratio a reader can form an opinion about — $5.65 of list-rate compute per commit,
-$9.17 per merged pull request — with the caveat that it is a delivery count, not a
+That is a ratio a reader can form an opinion about — $4.38 of list-rate compute per commit,
+$8.08 per merged pull request — with the caveat that it is a delivery count, not a
 delivery *quality* measure, and that the model per commit is who wrote the trailer, not who
 did the thinking. The measure the tool was built to give, tests passed per dollar per model,
-is not in this table because no one on this machine had turned it on.
+is not in this table because the journal that feeds it holds three events.
 
-The days line up, mostly. The repository's spend concentrates on 08-19 ($245, the first big
-session), 08-25 ($278) and 09-02 ($173); the commit history concentrates on 08-19 (30 commits),
-08-24 (24), 08-25 (18) and 09-01 (33). One of those four days has no local transcript at all.
+The days line up better than they did. The repository's spend falls on six days — 09-01 to
+09-03 ($19, $192, $15) and 09-16 to 09-18 ($18, $234, $87) — and 126 of the 129 commits fall
+on the same six. The other three, on 09-09 and 09-15, are a dependency bump with no model
+trailer and two commits with no local transcript for this repository on that day.
+
+## What running it showed
+
+The first edition was about the subscription. A month on, the more useful list is what the
+author knows about their own machine only because this was running on it. Each of these is a
+figure from the export, not an impression.
+
+**Real spend and the counterfactual are different numbers, and they are never added.** The
+export's provenance block puts $25.47 of calculated cost — 683 requests through OpenCode to
+metered providers — beside $2,802.39 of API-equivalent on 20,030 quota requests, 1,999 free
+requests and 1,031 local ones, each under its own status. A dashboard that summed them would
+report a $2,828 month on a machine that paid a subscription and $25. One that rendered the
+quota rows as `$0.00` would report that Opus is free.
+
+**How close the limit is, before reaching it.** The Limits panel reads the windows Claude Code
+already caches in `~/.claude.json`: at the time of writing, 4% of the five-hour session window,
+51% of the weekly window and 76% of the Fable weekly window, each with the clock time it
+resets. The by-day table says why the third number is the high one — the last five days are
+where Fable 5.1 took over — and that is a thing to know on a Friday afternoon before starting a
+long session, not after the refusal.
+
+**Where the tokens go.** Output is a third of one percent of the tokens on this machine. 91.2%
+are cache reads. Anyone reasoning about what agentic coding costs from a per-token output price
+is reasoning about the wrong column, and the by-model table makes that visible per model: Opus
+5 re-read 378 tokens for every one it wrote.
+
+**Transcripts expire, and the tool can only read what is on disk.** The first edition counted
+835 sessions. There are 362 now, and nothing before 08-31. `~/.claude/settings.json` on this
+machine has `cleanupPeriodDays: 20`, so Claude Code deletes its own transcripts after twenty
+days, and `--all` means "all that is left". That is why this edition covers nineteen days again
+rather than thirty-five, and why the first edition's $4,081.49 cannot be checked by anyone,
+its author included. The tool does not copy transcripts into its own journal — they hold source
+code and secrets, and only the usage block is ever parsed — so the remedy is a longer
+`cleanupPeriodDays` or a scheduled `--summary-json`, and the point is that this was invisible
+until two exports a fortnight apart disagreed.
+
+**An aged price table looks like a gap, not a zero.** This one is from the first edition and
+is kept because it is the rule working: on the day Fable 5.1 arrived, the bundled table did not
+know it, and 994 requests sat as `quota` with no API-equivalent figure until the snapshot was
+refreshed. Today the export reports `unpriced_requests: 0`, and `--doctor` prints the size and
+the date of the table it is using: 4,370 model entries, dated 2026-09-17.
+
+**What is not being measured.** `--doctor` on this machine lists Codex with zero rows and
+billing unknown, Gemini CLI as recording nothing until its telemetry is on, Cursor as installed
+and not read, and the journal as readable by other accounts (`mode 644`). None of those is a
+number, and each is a thing a blank panel would otherwise have left to guesswork — "no usage"
+and "not looked at" are different answers.
+
+**Escalation, with no setup.** One session in fourteen reached for a pricier model part-way
+through, nearly all of them in the last week and nearly all Opus 5 to Fable 5.1. On a metered
+plan that is the line item to look at first; here it is the explanation for the 76%.
 
 ## The holes
 
-**Thirty-one commits with no transcript.** 08-23 and 08-24 carry 31 commits, 18 merged pull
-requests and four release tags, and there is not a single Claude Code transcript on this
-machine dated either day — not for this repository, not for any. Seven of those commits carry
-a Claude Code session link in their trailer. The likeliest reading is that the work happened in
-sessions whose transcripts live elsewhere (Claude Code on the web, or another machine); the
-tool reports what the local files hold and has no way to know what they do not. Whatever the
-subscription bought on those two days is not in any figure above, and the per-commit ratio is
-correspondingly generous.
+**Cloud sessions are still invisible.** The first edition found 31 commits on two days with no
+transcript anywhere on the machine. This window has nothing that stark — two commits on 09-15
+without a local transcript for this repository — but the method has not changed: work done in
+Claude Code on the web or on another machine is in no figure above, and the per-commit ratio is
+generous by whatever that was.
 
-**One day of the newest model at no price.** Described above. The fix was a refresh of the
-pricing snapshot; the lesson is that a bundled table ages, and a `quota` row with no
-API-equivalent figure is what an aged table looks like from the outside.
+**Three routing events.** The hook records a test run Claude Code executes through its Bash
+tool. Two such events beside 129 commits is fewer than the work would suggest, and this piece
+does not know why: the journal does not say when the hook was installed, and test runs inside
+subagents or CI may not reach it. That is an open question, not a finding.
 
-**Cache reads at list.** Anthropic prices cache reads at a tenth of input on these models and
-the tool uses exactly that rate, but a subscription is not a metered API and the reader should
-not mistake the API-equivalent for a bill avoided. It is the cost of the same requests made a
-different way.
+**Cache reads at list.** The tool uses the cache-read rate in the bundled table for each model,
+but a subscription is not a metered API and the reader should not mistake the API-equivalent
+for a bill avoided. It is the cost of the same requests made a different way.
+
+**One machine, one person.** Every ratio here is an anecdote with a method attached.
 
 ## What comes next
 
-The hook. [`contrib/claude-code/README.md`](../contrib/claude-code/README.md) is one merged
-settings block; from then on every test run Claude Code executes lands in the routing journal
-as a pass or a fail with the model that ran it, and the routing panel begins to fill. The piece
-the roadmap asked for — Opus against Sonnet, per passing test — needs that journal and a
-period in which Sonnet actually did some of the work. Neither exists here yet. This piece is
-what could be said honestly in the meantime.
+A period in which Sonnet does a real share of the work, with the hook recording, and an answer
+to why the hook has recorded two test runs. The piece the roadmap asked for — Opus against Sonnet, per
+passing test — needs both. Until then this is what could be said honestly, and at twenty days'
+retention the last of the transcripts it was said from will be gone by 2026-10-08.
 
 ## Reproducing the figures
 
-Every table above is a `jq` expression over the export. The export is large — thirty thousand
-rows here — so write it once.
+Every table above is a `jq` expression over the export. The export is large — twenty-four
+thousand rows here — so write it once. The Claude Code rows are the `anthropic` rows with
+`cost_status == "quota"`; two further `anthropic` rows here went through OpenCode on a metered
+key and are `calculated`. Days in the usage tables are UTC, as `todate` prints them; `git`'s
+are the committer's local date.
 
 ```sh
 ai-usage-tui --json --all > usage.json
+ai-usage-tui --summary-json --all > summary.json
 
-# By model (Claude rows only): requests, sessions, tokens, API-equivalent.
+# By model (Claude Code rows only): requests, sessions, tokens, API-equivalent.
 jq -r 'def s(f): (map(f)|add)//0;
-  .usage | map(select(.provider=="anthropic")) | group_by(.model)
+  .usage | map(select(.provider=="anthropic" and .cost_status=="quota")) | group_by(.model)
   | map({m: .[0].model, req: length, sessions: (map(.session_id)|unique|length),
          out: s(.output_tokens), cache_read: s(.cache_read_tokens),
-         api: s(.api_equivalent_cost//0)})
-  | sort_by(-.api)[] | "\(.m)\t\(.req)\t\(.sessions)\t\(.out)\t\(.cache_read)\t\(.api)"' usage.json
+         cache_write: s(.cache_write_tokens), api: s(.api_equivalent_cost//0)})
+  | sort_by(-.api)[]
+  | "\(.m)\t\(.req)\t\(.sessions)\t\(.out)\t\(.cache_read)\t\(.cache_write)\t\(.api)"' usage.json
 
 # By project, with the model split.
 jq -r 'def s(f): (map(f)|add)//0;
-  .usage | map(select(.provider=="anthropic")) | group_by(.project)
-  | map({p: (.[0].project // "(none)"), req: length, api: s(.api_equivalent_cost//0),
+  .usage | map(select(.provider=="anthropic" and .cost_status=="quota")) | group_by(.project)
+  | map({p: (.[0].project // "(none)"), req: length,
+         sessions: (map(.session_id)|unique|length), api: s(.api_equivalent_cost//0),
          opus: s(select(.model|startswith("claude-opus"))|.api_equivalent_cost//0),
          fable: s(select(.model|startswith("claude-fable"))|.api_equivalent_cost//0),
          sonnet: s(select(.model|startswith("claude-sonnet"))|.api_equivalent_cost//0)})
-  | sort_by(-.api)[] | "\(.p)\t\(.req)\t\(.api)\t\(.opus)\t\(.fable)\t\(.sonnet)"' usage.json
+  | sort_by(-.api)[]
+  | "\(.p)\t\(.req)\t\(.sessions)\t\(.api)\t\(.opus)\t\(.fable)\t\(.sonnet)"' usage.json
 
 # By day.
 jq -r 'def s(f): (map(f)|add)//0;
-  .usage | map(select(.provider=="anthropic")) | group_by(.created|todate|.[:10])[]
+  .usage | map(select(.provider=="anthropic" and .cost_status=="quota"))
+  | group_by(.created|todate|.[:10])[]
   | "\(.[0].created|todate|.[:10])\t\(length)\t\(map(.session_id)|unique|length)\t\(s(.api_equivalent_cost//0)|round)"' usage.json
 
 # Provenance totals and the derived escalations, as the export prints them.
 jq '.provenance, .escalations' usage.json
 
+# Limits, routing and the token mix, from the summary.
+jq '.limits, .routing, .totals.metrics' summary.json
+
+# What each source resolved to, the hook, and the date of the price table.
+ai-usage-tui --doctor
+
 # The repository's side, from git.
-git log --since=2026-08-15 --no-merges --format='%ad' --date=short | sort | uniq -c
-git log --since=2026-08-15 --no-merges --format=%B | grep -o 'Co-Authored-By: [^<]*' | sort | uniq -c
-gh pr list --state merged --limit 200 --json mergedAt -q '[.[] | select(.mergedAt >= "2026-08-15")] | length'
+git log --since=2026-08-31T00:00 --no-merges --format='%ad' --date=short | sort | uniq -c
+git log --since=2026-08-31T00:00 --no-merges --format=%B | grep -o 'Co-Authored-By: [^<]*' | sort | uniq -c
+gh pr list --state merged --limit 300 --json mergedAt -q '[.[] | select(.mergedAt >= "2026-08-31")] | length'
 ```
 
 The cache-read arithmetic uses the rates in `pricing/litellm.tsv` on the day of writing: Opus 5

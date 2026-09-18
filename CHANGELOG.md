@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **The write-up is a second edition, measured again at v1.0.0.**
+  `docs/what-a-max-subscription-bought.md` described a v0.13.0 tool on 2026-09-02, and two things
+  in it had stopped being true: the `--claude-code-hook` it said was never installed is installed,
+  and its tables could no longer be re-derived by anyone, because Claude Code on that machine
+  deletes transcripts after twenty days (`cleanupPeriodDays`) and everything before 08-31 was
+  gone -- 835 sessions then, 362 now. A measurement whose commands no longer reproduce it is a
+  claim, so it is measured afresh over 2026-08-31 to 09-18 rather than patched. New in it: a
+  section on what running the tool showed (real spend kept apart from the API-equivalent, how
+  close the limit windows are, where the tokens go, that transcripts expire, what `--doctor`
+  reports as *not* measured), and an open question it does not answer -- the routing journal
+  holds two hook events beside 129 commits. The first edition is in the file's history.
+
 ## [1.0.0] - 2026-09-18
 
 The first release under the promise in `docs/stability.md`: from here, breaking a flag, an exit

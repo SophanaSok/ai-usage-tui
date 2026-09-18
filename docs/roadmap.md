@@ -841,6 +841,16 @@ guideline fixes followed in a second pull request the same day.
    GitHub at merge. `Cargo.toml`'s `homepage` is set to the site too, but crates.io reads it only
    at publish, so that one shows with v0.16.0.
 
+   **2026-09-18 — the write-up is a second edition, measured again at v1.0.0.** The first
+   edition's tables had become unreproducible: this machine's `cleanupPeriodDays: 20` had deleted
+   every transcript before 08-31 (835 sessions then, 362 now), and its "the hook was never
+   installed" was no longer true. It is rewritten over 08-31 to 09-18 rather than patched, with
+   a section on what running the tool showed — real spend against the counterfactual, the limit
+   windows, transcript expiry, what `--doctor` says is *not* measured. The site's three anchors
+   are kept (the `*Written` line, the title, the "That is a ratio" paragraph); the new text
+   reaches the site with the next release tag. Still open and stated in the piece: the journal
+   holds three routing events, two from the hook, and nobody has looked at why so few.
+
 **Not started, and deliberately:** the `--doctor` AUR detection below, recorded with the
 evidence and the design question it turns on. (The `claude-review` once-per-PR fix that stood
 beside it here has since been made; see the `claude-review` section above.)

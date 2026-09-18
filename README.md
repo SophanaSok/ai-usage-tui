@@ -1504,7 +1504,9 @@ of releases and writing.
 
 - [`docs/what-a-max-subscription-bought.md`](docs/what-a-max-subscription-bought.md) — nineteen
   days of one machine's Claude Code use, at API-equivalent rates, against what the repository
-  shipped; and why the routing panel's own measure is not in it yet. On the site at
+  shipped; what running the tool made visible that nothing else on the machine was showing; and
+  why the routing panel's own measure is not in it yet. Second edition, measured at v1.0.0. On
+  the site at
   <https://sophanasok.github.io/ai-usage-tui-site/what-a-max-subscription-bought/>.
 
 **User guides**
