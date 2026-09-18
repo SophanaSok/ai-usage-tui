@@ -5,8 +5,8 @@ What a release number promises, and what it does not.
 `ai-usage-tui` follows [Semantic Versioning](https://semver.org) for **the command-line tool** —
 the things a script, a timer, a status bar or a hook depends on. From 1.0.0, a change that breaks
 one of the surfaces below needs a major version; adding to one is a minor version; a fix that
-leaves them intact is a patch. Before 1.0.0, as Cargo reads versions, a minor release may still
-break them, and says so in `CHANGELOG.md`.
+leaves them intact is a patch. The 0.x releases made no such promise: as Cargo reads versions, a
+minor release there could break them, and said so in `CHANGELOG.md` when it did.
 
 ## Stable
 

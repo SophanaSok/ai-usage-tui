@@ -1,12 +1,16 @@
 # Roadmap and Outstanding Findings
 
-Working state for continuing the audit-driven work started 2026-08-18, reconciled against v0.20.0, which
-shipped the supply chain (#122: attested releases, a bill of materials, actions pinned by commit,
-least-privilege tokens, a protected `main` that the release commit goes through too) and the last
-decision that had to precede 1.0.0 (#123: a failure exits `2`, and `1` means only that a budget
-is over), on top of v0.19.0's LLM-extendable surface (#117–#121), unknown-stays-unknown (#112) and
-pricing that says when it is old (#113, #114, #116), v0.18.0's LLM-readable surface (#107–#111)
-and v0.17.0's five V1-readiness pull requests (#101–#105).
+Working state for continuing the audit-driven work started 2026-08-18, reconciled against
+**v1.0.0**, cut 2026-09-18: the first release under `docs/stability.md`. It shipped the rest of the
+V1 readiness list below -- onboarding (#125), data lifecycle (#126), the reworked dashboard (#127,
+#128), coverage (#129: a real Claude Code transcript, which found subagent output counted from a
+placeholder; Codex's windows and compressed rollouts; mutation tests), the scripting surface
+(#130), distribution (#131: static Linux builds, because the glibc ones did not start on current
+stable distributions) and hygiene (#132) -- on top of v0.20.0's supply chain (#122) and exit
+codes (#123), v0.19.0's LLM-extendable surface (#117–#121), v0.18.0's LLM-readable surface
+(#107–#111) and v0.17.0's five V1-readiness pull requests (#101–#105). What is open on that list
+now waits on an account only the maintainer can create: an Apple Developer ID, a chocolatey.org
+key, and the AUR when Arch reopens it.
 Shipped items are in the versioned sections of `CHANGELOG.md` (new work goes under
 `[Unreleased]`); this file is the *remaining* work, with enough evidence attached that each item
 can be picked up cold.
@@ -265,7 +269,9 @@ stabilises the command-line tool and its data formats, and the Rust library API 
 unstable, so refactors never force a 2.0.
 
 **Suggested path:** cut a minor release once those are merged, let it run, then tag 1.0.0. Items 1–3
-below are the first 1.x work. **v0.17.0, the 1.0 candidate, shipped 2026-09-17** with all five merged.
+below were expected to be the first 1.x work, and were done before it instead. **v0.17.0, the
+1.0 candidate, shipped 2026-09-17** with all five merged; **v1.0.0 followed on 2026-09-18** with
+every item below resolved or waiting on an outside account.
 
 **Readable by an LLM -- added 2026-09-17, after v0.17.0.** Asked before returning to this list:
 can an agent read the data and help optimise usage and routing? It could not. `--json` is one
