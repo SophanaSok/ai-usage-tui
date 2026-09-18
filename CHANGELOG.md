@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-18
+
+The binary is v1.0.0's. This release exists to carry a document: the site renders the write-up
+from the latest release tag, so a rewritten one reaches it only with a tag.
+
 ### Changed
 
 - **The write-up is a second edition, measured again at v1.0.0.**
