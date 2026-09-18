@@ -25,8 +25,8 @@ Three events are not a measurement.
 The second reason has not changed and will not. On a Max subscription there are no dollars per
 request. Every Claude Code request here is billed against a quota, and the tool's own rule
 ([README, *What it shows*](../README.md#what-it-shows)) is that such a row is `quota`, never
-`$0.00` and never a number invented from a list price. Both hook events carry
-`cost_basis: "quota"`, so `$/SUCCESS` on this machine reads `on quota` by design.
+`$0.00` and never a number invented from a list price. Both hook events land in a
+routing aggregate whose `cost_basis` is `"quota"`, so `$/SUCCESS` on this machine reads `on quota` by design.
 
 What the transcripts *do* support is the other half of the picture: what the subscription was
 used for, at what API-equivalent rate, on which projects, what came out the other end of the
@@ -204,8 +204,8 @@ until two exports a fortnight apart disagreed.
 **An aged price table looks like a gap, not a zero.** This one is from the first edition and
 is kept because it is the rule working: on the day Fable 5.1 arrived, the bundled table did not
 know it, and 994 requests sat as `quota` with no API-equivalent figure until the snapshot was
-refreshed. Today the export reports `unpriced_requests: 0` against 4,370 priced models, and
-`--doctor` prints the date of the table it is using.
+refreshed. Today the export reports `unpriced_requests: 0`, and `--doctor` prints the size and
+the date of the table it is using: 4,370 model entries, dated 2026-09-17.
 
 **What is not being measured.** `--doctor` on this machine lists Codex with zero rows and
 billing unknown, Gemini CLI as recording nothing until its telemetry is on, Cursor as installed
