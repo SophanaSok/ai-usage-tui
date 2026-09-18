@@ -80,6 +80,10 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 toml = "1.1"
+# Codex compresses rollouts older than a week to `.jsonl.zst` (behind a feature flag as of
+# codex-cli 0.155.0). Decoder only, pure Rust, no C toolchain for any release target; without
+# `hash` a frame's optional checksum is not verified, and Codex writes none.
+ruzstd = { version = "0.9", default-features = false, features = ["std"] }
 
 # Turns SIGTERM / SIGHUP / SIGINT into an ordinary quit so the terminal is restored. Already in the
 # tree through crossterm, so naming it adds no crate and no licence.

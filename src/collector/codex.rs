@@ -29,7 +29,13 @@
 //! summaries. Only `session_meta`, `turn_context` and the `token_count` block are read; message
 //! content is never parsed, retained, or logged. Same invariant as the Claude Code collector.
 //!
-//! Files compressed to `.jsonl.zst` by the CLI's history compaction are not read.
+//! **Compressed rollouts.** With `local_thread_store_compression` on (off by default as of
+//! codex-cli 0.155.0), a worker replaces every rollout untouched for seven days with
+//! `<name>.jsonl.zst` -- one zstd frame, level 3, no checksum -- and removes the plain file.
+//! Measured, not read: the real CLI did it to the captured rollouts in a scratch home, and the
+//! collector then reported two of six calls and said nothing about the other four. They are read
+//! here through a streaming decoder. A thread that is resumed is decompressed back to `.jsonl`
+//! by the CLI before it appends, so a compressed file never grows.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -122,7 +128,7 @@ pub fn load_codex(
     let mut files = 0usize;
     cursors.skipped.begin_pass();
     for dir in roots.iter().filter(|dir| dir.exists()) {
-        for path in session_files(dir) {
+        for path in rollout_files(dir) {
             files += 1;
             match read_rollout(&path, cursors, decision) {
                 Ok(mut found) => usages.append(&mut found),
@@ -151,21 +157,108 @@ pub fn load_codex(
     Ok((usages, source))
 }
 
+/// Every rollout under `dir`: `*.jsonl`, and `*.jsonl.zst` once the CLI has compressed it.
+fn rollout_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if is_plain(&path) || is_compressed(&path) {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+fn is_plain(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| ext == "jsonl")
+}
+
+fn is_compressed(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".jsonl.zst"))
+}
+
 fn read_rollout(path: &Path, cursors: &mut Cursors, decision: &Decision) -> Result<Vec<Usage>> {
-    let mut file = File::open(path)?;
+    let file = File::open(path)?;
     let size = file.metadata()?.len();
     let mut cursor = cursors.files.get(path).cloned().unwrap_or_default();
 
-    // A shrinking file was rotated or rewritten. Everything remembered about it — not only
-    // the offset — describes a file that no longer exists.
-    if cursor.offset > size {
-        cursor = FileCursor::default();
-    }
-    file.seek(SeekFrom::Start(cursor.offset))?;
-
-    let mut reader = BufReader::new(file);
     let mut usages = Vec::new();
     let mut malformed = 0u64;
+    if is_compressed(path) {
+        // Cold by construction -- the CLI compresses a rollout nothing has touched for a week and
+        // decompresses it before appending -- so it is read once, whole, and its cursor records
+        // the compressed size as "done". Decoded as a stream: a long thread is never held in
+        // memory, and a frame that fails part-way is an error for the whole file, counted by
+        // the caller, rather than a quietly shorter one.
+        if cursor.offset == size && cursors.files.contains_key(path) {
+            return Ok(Vec::new());
+        }
+        cursor = FileCursor::default();
+        let decoder = ruzstd::decoding::StreamingDecoder::new(file)
+            .map_err(|error| anyhow::anyhow!("not a zstd frame: {error}"))?;
+        read_lines(
+            BufReader::new(decoder),
+            &mut cursor,
+            path,
+            decision,
+            &mut cursors.disagreements,
+            &mut usages,
+            &mut malformed,
+        )?;
+        cursor.offset = size;
+    } else {
+        // A shrinking file was rotated or rewritten. Everything remembered about it — not only
+        // the offset — describes a file that no longer exists.
+        if cursor.offset > size {
+            cursor = FileCursor::default();
+        }
+        let mut file = file;
+        file.seek(SeekFrom::Start(cursor.offset))?;
+        read_lines(
+            BufReader::new(file),
+            &mut cursor,
+            path,
+            decision,
+            &mut cursors.disagreements,
+            &mut usages,
+            &mut malformed,
+        )?;
+    }
+
+    // Counted only once the cursor is saved: a read that fails part-way keeps the old cursor, and
+    // the retry would otherwise count the same lines again.
+    cursors.files.insert(path.to_path_buf(), cursor);
+    for _ in 0..malformed {
+        cursors.skipped.malformed();
+    }
+    for usage in &usages {
+        cursors.skipped.note(usage);
+    }
+    Ok(usages)
+}
+
+/// Feed every complete line of `reader` through the cursor, advancing its offset by what was
+/// consumed.
+fn read_lines(
+    mut reader: impl BufRead,
+    cursor: &mut FileCursor,
+    path: &Path,
+    decision: &Decision,
+    disagreements: &mut u64,
+    usages: &mut Vec<Usage>,
+    malformed: &mut u64,
+) -> Result<()> {
     let mut line = String::new();
     loop {
         line.clear();
@@ -184,25 +277,15 @@ fn read_rollout(path: &Path, cursors: &mut Cursors, decision: &Decision) -> Resu
             continue;
         }
         let Ok(json) = serde_json::from_str::<Value>(trimmed) else {
-            malformed += 1;
+            *malformed += 1;
             continue;
         };
-        if let Some(mut usage) = parse_value(&json, &mut cursor, path, &mut cursors.disagreements) {
+        if let Some(mut usage) = parse_value(&json, cursor, path, disagreements) {
             usage.billing = decision.billing;
             usages.push(usage);
         }
     }
-
-    // Counted only once the cursor is saved: a read that fails part-way keeps the old cursor, and
-    // the retry would otherwise count the same lines again.
-    cursors.files.insert(path.to_path_buf(), cursor);
-    for _ in 0..malformed {
-        cursors.skipped.malformed();
-    }
-    for usage in &usages {
-        cursors.skipped.note(usage);
-    }
-    Ok(usages)
+    Ok(())
 }
 
 /// Feed one rollout line through the cursor. Context lines update it and yield nothing; a
@@ -333,7 +416,11 @@ fn parse_value(
 /// The thread UUID from `rollout-<local timestamp>-<uuid>.jsonl`, for a file whose
 /// `session_meta` has not been seen. A revert writes `<thread>_<rollout>`; the thread wins.
 fn session_id_from_filename(path: &Path) -> Option<String> {
-    let stem = path.file_stem()?.to_str()?;
+    let name = path.file_name()?.to_str()?;
+    let stem = name
+        .strip_suffix(".jsonl.zst")
+        .or_else(|| name.strip_suffix(".jsonl"))
+        .unwrap_or(name);
     let tail = stem.rsplit('-').take(5).collect::<Vec<_>>();
     if tail.len() != 5 {
         return None;
@@ -967,6 +1054,74 @@ mod tests {
         .unwrap();
         assert!(rows.is_empty());
         assert!(source.contains("no session logs"), "{source}");
+    }
+
+    // ---- compressed rollouts -----------------------------------------------------------
+
+    /// The redacted capture, compressed as the CLI compresses one: `zstd -3 --no-check`, one
+    /// frame with its content size. The real `.jsonl.zst` the CLI wrote cannot be committed --
+    /// it is the unredacted rollout -- but it was read by this code and gave the same six calls
+    /// as the plain files it replaced, and its frame header matches this one field for field.
+    fn compressed_home() -> PathBuf {
+        PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/codex_compressed"
+        ))
+    }
+
+    #[test]
+    fn a_compressed_rollout_gives_the_rows_the_plain_one_gave() {
+        let plain_home = capture_home(&[CAPTURE_OTHER_FAMILY]);
+        let (plain, _) =
+            load_codex(Some(plain_home.path()), &mut Cursors::new(), &per_token()).unwrap();
+        let mut cursors = Cursors::new();
+        let (compressed, status) =
+            load_codex(Some(&compressed_home()), &mut cursors, &per_token()).unwrap();
+        assert_eq!(plain.len(), 2);
+        assert_eq!(
+            format!("{compressed:?}"),
+            format!("{plain:?}"),
+            "same calls, same ids, same thread"
+        );
+        assert!(status.contains("(1 sessions)"), "{status}");
+        assert!(!status.contains("unreadable"), "{status}");
+
+        // Cold files are read once. A second pass finds the cursor and decodes nothing.
+        let (again, _) = load_codex(Some(&compressed_home()), &mut cursors, &per_token()).unwrap();
+        assert!(again.is_empty());
+    }
+
+    #[test]
+    fn a_compressed_rollout_that_does_not_decode_is_counted_and_named() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let day = dir.path().join("sessions/2026/09/18");
+        std::fs::create_dir_all(&day).unwrap();
+        let source = compressed_home().join(
+            "sessions/2026/09/18/rollout-2026-09-18T10-28-44-01a0b590-400c-7d90-9713-4cff3fb43730.jsonl.zst",
+        );
+        let bytes = std::fs::read(source).unwrap();
+        // Cut off mid-frame, and one that was never zstd at all.
+        std::fs::write(day.join("rollout-cut.jsonl.zst"), &bytes[..bytes.len() / 2]).unwrap();
+        std::fs::write(day.join("rollout-text.jsonl.zst"), format!("{META}\n")).unwrap();
+
+        let (rows, status) =
+            load_codex(Some(dir.path()), &mut Cursors::new(), &per_token()).unwrap();
+        assert!(
+            rows.is_empty(),
+            "half a frame is not half a rollout: {rows:#?}"
+        );
+        assert!(status.contains("2 file(s) unreadable"), "{status}");
+    }
+
+    #[test]
+    fn a_compressed_file_without_session_meta_still_takes_its_id_from_its_name() {
+        let path = Path::new(
+            "/x/rollout-2026-09-18T10-28-44-01a0b590-400c-7d90-9713-4cff3fb43730.jsonl.zst",
+        );
+        assert_eq!(
+            session_id_from_filename(path).as_deref(),
+            Some("01a0b590-400c-7d90-9713-4cff3fb43730")
+        );
     }
 
     // ---- rate limits -------------------------------------------------------------------
