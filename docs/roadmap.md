@@ -526,7 +526,38 @@ bindings table and the parser rather than a list kept in the test. Decisions wor
    Codex windows exist only on Omarchy. Claude Code, the largest source, has no captured transcript
    fixture file, only inline strings. No fuzz or property tests over the parsers of other tools'
    formats; no coverage measurement. `.jsonl.zst` Codex rollouts are not read.
-7. **Scripting surface.** **Exit codes resolved by decision (2026-09-17): `1` is a budget that
+7. **Resolved (2026-09-18). Scripting surface.** Exit codes were settled on 2026-09-17 (below);
+   the five small findings left under it are done, and two were not what they looked like.
+
+   *The webhook.* Plain `http://` is **remarked on and not refused, by decision**: the payload is
+   a budget's scope, limit and spend, the usual plain-HTTP target is a notifier on the user's own
+   network (ntfy, Home Assistant, n8n), and a LAN name cannot be told from a public one without
+   resolving it; loopback is exempt. Deciding what that notice should print found the real
+   defect: **a webhook URL is its credential, and it was printed whole** -- by the bad-scheme
+   error, and by every `reqwest` error, which carries the URL, to stderr and to the log.
+   `budget::webhook_host` is now the only thing any message names.
+
+   *Permissions.* `helpers::PRIVATE_MODE`: `write_atomic` writes `0600`, the log is opened `0600`
+   when created, and `create_private` makes the journal before SQLite opens it, because SQLite
+   creates at the umask and its `-wal`/`-journal` files copy the main file's bits. An existing
+   file is left alone -- the journal is the user's, as `--uninstall` and `--prune-journal` hold
+   -- and `--doctor` prints a wider journal's mode with the `chmod`. The data directory itself is
+   not tightened: it may be a shared XDG root's child that something else expects to traverse.
+
+   *CSV.* `csv_field` prefixes `'` to a text field a spreadsheet would run, and leaves a number
+   alone. Both CSV writers go through it. Recorded in `docs/stability.md`, since it changes what
+   a consumer reads for such a name.
+
+   *Reset time.* An `AT` column in the Limits panel, local time, with the date once a weekday
+   alone would be ambiguous. Generic over the zone so the test names one. The README's
+   images were regenerated for it; the demo fixture has no Codex rollouts, so `limits.png` still
+   shows Claude Code's row alone.
+
+   *`--doctor --json`.* **Not built, by decision.** `--summary-json` gained a `build` block
+   (version, install channel, upgrade command, cached update check -- read, never fetched), which
+   was all that remained text-only. A second document would be a second stable surface.
+
+   *As filed:* **Exit codes resolved by decision (2026-09-17): `1` is a budget that
    is over, `2` is the tool failing**, as `grep` and `diff` use them. One non-zero code covered
    both, so a monitor could not tell them apart, and the shipped budget recipe parsed stdout to
    find out which it had. The breach kept `1`, which is what the README had documented; failure

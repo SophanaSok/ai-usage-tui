@@ -4,6 +4,18 @@
 
 ### Added
 
+- **The Limits panel says when a window resets, not only how long.** An `AT` column gives the
+  reset on the local clock -- `Fri 14:00`, or `Sep 25 14:00` once a weekday alone would read as
+  today. A countdown is already old when it is read off a twenty-minute-old snapshot, and "can I
+  start this at three?" is asked of a clock.
+
+- **`--summary-json` has a `build` block**: the version, how the binary was installed, the
+  command that upgrades an install of that kind, and the last cached answer of the opt-in update
+  check. These were the two things `--doctor` knew that no JSON document said. The check is read
+  and never made; `build.update: null` means nobody has asked, not that the build is current.
+  There is no `--doctor --json`, by decision: everything else it would hold was already here, and
+  a second document is a second stable surface.
+
 - **Codex's rate-limit windows, on every platform.** On a ChatGPT plan Codex writes the
   account's 5-hour and weekly windows into every `token_count` event of its rollouts, and nothing
   read them, so Codex's row in the Limits panel existed only on Omarchy. They are read now -- the
@@ -76,6 +88,26 @@
 
 ### Fixed
 
+- **A webhook URL was printed in full when a POST failed.** A Slack, Discord or ntfy webhook is
+  its URL -- the token is the path -- and `reqwest` puts the URL in every error it returns, so a
+  timeout or a 404 wrote the credential to stderr and to the diagnostic log; the bad-scheme error
+  quoted it too. Every message now names the host and nothing else. Found while deciding what the
+  notice below should print.
+
+- **The journal, the caches and the log are created owner-only.** They were created at the
+  umask, which on most systems means readable by every account on the machine: project paths,
+  session ids and spend in the journal, a subscription's utilisation in the caches. New files are
+  `0600` -- the journal is made before SQLite opens it, because SQLite creates at the umask and
+  its side files copy the main file's bits. **A file that already exists keeps what it has**: the
+  caches tighten as they are rewritten, and for a journal from an earlier release `--doctor` prints
+  its mode and the `chmod 600` that fixes it, and does not run it.
+
+- **A CSV field a spreadsheet would run is written as text.** The text columns of `--csv` and
+  `--routing-csv` are other programs' strings -- a model name from a transcript, a project path, an
+  `agent` handed to `--record-event` -- and one beginning `=`, `+`, `-` or `@` is a formula to the
+  spreadsheet that opens the file. It now carries the leading apostrophe that means "text". A
+  number is left a number, and `--json` is unchanged.
+
 - **A subagent's output tokens were counted from a placeholder.** Claude Code writes one
   request as a line per content block, all under one `requestId`, and deduplication kept the
   first line seen. In a subagent's transcript the first line holds `output_tokens` as it stood
@@ -127,6 +159,12 @@
   write into the backup for the rest of its life. `--uninstall` removes the backup with the log.
 
 ### Changed
+
+- **Plain `http://` to a budget webhook is remarked on, not refused.** The payload is the
+  budget's scope, limit and spend. `--check-budgets` says so on stderr, `--doctor` under the new
+  `webhook` row, the dashboard in its log; loopback is exempt. Not refused, by decision: the usual
+  plain-HTTP target is a notifier on the user's own network, and a LAN host cannot be told from a
+  public one without resolving it.
 
 - **The parsers of other tools' formats are tested by damaging real fixtures.**
   `src/collector/mutation.rs` takes each source's captured file apart one value at a time --
