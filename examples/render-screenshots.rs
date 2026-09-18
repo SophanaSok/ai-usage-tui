@@ -195,6 +195,8 @@ fn main() -> ExitCode {
     app.update_notice = None;
     // A developer's own `NO_COLOR` is a fact about their terminal, not about the README.
     app.no_color = false;
+    // Nor is their terminal's colour depth: the images are the palette as designed.
+    app.colour_depth = ai_usage_tui::utils::ColourDepth::TrueColour;
     // And the pricing engine's note: regenerating the images from a checkout whose tables have
     // passed their age would otherwise write "bundled rates over 90 days old" into every header.
     app.pricing_note = None;

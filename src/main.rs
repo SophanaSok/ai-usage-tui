@@ -885,6 +885,14 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
             let _ = writeln!(out, "  log          off (set AI_USAGE_LOG=1 or a path)");
         }
     }
+    // Why the dashboard looks different in one terminal than another, which nothing else says.
+    if ai_usage_tui::utils::no_color_in(&ai_usage_tui::utils::system_env) {
+        let _ = writeln!(out, "  colour       off (NO_COLOR is set)");
+    } else {
+        let (depth, source) =
+            ai_usage_tui::utils::colour_depth_in(&ai_usage_tui::utils::system_env);
+        let _ = writeln!(out, "  colour       {} ({source})", depth.label());
+    }
 
     // The pricing table's own state. `PricingEngine::load` collected warnings about the cache —
     // unreadable, invalid, too old to trust — and nothing printed them, so the fallback to

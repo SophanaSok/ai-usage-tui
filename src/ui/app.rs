@@ -98,6 +98,9 @@ pub struct App {
     /// once here, like the update notice, so the render path reads no environment; `pub` so the
     /// screenshot renderer can clear it on a machine that has it set.
     pub no_color: bool,
+    /// How many colours the terminal said it draws, read once for the reason `no_color` is.
+    /// Anything short of 24-bit has every frame's colours mapped down after it is drawn.
+    pub colour_depth: crate::utils::ColourDepth,
     pub alerts: Vec<Alert>,
     /// Alerts are handed to a worker thread; the webhook POST is blocking and must never
     /// happen on the render path.
@@ -426,6 +429,7 @@ impl App {
             pricing: PricingEngine::load(),
             update_notice: crate::update::header_notice(),
             no_color: crate::utils::no_color_in(&crate::utils::system_env),
+            colour_depth: crate::utils::colour_depth_in(&crate::utils::system_env).0,
             alerts: Vec::new(),
             alert_sink,
             view: DerivedView::default(),

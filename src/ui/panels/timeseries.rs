@@ -64,6 +64,16 @@ fn spend_sparkline(days: &[DayTotals]) -> Sparkline<'_> {
         .style(Style::default().fg(CYAN))
 }
 
+/// Daily tokens as a sparkline, newest at the right edge, for the rail. Same direction and the
+/// same truncation rule as `spend_sparkline`: a range wider than the pane loses its oldest days.
+pub(crate) fn tokens_sparkline(days: &[DayTotals]) -> Sparkline<'_> {
+    let tokens: Vec<u64> = days.iter().rev().map(|d| d.tokens).collect();
+    Sparkline::default()
+        .data(tokens)
+        .direction(RenderDirection::RightToLeft)
+        .style(Style::default().fg(CYAN))
+}
+
 fn day_table(days: &[DayTotals], height: usize) -> Table<'_> {
     // Newest last is how a chart reads, but a table is scanned from the top, so show the most
     // recent days first and only as many as fit — this panel does not scroll.
@@ -91,7 +101,7 @@ fn day_table(days: &[DayTotals], height: usize) -> Table<'_> {
         };
         Row::new(vec![
             Cell::from(day.day.clone()),
-            Cell::from(bar(day.cost, peak)),
+            Cell::from(Span::styled(bar(day.cost, peak), Style::default().fg(CYAN))),
             Cell::from(format_count(day.tokens)),
             cost,
             Cell::from(day.requests.to_string()),
@@ -115,24 +125,7 @@ fn day_table(days: &[DayTotals], height: usize) -> Table<'_> {
     .column_spacing(1)
 }
 
-/// A twelve-cell bar scaled to the busiest day, in eighth-block increments.
-///
-/// Sub-cell resolution matters: without it every day below a twelfth of the peak renders empty
-/// and a chart of mostly-small days looks like no activity at all.
+/// A twelve-cell bar scaled to the busiest day. See `theme::bar_of` for the glyph rules.
 pub(crate) fn bar(value: f64, peak: f64) -> String {
-    const WIDTH: usize = 12;
-    const EIGHTHS: [char; 8] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
-
-    if peak <= 0.0 || value <= 0.0 {
-        return String::new();
-    }
-    let eighths = ((value / peak) * (WIDTH * 8) as f64).round().max(1.0) as usize;
-    let full = eighths / 8;
-    let remainder = eighths % 8;
-
-    let mut out = "█".repeat(full.min(WIDTH));
-    if full < WIDTH && remainder > 0 {
-        out.push(EIGHTHS[remainder - 1]);
-    }
-    out
+    crate::ui::theme::bar_of(value, peak, 12)
 }

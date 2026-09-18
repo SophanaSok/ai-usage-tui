@@ -29,6 +29,7 @@ mod burn;
 mod coverage;
 mod header;
 mod keys;
+mod layout;
 mod limits;
 mod projects;
 mod routing;
@@ -98,6 +99,7 @@ fn test_app(usages: Vec<Usage>) -> App {
         // developer who has opted in would otherwise render a notice these tests never planted.
         update_notice: None,
         no_color: false,
+        colour_depth: crate::utils::ColourDepth::TrueColour,
         pricing_note: None,
         // Bundled, not loaded: a refreshed cache on the developer's machine must not change
         // how a test ranks two models.

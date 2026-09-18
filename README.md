@@ -657,9 +657,12 @@ The dashboard refreshes every 30 seconds by default. OpenCode, Claude Code,
 Codex, and journal collectors run in the background at their configured
 intervals.
 
-The main view combines summary metrics, token-flow breakdown, and per-model
-activity. One other panel occupies the right-hand pane at a time; `?` lists every
-key.
+The main view has a tile per category with a strip under them dividing the
+tokens between the categories, a left rail, and per-model activity. The rail
+holds the token-flow breakdown, a meter for each subscription window, and
+tokens per day; on a short terminal it drops whole sections from the bottom
+rather than squeezing them. One other panel occupies the right-hand pane at a
+time, the tab strip under the header says which, and `?` lists every key.
 
 | View | Key | What it answers |
 | --- | --- | --- |
@@ -1260,6 +1263,9 @@ Environment variables:
 | `GEMINI_TELEMETRY_OUTFILE` | Gemini CLI's own telemetry output path; when set, it is read from there rather than `~/.gemini/telemetry.json` |
 | `AI_USAGE_LOG` | Write diagnostics to a file — `1` for the default location, or a path. Off when unset. Past 5 MiB the file is renamed to `<name>.old`, replacing the previous one, and started again. |
 | `NO_COLOR` | Any non-empty value draws the dashboard without colour ([no-color.org](https://no-color.org)); the selected row is shown in reverse video instead |
+| `COLORTERM` | `truecolor` or `24bit` draws the dashboard's palette as designed. Without it the colours are mapped down to what `TERM` names; `ssh` and `sudo` often drop this variable, so set it again there if the terminal does support 24-bit colour |
+| `TERM` | Read for colour depth when `COLORTERM` says nothing: a name ending `-direct` is 24-bit, one containing `256color` gets the nearest of 256 colours, anything else gets the terminal's own sixteen and its own background. `--doctor` prints which was chosen and why |
+| `WT_SESSION` | Set by Windows Terminal, which draws 24-bit colour without declaring it in `COLORTERM` |
 | `XDG_CONFIG_HOME` | Base directory for the default config path |
 | `XDG_DATA_HOME` | Base directory for default database, journal, and cache paths |
 | `XDG_STATE_HOME` | Base directory for Omarchy's agents-panel records (`omarchy/agents/usage` beneath it) |

@@ -14,8 +14,9 @@ use ratatui::{
 use crate::model::{SessionTotals, CLOUD, CYAN, YELLOW};
 use crate::ui::aggregate::format_duration;
 use crate::ui::app::App;
-use crate::ui::theme::{panel, MUTED};
-use crate::utils::format_count;
+use crate::ui::theme::{
+    draw_scrollbar, panel, panel_with_count, row_count, tokens_cell, tokens_column, MUTED,
+};
 
 pub fn draw_sessions(frame: &mut Frame, area: Rect, app: &App) {
     let sessions = app.sessions();
@@ -25,7 +26,13 @@ pub fn draw_sessions(frame: &mut Frame, area: Rect, app: &App) {
         Some(project) => format!("SESSIONS · {project}"),
         None => "SESSIONS".to_string(),
     };
-    let block = panel(&title, CYAN);
+    let block = if sessions.is_empty() {
+        panel(&title, CYAN)
+    } else {
+        let count = row_count(sessions.len(), app.search_status(), "sessions");
+        panel_with_count(&title, CYAN, count)
+    };
+    let peak = sessions.iter().map(|s| s.tokens).max().unwrap_or(0);
 
     if sessions.is_empty() {
         let empty = match app.drilldown_project() {
@@ -60,7 +67,7 @@ pub fn draw_sessions(frame: &mut Frame, area: Rect, app: &App) {
             }),
             Cell::from(project_label(session)),
             Cell::from(model_label(session)),
-            Cell::from(format_count(session.tokens)),
+            tokens_cell(session.tokens, peak, CYAN, area),
             cost_cell(session),
             Cell::from(session.requests.to_string()),
         ])
@@ -81,7 +88,7 @@ pub fn draw_sessions(frame: &mut Frame, area: Rect, app: &App) {
                 Constraint::Length(7),
                 Constraint::Min(14),
                 Constraint::Length(16),
-                Constraint::Length(8),
+                Constraint::Length(tokens_column(area)),
                 Constraint::Length(11),
                 Constraint::Length(5),
             ],
@@ -92,6 +99,7 @@ pub fn draw_sessions(frame: &mut Frame, area: Rect, app: &App) {
         area,
         &mut state,
     );
+    draw_scrollbar(frame, area, sessions.len(), app.selected);
 }
 
 /// `08-19 14:02`, in local time — the same clock the rest of the dashboard uses.

@@ -13,12 +13,11 @@ use ratatui::{
 
 use crate::model::{CYAN, RED, YELLOW};
 use crate::ui::app::App;
-use crate::ui::theme::MUTED;
+use crate::ui::theme::{HEADER_BG, MUTED};
 use crate::utils::format_count;
 
 pub fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
-    let title = Paragraph::new(header_line(app, area.width))
-        .style(Style::default().bg(Color::Rgb(10, 18, 24)));
+    let title = Paragraph::new(header_line(app, area.width)).style(Style::default().bg(HEADER_BG));
     frame.render_widget(title, area);
 }
 

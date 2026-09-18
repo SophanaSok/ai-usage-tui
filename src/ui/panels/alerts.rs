@@ -14,7 +14,7 @@ use ratatui::{
 use crate::budget::{Alert, AlertLevel};
 use crate::model::{RED, YELLOW};
 use crate::ui::app::App;
-use crate::ui::theme::MUTED;
+use crate::ui::theme::{HEADER_BG, MUTED};
 
 pub fn draw_alert_banner(frame: &mut Frame, area: Rect, app: &App) {
     let actionable: Vec<&Alert> = app.alerts.iter().filter(|a| a.is_actionable()).collect();
@@ -55,7 +55,7 @@ pub fn draw_alert_banner(frame: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
     frame.render_widget(
-        Paragraph::new(Line::from(spans)).style(Style::default().bg(Color::Rgb(10, 18, 24))),
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(HEADER_BG)),
         area,
     );
 }

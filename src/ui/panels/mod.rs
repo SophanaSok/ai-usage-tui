@@ -11,6 +11,7 @@ pub mod models;
 pub mod projects;
 pub mod routing;
 pub mod sessions;
+pub mod tabs;
 pub mod timeseries;
 
 /// A header row whose sorted column carries a direction marker.
