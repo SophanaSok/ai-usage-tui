@@ -35,6 +35,9 @@ pub enum Flow {
 pub struct App {
     pub range: Range,
     pub usages: Vec<Usage>,
+    /// The collector generation `usages` was copied at; `None` before the first copy and when
+    /// there is no collector. See `CollectorHandle::snapshot_if_newer`.
+    pub usages_generation: Option<u64>,
     pub selected: usize,
     pub status: String,
     /// Whether a collector is failing, restarting, dead, or stale. A monitor that goes quiet
@@ -401,6 +404,7 @@ impl App {
         let mut app = Self {
             range,
             usages: Vec::new(),
+            usages_generation: None,
             selected: 0,
             status: String::new(),
             degraded: false,
@@ -924,7 +928,13 @@ impl App {
     }
     pub fn refresh(&mut self) {
         if let Some(ref collector) = self.collector {
-            self.usages = collector.snapshot();
+            // Copied only when the collectors changed something. Everything below still runs
+            // every refresh: ranges, the burn rate and budget periods move with the clock.
+            if let Some((generation, usages)) = collector.snapshot_if_newer(self.usages_generation)
+            {
+                self.usages = usages;
+                self.usages_generation = Some(generation);
+            }
             self.status = collector.status();
             self.degraded = collector.is_degraded();
         } else {

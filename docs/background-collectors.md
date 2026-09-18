@@ -20,6 +20,14 @@ poll, and not re-run over the whole history either. A pricing refresh (`zen_pric
 event that rebuilds the engine and re-prices everything, because the rows collected before it are
 exactly the ones whose price was missing.
 
+**Rows are never evicted.** The list grows with the usage recorded while the dashboard is open,
+and that is deliberate: every collector loads all of history at startup, key `4` (ALL TIME) and
+the budgets read the whole list, so a dashboard that dropped old rows would show less than one
+started a minute ago from the same files. What is bounded instead is the work done over them --
+each source reads only what is new since its last poll (a byte offset, a row id, a timestamp), a
+poll prices only the rows it added, and the dashboard copies the list only when it changed (see
+[TUI integration](#tui-integration)). About 600 bytes a row; ten thousand requests is 6 MB.
+
 Collectors do **not** write to the journal database. The journal is a *source* — written by
 `--record-ollama` and `--record-routing`, read by the journal collector — not a sink. Only the
 in-memory state is shared between collectors and the UI.
@@ -193,11 +201,29 @@ Reads the local journal database — local-model usage recorded via `--record-us
 LM Studio, vLLM) and `--record-ollama`, usage from any other tool via `--record-event`, plus
 routing events via `--record-routing`. Polls every 60 seconds by default.
 
+A poll reads the rows recorded since the last one: `usage_event.id` is the high-water mark
+(`journal::JournalCursor`). It used to select the whole table every poll and leave the dedup to
+discard it. The cursor starts over when the journal is a different file (device and inode, on
+Unix) or its highest id is below the mark -- deleted and recreated, or emptied. `--prune-journal`
+never deletes the highest-id row, because SQLite would hand that id out again below the mark.
+A dashboard open across a prune keeps the rows it had already read until it is restarted. Rows
+that could not be read are counted once and stay on the status line.
+
 ```toml
 [collectors.journal]
 enabled = true
 interval = 60
 ```
+
+## Gemini CLI collector
+
+Reads `telemetry.json` under the Gemini home (`--gemini-dir`, default `~/.gemini`): a stream of
+pretty-printed JSON objects, not JSONL, so it is split by a string-aware brace counter and the
+byte offset advances only past **complete** objects. A poll seeks to that offset and reads the
+tail; it used to read the whole file into memory every poll and slice it afterwards. A record
+still being written is left for the next poll. The offset starts over at `0` when the file
+shrank (rotated or truncated) and when the tail does not open on a character boundary (rewritten
+in place); the replay is absorbed by deduplication.
 
 ## Zen pricing collector
 
@@ -294,6 +320,10 @@ Claude Code readings; `[omarchy] limits = false` turns the whole panel off.
 
 ## TUI integration
 
-The dashboard calls `snapshot()` on its refresh interval (default 30s, `--refresh-interval`). That
-clones the merged vector under a read lock and returns; it never waits on collector I/O, opens a
-database, or reads the clock on the render path.
+The dashboard calls `snapshot_if_newer()` on its refresh interval (default 30s,
+`--refresh-interval`) with the generation of the copy it holds. `CollectorState` counts every
+change to its rows -- a merge that added one, a pricing pass -- and hands out a clone of the
+merged vector, under a read lock, only when that count has moved. It used to clone all of history
+on every refresh, changed or not. The views are still rebuilt every refresh, because ranges, the
+burn rate and budget periods move with the clock while the rows stand still. It never waits on
+collector I/O, opens a database, or reads the clock on the render path.

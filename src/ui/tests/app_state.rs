@@ -34,6 +34,7 @@ fn missing_cost_never_displays_as_paid_zero() {
 #[test]
 fn rows_do_not_mix_cost_provenance() {
     let mut app = App {
+        usages_generation: None,
         range: Range::All,
         usages: vec![
             Usage {
@@ -743,4 +744,66 @@ fn a_raised_stop_flag_ends_the_event_loop_cleanly() {
     );
 
     assert!(result.is_ok(), "the loop did not stop cleanly: {result:?}");
+}
+
+/// One row, once, from a collector that will not poll again within the test.
+struct OneRow;
+
+impl crate::collector::background::Collector for OneRow {
+    fn name(&self) -> &str {
+        "one-row"
+    }
+    fn interval(&self) -> Duration {
+        Duration::from_secs(999)
+    }
+    fn poll(&mut self) -> anyhow::Result<Vec<Usage>> {
+        Ok(vec![Usage {
+            provider: "p".into(),
+            model: "collected".into(),
+            input: 100,
+            created: crate::utils::now(),
+            ..Default::default()
+        }])
+    }
+}
+
+/// Bug: every row ever collected deep-cloned into the dashboard on every refresh, changed or
+/// not. And the other half: skipping the copy must not skip the recompute, because ranges and
+/// the burn rate move with the clock while the rows stand still.
+#[test]
+fn a_refresh_copies_the_rows_only_when_the_collectors_changed_them() {
+    let mut app = test_app(Vec::new());
+    // Nothing of this machine's: `refresh` reads limits from Claude Code's own cache otherwise.
+    app.roots.limits_enabled = false;
+    app.collector = Some(std::sync::Arc::new(
+        crate::collector::background::CollectorHandle::spawn(vec![Box::new(OneRow)]),
+    ));
+    for _ in 0..400 {
+        app.refresh();
+        if !app.usages.is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        app.usages.len(),
+        1,
+        "the collector's row reached the dashboard"
+    );
+    let generation = app.usages_generation;
+    assert!(generation.is_some());
+
+    // Mark the dashboard's copy. A refresh with nothing new must leave it alone...
+    app.usages[0].model = "marked".into();
+    app.refresh();
+    assert_eq!(
+        app.usages[0].model, "marked",
+        "unchanged rows were copied again"
+    );
+    assert_eq!(app.usages_generation, generation);
+    // ...and still rebuild the views from it.
+    assert!(
+        app.filtered().iter().any(|u| u.model == "marked"),
+        "skipping the copy skipped the recompute too"
+    );
 }

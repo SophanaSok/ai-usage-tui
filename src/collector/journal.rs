@@ -47,10 +47,76 @@ impl std::fmt::Display for SkippedRows {
     }
 }
 
-/// `load_journal`, with what was skipped for the caller to surface.
+/// `load_journal`, with what was skipped for the caller to surface. The whole table: a one-shot
+/// read is a cursor that has seen nothing.
 pub(crate) fn load_journal_counting(path: &Path) -> Result<(Vec<Usage>, Option<SkippedRows>)> {
+    load_journal_since(path, &mut JournalCursor::default())
+}
+
+/// How far a live collector has read, so a poll reads what was recorded since the last one.
+///
+/// Until this existed the collector ran `SELECT ... FROM usage_event` with no `WHERE` every
+/// sixty seconds and left `merge`'s dedup to throw all of it away again -- the defect the
+/// roadmap filed against Gemini's `read_to_string`, in SQL.
+///
+/// `id` is the high-water mark: `INTEGER PRIMARY KEY`, and a new row takes `MAX(id) + 1`. That
+/// is only monotonic while the highest row is never deleted -- delete it and its id is handed
+/// out again, *below* this cursor, to a row no poll will ever see. `prune` keeps the max-id row
+/// for exactly this reason, and says so. `VACUUM` keeps the ids of a table with an explicit
+/// `INTEGER PRIMARY KEY`, and rewrites the file in place, so it disturbs neither half.
+#[derive(Debug, Default)]
+pub(crate) struct JournalCursor {
+    /// Every row with an `id` at or below this has been read, mapped or counted as skipped.
+    after_id: i64,
+    /// Which file that was true of: device and inode. `None` where there is no such thing, so a
+    /// journal *replaced* by a bigger one goes unnoticed there until restart; a smaller one is
+    /// caught by `MAX(id)` everywhere.
+    identity: Option<(u64, u64)>,
+    /// Skipped rows so far. Kept here because a poll no longer re-reads them: a count local to
+    /// one read would put the warning on the status line for one poll and then take it away
+    /// while the row was as unreadable as before.
+    skipped: usize,
+    first_error: Option<String>,
+}
+
+impl JournalCursor {
+    fn skipped_rows(&self) -> Option<SkippedRows> {
+        (self.skipped > 0).then(|| SkippedRows {
+            count: self.skipped,
+            first: self.first_error.clone().unwrap_or_default(),
+        })
+    }
+}
+
+fn file_identity(path: &Path) -> Option<(u64, u64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let meta = std::fs::metadata(path).ok()?;
+        Some((meta.dev(), meta.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
+}
+
+/// The rows recorded since `cursor`, and everything skipped since it was last reset.
+pub(crate) fn load_journal_since(
+    path: &Path,
+    cursor: &mut JournalCursor,
+) -> Result<(Vec<Usage>, Option<SkippedRows>)> {
     if !path.exists() {
+        *cursor = JournalCursor::default();
         return Ok((Vec::new(), None));
+    }
+    let identity = file_identity(path);
+    if cursor.identity != identity {
+        *cursor = JournalCursor {
+            identity,
+            ..Default::default()
+        };
     }
     let conn = Connection::open_with_flags(
         path,
@@ -63,7 +129,23 @@ pub(crate) fn load_journal_counting(path: &Path) -> Result<(Vec<Usage>, Option<S
         |row| row.get(0),
     )?;
     if !has_events {
+        *cursor = JournalCursor {
+            identity,
+            ..Default::default()
+        };
         return Ok((Vec::new(), None));
+    }
+    // A table whose highest id is below the cursor is not the table the cursor read: the file
+    // was recreated in place, or emptied. One b-tree lookup, not a scan.
+    let max_id: i64 =
+        conn.query_row("SELECT COALESCE(MAX(id), 0) FROM usage_event", [], |row| {
+            row.get(0)
+        })?;
+    if max_id < cursor.after_id {
+        *cursor = JournalCursor {
+            identity,
+            ..Default::default()
+        };
     }
     // A journal written by an older build lacks the columns added since, and this is a read-only
     // path that cannot migrate it. Each is selected only when it actually exists -- probed one by
@@ -84,17 +166,18 @@ pub(crate) fn load_journal_counting(path: &Path) -> Result<(Vec<Usage>, Option<S
         })
     };
     let mut stmt = conn.prepare(&format!(
-        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, {}, id, {}, {}, {} FROM usage_event",
+        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, {}, id, {}, {}, {} FROM usage_event WHERE id > ?1 ORDER BY id",
         optional("event_id")?,
         optional("session_id")?,
         optional("project")?,
         optional("billing")?,
     ))?;
-    let mut rows = stmt.query([])?;
+    let mut rows = stmt.query([cursor.after_id])?;
     let mut usages = Vec::new();
     let mut skipped = 0usize;
     let mut first_error = None;
     let mut position = 0usize;
+    let mut highest = cursor.after_id;
     // Driven by hand rather than through `query_map`'s iterator, so the two kinds of failure
     // are told apart: a step error (`next()?`) means the file cannot be read past this point
     // and is the whole read's error, while a row that steps but does not map is one row.
@@ -102,6 +185,11 @@ pub(crate) fn load_journal_counting(path: &Path) -> Result<(Vec<Usage>, Option<S
     // after it vanished uncounted.
     while let Some(row) = rows.next()? {
         position += 1;
+        // Read past it whether or not it maps: a row that cannot be read today cannot be read
+        // on the next poll either, and it has been counted.
+        if let Ok(id) = row.get::<_, i64>(13) {
+            highest = highest.max(id);
+        }
         match usage_from_row(row) {
             Ok(usage) => usages.push(usage),
             Err(error) => {
@@ -111,11 +199,14 @@ pub(crate) fn load_journal_counting(path: &Path) -> Result<(Vec<Usage>, Option<S
             }
         }
     }
-    let skipped = (skipped > 0).then(|| SkippedRows {
-        count: skipped,
-        first: first_error.unwrap_or_default(),
-    });
-    Ok((usages, skipped))
+    // Only now, with the scan complete: a step error above returned early and left the cursor
+    // where it was, so the rows it did not reach are read again rather than lost.
+    cursor.after_id = highest;
+    cursor.skipped += skipped;
+    if cursor.first_error.is_none() {
+        cursor.first_error = first_error;
+    }
+    Ok((usages, cursor.skipped_rows()))
 }
 
 /// One `usage_event` row, or why it could not be read.
@@ -1215,6 +1306,8 @@ pub struct JournalCollector {
     /// What the last poll had to skip, for the live status line. The log is off by default,
     /// so a count that reached only the log reached the dashboard's user nowhere.
     pub skipped: Option<String>,
+    /// How far the polls have read; see [`JournalCursor`].
+    pub(crate) cursor: JournalCursor,
 }
 
 impl Collector for JournalCollector {
@@ -1225,8 +1318,10 @@ impl Collector for JournalCollector {
         Duration::from_secs(self.interval_secs)
     }
     fn poll(&mut self) -> Result<Vec<Usage>> {
-        let (usages, skipped) = load_journal_counting(&self.journal_path)?;
-        if let Some(skipped) = &skipped {
+        let before = self.cursor.skipped;
+        let (usages, skipped) = load_journal_since(&self.journal_path, &mut self.cursor)?;
+        // Logged when the count moves, not every poll: the rows are read once now.
+        if let Some(skipped) = skipped.as_ref().filter(|_| self.cursor.skipped != before) {
             crate::logging::error(ID, &skipped.to_string());
         }
         self.skipped = skipped.map(|s| format!("{} row(s) unreadable", s.count));
@@ -1276,6 +1371,7 @@ pub(crate) fn collector(
         journal_path: roots.journal.clone(),
         interval_secs,
         skipped: None,
+        cursor: JournalCursor::default(),
     })
 }
 
@@ -1590,6 +1686,7 @@ mod tests {
             journal_path: journal.clone(),
             interval_secs: 60,
             skipped: None,
+            cursor: JournalCursor::default(),
         };
         assert_eq!(collector.poll().expect("poll").len(), 1);
         assert_eq!(
@@ -1597,6 +1694,87 @@ mod tests {
             Some("1 row(s) unreadable"),
             "the collector must carry the count to the status line"
         );
+        // The next poll reads nothing -- the cursor is past both rows -- and the row is as
+        // unreadable as it was. Bug: a count local to one read, so the warning showed for one
+        // poll and then the status line went clean.
+        assert!(collector.poll().expect("poll").is_empty());
+        assert_eq!(collector.warning().as_deref(), Some("1 row(s) unreadable"));
+    }
+
+    fn cursor_event(id: &str) -> Value {
+        json!({
+            "provider": "aider", "model": "claude-sonnet-5", "event_id": id,
+            "input_tokens": 1200, "output_tokens": 300, "created": 1_758_000_000
+        })
+    }
+
+    fn journal_collector(journal: &Path) -> JournalCollector {
+        JournalCollector {
+            journal_path: journal.to_path_buf(),
+            interval_secs: 60,
+            skipped: None,
+            cursor: JournalCursor::default(),
+        }
+    }
+
+    /// Bug: `SELECT ... FROM usage_event` with no `WHERE`, every sixty seconds, for `merge` to
+    /// throw away again.
+    #[test]
+    fn a_poll_reads_only_what_was_recorded_since_the_last_one() {
+        let scratch = scratch_journal("cursor");
+        let journal = scratch.journal.clone();
+        let mut collector = journal_collector(&journal);
+        assert!(collector.poll().expect("no journal yet").is_empty());
+
+        record_events(&journal, &[cursor_event("c1"), cursor_event("c2")]).expect("record");
+        assert_eq!(collector.poll().expect("poll").len(), 2);
+        assert!(
+            collector.poll().expect("poll").is_empty(),
+            "a poll with nothing new re-read the table"
+        );
+
+        record_events(&journal, &[cursor_event("c3")]).expect("record");
+        let third = collector.poll().expect("poll");
+        assert_eq!(third.len(), 1, "only the row recorded since");
+        assert!(third[0].event_id.as_deref().unwrap().ends_with("c3"));
+
+        // The one-shot read is a cursor that has seen nothing: every row, every time.
+        assert_eq!(load_journal(&journal).expect("read").len(), 3);
+        assert_eq!(load_journal(&journal).expect("read").len(), 3);
+    }
+
+    /// Bug: a cursor left pointing into a journal that is no longer there -- deleted and
+    /// started again -- hiding every row below the old high-water mark.
+    #[test]
+    fn a_replaced_journal_is_read_from_the_start() {
+        let scratch = scratch_journal("cursor-replaced");
+        let journal = scratch.journal.clone();
+        let mut collector = journal_collector(&journal);
+        record_events(
+            &journal,
+            &[cursor_event("r1"), cursor_event("r2"), cursor_event("r3")],
+        )
+        .expect("record");
+        assert_eq!(collector.poll().expect("poll").len(), 3);
+
+        fs::remove_file(&journal).expect("delete the journal");
+        assert!(collector.poll().expect("absent").is_empty());
+        record_events(&journal, &[cursor_event("r4")]).expect("record");
+        let rows = collector.poll().expect("poll");
+        assert_eq!(
+            rows.len(),
+            1,
+            "id 1 of the new journal is below the old cursor"
+        );
+
+        // Emptied in place, same file: caught by MAX(id), with or without an inode to compare.
+        let conn = Connection::open(&journal).expect("open");
+        conn.execute_batch("DELETE FROM usage_event;")
+            .expect("empty");
+        drop(conn);
+        assert!(collector.poll().expect("poll").is_empty());
+        record_events(&journal, &[cursor_event("r5")]).expect("record");
+        assert_eq!(collector.poll().expect("poll").len(), 1, "id 1 again");
     }
 
     #[test]

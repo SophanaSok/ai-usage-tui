@@ -70,6 +70,7 @@ fn quota_project_usage(project: Option<&str>, session: Option<&str>, tokens: u64
 /// A bare `App` with no collector and no I/O, for testing view logic.
 fn test_app(usages: Vec<Usage>) -> App {
     App {
+        usages_generation: None,
         range: Range::All,
         usages,
         selected: 0,

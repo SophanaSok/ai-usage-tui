@@ -27,6 +27,23 @@
   `contrib/claude-code/README.md` now name the commands first and keep the hand merge as the
   alternative.
 
+### Fixed
+
+- **A poll reads what is new, and the dashboard copies what changed.** Three places re-did all
+  of history on a timer. Gemini's collector tracked a byte offset and then read the whole
+  telemetry log into memory every thirty seconds to slice its tail off; it now seeks and reads
+  the tail, starting over when the file shrank or the tail does not open on a character boundary
+  -- the second was a slice panic once, contained by the collector's restart guard, so the symptom
+  was Gemini going `Dead` and quietly disappearing. The journal collector ran `SELECT ... FROM
+  usage_event` with no `WHERE` every sixty seconds and left deduplication to throw it away; it now
+  reads the rows above the highest id it has seen, and starts over when the journal is another
+  file or its highest id went down. And the dashboard deep-cloned every row ever collected on
+  every refresh, changed or not; the collector state now counts its changes and the dashboard
+  copies only when the count moved -- a pricing reload moves it, which is the case that matters,
+  since a refresh that never reached the screen is a bug this project has fixed once. Rows are
+  still never evicted, by decision: every source loads all of history at startup and ALL TIME and
+  the budgets read it, so a dashboard that dropped old rows would disagree with one just started.
+
 ### Changed
 
 - **JSON objects keep the order their keys were written in.** `serde_json` now builds with
