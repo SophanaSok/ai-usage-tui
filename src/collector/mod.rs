@@ -164,6 +164,12 @@ impl SourceRoots {
         config_json_path(self.claude_json.as_deref(), self.claude_dir.as_deref())
     }
 
+    /// Codex's home in force: `--codex-dir`, else `$CODEX_HOME`, else `~/.codex`. The collector
+    /// and the limits reader both resolve it here, so they cannot look in different places.
+    pub fn codex_home(&self) -> Option<PathBuf> {
+        self.codex_dir.clone().or_else(codex::codex_home)
+    }
+
     /// Decide Codex's billing. Codex has no config document this tool will read — its
     /// `auth.json` is a credential file — so the signals are the setting and the environment.
     pub fn codex_decision(&self) -> Decision {

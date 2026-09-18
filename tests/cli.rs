@@ -1893,6 +1893,98 @@ fn codex_rollouts_are_exported_with_split_buckets_and_no_content() {
     );
 }
 
+/// Every source pinned, with Codex's home set to the rollouts the real CLI wrote.
+fn with_the_codex_capture(command: &mut Command) -> &mut Command {
+    let fixtures = format!("{}/tests/fixtures", env!("CARGO_MANIFEST_DIR"));
+    command
+        .env("XDG_CONFIG_HOME", format!("{fixtures}/no-such-config-home"))
+        .env("XDG_DATA_HOME", format!("{fixtures}/no-such-data-home"))
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("CLAUDE_PROJECTS_DIR")
+        .env_remove("CODEX_HOME")
+        .arg("--codex-dir")
+        .arg(format!("{fixtures}/codex_capture"))
+        .arg("--db")
+        .arg(format!("{fixtures}/no-such-opencode.db"))
+        .arg("--claude-dir")
+        .arg(format!("{fixtures}/no-such-claude-dir"))
+        .arg("--copilot-dir")
+        .arg(format!("{fixtures}/no-such-copilot-home"))
+        .arg("--gemini-dir")
+        .arg(format!("{fixtures}/no-such-gemini-home"))
+        .arg("--omarchy-dir")
+        .arg(format!("{fixtures}/no-such-omarchy-dir"))
+        .arg("--journal")
+        .arg(format!("{fixtures}/no-such-journal.db"))
+}
+
+/// The rollouts codex-cli 0.155.0 wrote, end to end: the usage rows the synthetic fixture said
+/// it would produce, and the windows nothing read before.
+#[test]
+fn a_real_codex_rollout_yields_its_calls_and_its_windows() {
+    let output = with_the_codex_capture(bin().args(["--json", "--all"]))
+        .output()
+        .expect("run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+
+    let rows = json["usage"].as_array().expect("usage");
+    assert_eq!(rows.len(), 4, "two threads of two calls: {rows:#?}");
+    let first = rows
+        .iter()
+        .find(|row| row["session_id"] == "01a0b590-e5f4-7b20-9ec6-7480ee4e6cca")
+        .expect("the thread is named from session_meta");
+    // 9700 in with 6500 of it cached, 135 out with 64 of it reasoning.
+    assert_eq!(first["input_tokens"], 3200);
+    assert_eq!(first["cache_read_tokens"], 6500);
+    assert_eq!(first["output_tokens"], 71);
+    assert_eq!(first["reasoning_tokens"], 64);
+    assert_eq!(first["model"], "gpt-5-codex");
+    assert_eq!(first["project"], "/home/user/project");
+    assert!(
+        !json["source"].as_str().unwrap().contains("disagree"),
+        "the running totals advance by each call: {}",
+        json["source"]
+    );
+
+    let snapshots = json["limits"].as_array().expect("limits");
+    assert_eq!(snapshots.len(), 1, "{snapshots:#?}");
+    assert_eq!(snapshots[0]["agent"], "codex");
+    // Nothing about its age: this runs against the real clock. `limits::tests` injects one.
+    let labels: Vec<&str> = snapshots[0]["windows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|window| window["label"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        labels,
+        vec![
+            "Session (5-hour)",
+            "Weekly (7-day)",
+            "codex_other · 1-hour window"
+        ]
+    );
+}
+
+#[test]
+fn doctor_says_how_many_windows_codex_rollouts_held() {
+    let output = with_the_codex_capture(bin().arg("--doctor"))
+        .output()
+        .expect("run");
+    let text = String::from_utf8_lossy(&output.stdout);
+    let row = text
+        .lines()
+        .skip_while(|line| line.trim() != "LIMITS")
+        .find(|line| line.trim_start().starts_with("codex"))
+        .unwrap_or_else(|| panic!("no codex row under LIMITS:\n{text}"));
+    assert!(row.contains("found") && row.contains("3 windows"), "{row}");
+}
+
 #[test]
 fn json_carries_omarchy_limits_and_nothing_else_from_the_records() {
     let fixtures = format!("{}/tests/fixtures/omarchy", env!("CARGO_MANIFEST_DIR"));

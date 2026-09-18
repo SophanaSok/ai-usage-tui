@@ -1093,6 +1093,65 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
                 );
             }
         }
+        // Codex's windows come out of its rollouts, so the row says how many the newest ones
+        // held and how old the reading is: "found, 0 windows" is what an API-key user sees, and
+        // without the count it would read as a fault.
+        if ai_usage_tui::limits::codex_enabled(&roots) {
+            let home = roots.codex_home();
+            let now = ai_usage_tui::utils::now();
+            let readout = home.as_deref().map(|home| {
+                ai_usage_tui::limits::read_codex_rollouts(
+                    home,
+                    now,
+                    ai_usage_tui::limits::CACHE_STALE_AFTER_SECS,
+                    None,
+                )
+            });
+            match readout.and_then(|readout| readout.snapshot) {
+                Some(snapshot) => {
+                    let _ = writeln!(
+                        out,
+                        "  {:<12} {} {:>4} windows {}",
+                        "codex",
+                        mark(true),
+                        snapshot.windows.len(),
+                        named(&home)
+                    );
+                    if let Some(age) = snapshot.age_secs {
+                        let _ = writeln!(
+                            out,
+                            "  {:<12} {:<19}  written {} ago{}",
+                            "",
+                            "",
+                            ai_usage_tui::ui::aggregate::format_duration(age),
+                            if snapshot.stale { " (stale)" } else { "" }
+                        );
+                    }
+                }
+                None => {
+                    let _ = writeln!(
+                        out,
+                        "  {:<12} {} {:<12} {}",
+                        "codex",
+                        mark(false),
+                        "",
+                        named(&home)
+                    );
+                    let _ = writeln!(
+                        out,
+                        "  {:<12} {:<19}  read from the `rate_limits` Codex writes into its \
+                         rollouts on a ChatGPT plan; an API key gets none",
+                        "", ""
+                    );
+                }
+            }
+        } else {
+            let _ = writeln!(
+                out,
+                "  {:<12} disabled ([collectors.codex] enabled = false)",
+                "codex"
+            );
+        }
         // What the panel itself would flag: a record or cache that exists and could not be used,
         // or windows it read and would not show. The dashboard puts these on its status line;
         // until this, `--doctor` -- the place a user is sent to look -- listed every file as

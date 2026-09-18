@@ -244,13 +244,21 @@ pub fn read_claude_cache(
 
 /// Which of two readings of the same subscription to keep.
 ///
-/// Fresh beats stale, always. Between two fresh readings the newer one wins, and only if they
+/// Windows beat none, then fresh beats stale, always. Between two fresh readings the newer one wins, and only if they
 /// are equally recent does the source rank break the tie, which the caller states as
 /// `a_wins_ties`: `load` ranks Claude Code's own config cache first, because it carries the
 /// per-model weekly scoping that Omarchy's record flattens away and the statusline never has.
 /// Between two stale readings the newer wins. "Whichever was read last" and "whichever number
 /// is higher" are both one line away from here and both wrong.
 fn prefer<'a>(a: &'a LimitsSnapshot, b: &'a LimitsSnapshot, a_wins_ties: bool) -> bool {
+    // A reading with windows beats one with none, whatever their ages. A windowless snapshot is
+    // Omarchy saying why *its* fetch failed ("Sign-in expired"); it must not take down figures
+    // the agent itself wrote. Staleness still shows on the one that is kept.
+    match (a.windows.is_empty(), b.windows.is_empty()) {
+        (false, true) => return true,
+        (true, false) => return false,
+        _ => {}
+    }
     match (a.stale, b.stale) {
         (false, true) => true,
         (true, false) => false,
@@ -270,10 +278,123 @@ fn prefer<'a>(a: &'a LimitsSnapshot, b: &'a LimitsSnapshot, a_wins_ties: bool) -
 /// the switch does not cover. `--doctor` asks the same question, so its LIMITS section can say
 /// "disabled" where `load` would not have looked, instead of "found".
 pub fn claude_enabled(roots: &SourceRoots) -> bool {
+    source_enabled(roots, crate::collector::claude_code::ID)
+}
+
+/// The same switch for Codex: its rollouts are where its windows are read from, so
+/// `[collectors.codex] enabled = false` stops this reader as it stops the collector.
+pub fn codex_enabled(roots: &SourceRoots) -> bool {
+    source_enabled(roots, crate::collector::codex::ID)
+}
+
+fn source_enabled(roots: &SourceRoots, id: &str) -> bool {
     crate::collector::registry::SOURCES
         .iter()
-        .find(|spec| spec.id == crate::collector::claude_code::ID)
+        .find(|spec| spec.id == id)
         .is_none_or(|spec| roots.is_enabled(spec))
+}
+
+/// The agent id a Codex snapshot is filed under: Omarchy's record id for it, as with Claude.
+pub const CODEX_AGENT_ID: &str = "codex";
+
+/// What a Codex window is called, from the length the CLI wrote beside it.
+///
+/// The two lengths a ChatGPT plan has are given the names Omarchy gives them, so the same
+/// subscription reads the same whichever source won the merge. Any other length is described by
+/// its length, and a window with no length by its position in the block -- never guessed at.
+fn codex_window_label(window_minutes: Option<i64>, secondary: bool) -> String {
+    match window_minutes.filter(|minutes| *minutes > 0) {
+        Some(300) => "Session (5-hour)".to_string(),
+        Some(10_080) => "Weekly (7-day)".to_string(),
+        Some(minutes) if minutes % 1_440 == 0 => format!("{}-day window", minutes / 1_440),
+        Some(minutes) if minutes % 60 == 0 => format!("{}-hour window", minutes / 60),
+        Some(minutes) => format!("{minutes}-minute window"),
+        None if secondary => "Secondary window".to_string(),
+        None => "Primary window".to_string(),
+    }
+}
+
+/// A limit's name as it may be drawn: printable, one line, bounded.
+///
+/// `limit_name` and `limit_id` come from a response header by way of the rollout. Like the scoped
+/// model's display name above it is the name of something the user is running, and it is the only
+/// free text this reader renders -- so it is cut down to what a label can hold.
+fn limit_display_name(reading: &crate::collector::codex::RateLimitReading) -> String {
+    let raw = reading.limit_name.as_deref().unwrap_or(&reading.limit_id);
+    raw.chars()
+        .filter(|c| !c.is_control())
+        .take(32)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// Codex's windows, from the newest `rate_limits` blocks in its rollouts.
+///
+/// One snapshot for the agent, stamped with the newest reading's time. A reading for another
+/// limit id that is older than that by more than `stale_after` is left out: the snapshot's one
+/// timestamp would otherwise vouch for a number from some earlier moment.
+pub fn read_codex_rollouts(
+    home: &Path,
+    now: i64,
+    stale_after: i64,
+    tier: Option<String>,
+) -> CacheReadout {
+    let found = crate::collector::codex::latest_rate_limits(home);
+    let mut readout = CacheReadout {
+        present: home.exists(),
+        problems: found.problems,
+        ..Default::default()
+    };
+    for problem in &readout.problems {
+        crate::logging::warn("limits", problem);
+    }
+    let updated_at = found.readings.iter().filter_map(|reading| reading.at).max();
+
+    let mut windows = Vec::new();
+    for reading in &found.readings {
+        let current = match (reading.at, updated_at) {
+            (Some(at), Some(newest)) => newest - at <= stale_after,
+            // Undated beside a dated one describes no moment that can be vouched for. When
+            // nothing is dated the snapshot is stale as a whole, which says the same thing.
+            (None, Some(_)) => false,
+            (_, None) => true,
+        };
+        if !current {
+            continue;
+        }
+        let scope = (reading.limit_id != crate::collector::codex::DEFAULT_LIMIT_ID)
+            .then(|| limit_display_name(reading))
+            .filter(|name| !name.is_empty());
+        for window in &reading.windows {
+            let name = codex_window_label(window.window_minutes, window.secondary);
+            windows.push(LimitWindow {
+                label: match &scope {
+                    Some(scope) => format!("{scope} · {name}"),
+                    None => name,
+                },
+                fraction: (window.used_percent / 100.0).min(1.0),
+                resets_at: window.resets_at,
+                resets_in_secs: window.resets_at.map(|at| at - now),
+            });
+        }
+    }
+    if windows.is_empty() {
+        return readout;
+    }
+
+    let age_secs = updated_at.map(|at| now - at);
+    readout.snapshot = Some(LimitsSnapshot {
+        agent: CODEX_AGENT_ID.to_string(),
+        name: "Codex".to_string(),
+        tier: tier.unwrap_or_default(),
+        status_text: String::new(),
+        updated_at,
+        age_secs,
+        stale: is_stale(age_secs, stale_after),
+        windows,
+    });
+    readout
 }
 
 /// Every limit window this machine can report, from every source.
@@ -320,6 +441,20 @@ pub fn load(roots: &SourceRoots, now: i64) -> LimitsReport {
                 // may carry a per-model weekly window; a statusline reading stamped the same
                 // second cannot, and must not replace it.
                 merge(&mut report, snapshot, false);
+            }
+        }
+    }
+
+    // Codex writes its windows into its own rollouts, on every platform, so off Omarchy this is
+    // the only place they exist. Wins a tie with Omarchy's record: it is the first party's
+    // figure, and the record is a copy fetched on a timer.
+    if codex_enabled(roots) {
+        if let Some(home) = roots.codex_home() {
+            let tier = roots.omarchy_tier(crate::collector::codex::ID);
+            let readout = read_codex_rollouts(&home, now, CACHE_STALE_AFTER_SECS, tier);
+            report.problems.extend(readout.problems);
+            if let Some(snapshot) = readout.snapshot {
+                merge(&mut report, snapshot, true);
             }
         }
     }
@@ -648,5 +783,128 @@ mod tests {
         };
         merge(&mut report, snapshot_at(CLAUDE_AGENT_ID, 900, false), true);
         assert_eq!(report.snapshots[0].tier, "Max 20x");
+    }
+    // ---- Codex ---------------------------------------------------------------------------
+
+    /// Ten minutes after the newer captured rollout's last event (2026-09-18T17:29:27Z).
+    const CODEX_NOW: i64 = 1_789_752_567 + 600;
+
+    fn codex_capture() -> PathBuf {
+        PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/codex_capture"
+        ))
+    }
+
+    fn read_codex(now: i64) -> CacheReadout {
+        read_codex_rollouts(&codex_capture(), now, CACHE_STALE_AFTER_SECS, None)
+    }
+
+    #[test]
+    fn codex_windows_are_named_by_their_length_and_scoped_by_their_limit() {
+        let readout = read_codex(CODEX_NOW);
+        assert!(readout.problems.is_empty(), "{:?}", readout.problems);
+        let snapshot = readout
+            .snapshot
+            .expect("the captured rollouts carry windows");
+        assert_eq!(snapshot.agent, "codex");
+        let rows: Vec<(&str, f64)> = snapshot
+            .windows
+            .iter()
+            .map(|w| (w.label.as_str(), w.fraction))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("Session (5-hour)", 0.13),
+                ("Weekly (7-day)", 0.405),
+                ("codex_other · 1-hour window", 0.02),
+            ]
+        );
+        // Epoch seconds as written, not re-parsed through a text format.
+        assert_eq!(snapshot.windows[0].resets_at, Some(1_789_763_367));
+        assert_eq!(
+            snapshot.windows[0].resets_in_secs,
+            Some(1_789_763_367 - CODEX_NOW)
+        );
+        assert_eq!(snapshot.updated_at, Some(1_789_752_567));
+        assert!(!snapshot.stale);
+    }
+
+    #[test]
+    fn a_codex_reading_goes_stale_like_any_other() {
+        let later = read_codex(CODEX_NOW + CACHE_STALE_AFTER_SECS)
+            .snapshot
+            .unwrap();
+        assert!(later.stale);
+        assert_eq!(later.windows.len(), 3, "stale is marked, not hidden");
+    }
+
+    #[test]
+    fn window_lengths_with_no_name_are_described_not_guessed() {
+        assert_eq!(codex_window_label(Some(60), false), "1-hour window");
+        assert_eq!(codex_window_label(Some(43_200), true), "30-day window");
+        assert_eq!(codex_window_label(Some(90), false), "90-minute window");
+        assert_eq!(codex_window_label(None, false), "Primary window");
+        assert_eq!(codex_window_label(Some(0), true), "Secondary window");
+    }
+
+    #[test]
+    fn a_limit_name_is_cut_down_to_what_a_label_can_hold() {
+        let reading = crate::collector::codex::RateLimitReading {
+            limit_id: "x".into(),
+            limit_name: Some(format!("spark\u{1b}[31m\n{}", "y".repeat(80))),
+            at: None,
+            windows: Vec::new(),
+        };
+        let name = limit_display_name(&reading);
+        assert!(name.starts_with("spark[31m"), "{name:?}");
+        assert!(!name.chars().any(char::is_control));
+        assert_eq!(name.chars().count(), 32);
+    }
+
+    /// Off Omarchy this is the only source, and on it the two must be one row.
+    #[test]
+    fn load_reads_codex_and_the_collector_switch_stops_it() {
+        let mut roots = SourceRoots::nowhere();
+        // Claude Code off: its statusline cache lives in the real data directory.
+        roots
+            .source_enabled
+            .insert(crate::collector::claude_code::ID.to_string(), false);
+        roots.codex_dir = Some(codex_capture());
+        let report = load(&roots, CODEX_NOW);
+        assert_eq!(report.snapshots.len(), 1, "{:?}", report.snapshots);
+        assert_eq!(report.snapshots[0].name, "Codex");
+
+        roots
+            .source_enabled
+            .insert(crate::collector::codex::ID.to_string(), false);
+        assert!(load(&roots, CODEX_NOW).snapshots.is_empty());
+    }
+
+    /// Omarchy's record for an agent it could not fetch is a status line and no windows, and it
+    /// is rewritten every fifteen minutes -- so by age alone it beats any rollout older than that.
+    #[test]
+    fn a_record_with_no_windows_does_not_evict_windows() {
+        let mut report = LimitsReport::default();
+        report.snapshots.push(LimitsSnapshot {
+            agent: CODEX_AGENT_ID.to_string(),
+            status_text: "Sign-in expired".to_string(),
+            updated_at: Some(2_000),
+            windows: Vec::new(),
+            ..Default::default()
+        });
+        merge(&mut report, snapshot_at(CODEX_AGENT_ID, 1_000, true), false);
+        assert_eq!(report.snapshots.len(), 1);
+        assert_eq!(report.snapshots[0].windows.len(), 1);
+
+        // And the other way round: one arriving later does not take them down either.
+        let windowless = LimitsSnapshot {
+            agent: CODEX_AGENT_ID.to_string(),
+            updated_at: Some(3_000),
+            ..Default::default()
+        };
+        merge(&mut report, windowless, true);
+        assert_eq!(report.snapshots[0].windows.len(), 1);
     }
 }
