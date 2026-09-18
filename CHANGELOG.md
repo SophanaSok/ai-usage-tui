@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-18
+
+The first release under the promise in `docs/stability.md`: from here, breaking a flag, an exit
+code, a config key, a JSON key, a CSV column or the journal needs a 2.0. The Rust library API is
+not part of that promise and never was. Nothing in this release breaks a surface v0.20.0 had.
+
+Two things will look different after upgrading, and both are corrections. **Claude Code output
+totals rise** by the share of your work that ran in subagents, which was being counted from a
+placeholder. **On Linux, `install.sh`, the `.deb`, the `.rpm` and Homebrew now install a static
+binary**, because the one linked against glibc did not start on Debian 12, Ubuntu 22.04 or RHEL 9.
+
 ### Added
 
 - **PowerShell completions ship.** `--completions powershell` always worked and nothing ever ran
