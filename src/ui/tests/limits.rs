@@ -22,6 +22,15 @@ fn the_limits_panel_renders_windows_bars_countdowns_and_the_tier() {
             "missing {expected:?}:\n{rendered}"
         );
     }
+    // A clock time beside the countdown. Which one depends on the zone the test runs in, so only
+    // its shape is asserted here; `panels::limits::tests` names the zone and the value.
+    assert!(rendered.contains(" AT "), "no AT column:\n{rendered}");
+    let after = rendered.split("2h 03m").nth(1).expect("the session row");
+    let cell: Vec<char> = after.trim_start().chars().take(9).collect();
+    assert!(
+        cell.len() == 9 && cell[3] == ' ' && cell[6] == ':',
+        "expected `Ddd HH:MM` after the countdown, got {cell:?}:\n{rendered}"
+    );
     assert!(
         !rendered.contains("Unknown window"),
         "a negative percent is Omarchy's unknown and must not be drawn:\n{rendered}"
