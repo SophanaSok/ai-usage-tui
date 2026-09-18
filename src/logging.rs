@@ -44,7 +44,10 @@ struct Sink {
 static SINK: OnceLock<Option<Sink>> = OnceLock::new();
 
 /// Where the log would be written when `AI_USAGE_LOG` is truthy but not a path.
-fn default_log_path() -> Option<PathBuf> {
+///
+/// Public for `--uninstall`, which removes it: the one file this tool writes that no cache path
+/// function names.
+pub fn default_log_path() -> Option<PathBuf> {
     Some(
         crate::utils::data_root()?
             .join("ai-usage-tui")

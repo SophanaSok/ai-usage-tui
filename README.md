@@ -347,6 +347,12 @@ cargo build --release --locked
 ./target/release/ai-usage-tui
 ```
 
+**Uninstalling.** `ai-usage-tui --uninstall` takes back what the tool put elsewhere -- its hook
+and status line out of Claude Code's `settings.json`, its caches out of the data directory -- and
+prints the paths of the journal and the config file with the `rm` that would delete them, without
+running it: those are your data. Then remove the binary the way it was installed; `--doctor`
+names the channel and the path.
+
 ## Data sources
 
 ```text
@@ -740,8 +746,10 @@ a stale number is labelled, never presented as current. `[collectors.claude_code
 switches this off along with the rest of Claude Code's files.
 
 **Claude Code's status line**, on every platform, once it is told to feed this.
+`ai-usage-tui --install-statusline` registers `ai-usage-tui --statusline` as Claude Code's
+statusline command, and refuses if another program's is already there;
 [`contrib/claude-code/statusline-settings.json`](contrib/claude-code/statusline-settings.json)
-registers `ai-usage-tui --statusline` as Claude Code's statusline command. Claude Code then
+is the block it merges, for doing it by hand. Claude Code then
 hands it the official `rate_limits` block on every redraw, and again when a window reaches its
 reset; the command prints a one-line readout for the status bar — `5h 42% (resets 2h 10m) ·
 7d 63% (resets 3d 4h)`, in red past 90% — and caches the windows under this tool's data
@@ -842,8 +850,11 @@ the Claude Code hook or the status line, schedule a timer — and it is written 
 binary install, which has no `contrib/` directory to copy from: the hook's JSON and the systemd
 units are inside the guide, held to the shipped files by a test.
 
-The tool still has no install command and edits no other program's files. The agent makes the
-change, after showing it to you, and `--doctor` says whether it took. The guide also says which
+The tool edits another program's file in one case only: `--install-hook` and
+`--install-statusline` merge its own entries into Claude Code's `settings.json`, when you or an
+agent run them, and report what they wrote; the guide tells the agent to name the command and the
+file before running either. Every other change the agent makes by hand, after showing it to you,
+and `--doctor` says whether it took. The guide also says which
 commands write a file or use the network (nothing does by default), that `--print-config`'s
 sample budgets are live and must not be saved whole, and that a budget counts dollars — so on a
 subscription plan it watches nothing, and the agent should tell you that rather than set one up.
@@ -1106,8 +1117,10 @@ should look like something your harness measured. See
 [docs/routing-analytics.md](docs/routing-analytics.md).
 
 Routing events are separate, opt-in records for evaluating model-selection
-outcomes. For Claude Code, [`contrib/claude-code/`](contrib/claude-code/README.md)
-registers `--claude-code-hook` on its `PostToolUse` and `PostToolUseFailure` hooks:
+outcomes. For Claude Code, `ai-usage-tui --install-hook` registers `--claude-code-hook`
+on its `PostToolUse` and `PostToolUseFailure` hooks, appending to whatever hooks are
+already there ([`contrib/claude-code/`](contrib/claude-code/README.md) is the block it
+merges, for doing it by hand):
 every test run the agent makes is journaled, pass or fail, attributed to the model
 that ran it and to the requests the attempt took — and nothing the hook could not
 observe is sent, so retries and defects stay "not reported" rather than `0`. For
@@ -1211,6 +1224,11 @@ does not load it automatically.
 | `--record-routing` | Read one routing event from stdin and journal it |
 | `--claude-code-hook` | Read a Claude Code `PostToolUse`/`PostToolUseFailure` hook payload from stdin and journal a routing event when it observed a test run |
 | `--statusline` | Read Claude Code's statusline JSON from stdin, print a one-line rate-limit readout for its status bar, and cache the windows for the `l` panel |
+| `--install-hook` | Register the Claude Code hook (`PostToolUse` and `PostToolUseFailure`, for Bash) in Claude Code's `settings.json`, appending to what is there, and exit; the command is the consent |
+| `--uninstall-hook` | Remove this tool's hook from Claude Code's `settings.json`, leaving every other entry, and exit |
+| `--install-statusline` | Register `ai-usage-tui --statusline` as Claude Code's status line in its `settings.json`, unless another program's is there, and exit |
+| `--uninstall-statusline` | Remove this tool's status line from Claude Code's `settings.json`, if it is this tool's, and exit |
+| `--uninstall` | Remove the hook, the status line and this tool's caches; print how to delete the journal and config, which are kept; and exit |
 | `--routing-json` | Print aggregated routing analytics as JSON — all history unless a range flag is given |
 | `--routing-csv PATH` | Write aggregated routing analytics as CSV |
 

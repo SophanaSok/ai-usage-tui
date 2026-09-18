@@ -172,6 +172,18 @@ Read `src/collector/gemini.rs` first for the shape of a small source, then
 things you must not read. Your module needs the same test that one has: plant a fake credential
 in the fixture's message content and fail if it reaches a `Usage`.
 
+### Add a flag
+
+`src/cli.rs`, four times: a field on `Cli` with a `///` line, its `Default` arm, the `Args` field
+clap derives the flag from (the `///` is the `--help` text; `group = "action"` for a one-shot
+command, and its name in `COLLECTION_ACTIONS` so `--once` refuses it), and the line in
+`from_parts`. Then the branch in `dispatch` in `src/main.rs` -- before `apply_config` only if it
+must work without a config file, after it otherwise -- printing through `helpers::print_line`,
+never `println!`, so a closed pipe is not a crash. A row in the README's CLI reference
+(`tests/docs.rs` fails without it), a pair in `two_actions_are_always_rejected`, a row in the
+first table of `docs/agent-setup.md` if it writes a file or uses the network, and the CHANGELOG
+entry. Adding a flag is a minor release; renaming or removing one is breaking (`docs/stability.md`).
+
 ### Add a dashboard panel
 
 Write `src/ui/panels/yours.rs` with a single `draw_yours(frame, area, app)` and declare it in

@@ -67,14 +67,51 @@ pub fn print_line(line: &str) -> std::io::Result<()> {
 /// caches; it lives here now so there is one spelling of it. A temporary that could not be renamed
 /// is removed, so a failed write leaves nothing behind.
 pub fn write_atomic(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    write_atomic_with_mode(path, contents, None)
+}
+
+/// [`write_atomic`], with the file's permission bits chosen by the caller.
+///
+/// `None` leaves them to the umask, as every cache does. `Some(mode)` is for a file that is not
+/// this tool's: `install` rewrites Claude Code's `settings.json`, whose `env` block may hold
+/// keys, and a rename would otherwise replace a `0600` file the user set with a `0644` one. The
+/// temporary is created owner-only and widened to `mode` before it holds a byte, so no wider
+/// half-written file ever exists. On other platforms the mode is ignored.
+pub fn write_atomic_with_mode(
+    path: &std::path::Path,
+    contents: &[u8],
+    mode: Option<u32>,
+) -> std::io::Result<()> {
+    use std::io::Write as _;
+
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)?;
     }
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(format!(".{}.tmp", std::process::id()));
     let temporary = path.with_file_name(name);
-    let written =
-        std::fs::write(&temporary, contents).and_then(|()| std::fs::rename(&temporary, path));
+    let written = (|| {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        if mode.is_some() {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temporary)?;
+        #[cfg(unix)]
+        if let Some(mode) = mode {
+            use std::os::unix::fs::PermissionsExt as _;
+            // `OpenOptions::mode` is masked by the umask; this is not.
+            file.set_permissions(std::fs::Permissions::from_mode(mode))?;
+        }
+        #[cfg(not(unix))]
+        let _ = mode;
+        file.write_all(contents)?;
+        file.flush()?;
+        drop(file);
+        std::fs::rename(&temporary, path)
+    })();
     if written.is_err() {
         let _ = std::fs::remove_file(&temporary);
     }

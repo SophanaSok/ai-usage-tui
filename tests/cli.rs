@@ -995,7 +995,14 @@ fn a_disabled_source_is_disabled_for_the_exports_too() {
 /// A one-shot action, like every other one-shot action.
 #[test]
 fn doctor_does_not_combine_with_the_other_actions() {
-    for other in ["--json", "--once", "--check-budgets", "--omarchy-record"] {
+    for other in [
+        "--json",
+        "--once",
+        "--check-budgets",
+        "--omarchy-record",
+        "--install-hook",
+        "--uninstall",
+    ] {
         let output = bin().arg("--doctor").arg(other).output().expect("run");
         assert!(
             !output.status.success(),
@@ -3090,4 +3097,365 @@ fn the_readmes_summary_sample_is_what_the_binary_prints() {
         &sample, row,
         "README.md shows a row the binary does not print"
     );
+}
+
+// --- the installers ------------------------------------------------------------------------
+//
+// These write. Never `hermetic()` for one: its `--claude-dir` is under `tests/fixtures/`, so the
+// settings file it names is `tests/fixtures/settings.json`, in the repository. Every root is
+// pinned to a scratch tree instead, and the environment that could redirect the settings path or
+// the data directory is removed or pointed there.
+
+fn hook_template() -> serde_json::Value {
+    serde_json::from_str(include_str!("../contrib/claude-code/settings.json")).expect("template")
+}
+
+/// A command line whose every path is under `dir`, so the settings file it writes is
+/// `<dir>/.claude/settings.json` and the data directory is `<dir>/data-home/ai-usage-tui`.
+fn writer(dir: &Path) -> Command {
+    let mut command = bin();
+    command
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("CLAUDE_PROJECTS_DIR")
+        .env_remove("AI_USAGE_JOURNAL_PATH")
+        .env_remove("AI_USAGE_LOG")
+        .env("XDG_CONFIG_HOME", dir.join("config-home"))
+        .env("XDG_DATA_HOME", dir.join("data-home"))
+        .arg("--claude-dir")
+        .arg(dir.join(".claude").join("projects"))
+        .arg("--codex-dir")
+        .arg(dir.join("no-codex"))
+        .arg("--copilot-dir")
+        .arg(dir.join("no-copilot"))
+        .arg("--gemini-dir")
+        .arg(dir.join("no-gemini"))
+        .arg("--omarchy-dir")
+        .arg(dir.join("no-omarchy"))
+        .arg("--db")
+        .arg(dir.join("no-opencode.db"))
+        .arg("--journal")
+        .arg(dir.join("usage.db"));
+    command
+}
+
+fn run(command: &mut Command) -> (std::process::ExitStatus, String, String) {
+    let output = command.output().expect("run");
+    (
+        output.status,
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// The whole round trip, through the binary: the file lands beside the session-log root, a
+/// second install writes nothing, `--doctor` sees it, the uninstall leaves an empty object, and
+/// a second uninstall is not an error either. Bug: a setup script that could not run twice.
+#[test]
+fn install_hook_writes_beside_the_claude_dir_then_uninstalls_cleanly() {
+    let dir = scratch("install-hook");
+    let settings = dir.join(".claude").join("settings.json");
+    let doctor = |dir: &Path| {
+        let (status, stdout, stderr) = run(writer(dir).arg("--doctor"));
+        assert!(status.success(), "{stderr}");
+        stdout
+    };
+    assert!(
+        doctor(&dir).contains("hook         not installed"),
+        "before: {}",
+        doctor(&dir)
+    );
+
+    // `PATH` without the binary, so the absolute path is written and said to be.
+    let (status, stdout, stderr) = run(writer(&dir)
+        .env("PATH", dir.join("empty-path"))
+        .arg("--install-hook"));
+    assert!(status.success(), "{stderr}");
+    assert!(
+        stdout.contains(&format!(
+            "Installed the Claude Code hook in {}",
+            settings.display()
+        )),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("absolute path was written"),
+        "the report says which form: {stdout}"
+    );
+    let text = std::fs::read_to_string(&settings).expect("settings written");
+    let mut written: serde_json::Value = serde_json::from_str(&text).expect("json");
+    let exe = env!("CARGO_BIN_EXE_ai-usage-tui");
+    for event in ["PostToolUse", "PostToolUseFailure"] {
+        let command = written["hooks"][event][0]["hooks"][0]["command"]
+            .as_str()
+            .expect("command")
+            .to_string();
+        assert_eq!(
+            command,
+            format!("{exe} --claude-code-hook"),
+            "the running binary's path"
+        );
+        written["hooks"][event][0]["hooks"][0]["command"] =
+            serde_json::Value::String("ai-usage-tui --claude-code-hook".into());
+    }
+    assert_eq!(
+        written,
+        hook_template(),
+        "equals the shipped file, command aside"
+    );
+    assert!(
+        text.ends_with("}\n"),
+        "trailing newline, as Claude Code writes it"
+    );
+
+    let (status, stdout, _) = run(writer(&dir)
+        .env("PATH", dir.join("empty-path"))
+        .arg("--install-hook"));
+    assert!(status.success());
+    assert!(stdout.contains("already installed"), "{stdout}");
+    assert_eq!(
+        std::fs::read_to_string(&settings).unwrap(),
+        text,
+        "a second install writes nothing"
+    );
+    let after = doctor(&dir);
+    assert!(after.contains("hook         installed"), "{after}");
+    assert!(
+        after.contains(&format!(
+            "settings     found          {}",
+            settings.display()
+        )),
+        "{after}"
+    );
+
+    let (status, stdout, stderr) = run(writer(&dir).arg("--uninstall-hook"));
+    assert!(status.success(), "{stderr}");
+    assert!(stdout.contains("Removed the Claude Code hook"), "{stdout}");
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), "{}\n");
+    assert!(doctor(&dir).contains("hook         not installed"));
+
+    let (status, stdout, _) = run(writer(&dir).arg("--uninstall-hook"));
+    assert!(status.success(), "removing what is absent is not an error");
+    assert!(stdout.contains("nothing to do"), "{stdout}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Bug: a bare `ai-usage-tui` written where Claude Code's shell cannot resolve it -- or an
+/// absolute path written where the bare name would have followed upgrades.
+#[cfg(unix)]
+#[test]
+fn the_installer_writes_the_bare_name_only_when_it_is_on_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = scratch("install-path");
+    let bin_dir = dir.join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let shim = bin_dir.join("ai-usage-tui");
+    std::fs::write(&shim, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let (status, stdout, stderr) = run(writer(&dir)
+        .env("PATH", &bin_dir)
+        .arg("--install-statusline"));
+    assert!(status.success(), "{stderr}");
+    assert!(
+        stdout.contains("command: ai-usage-tui --statusline (ai-usage-tui is on PATH)"),
+        "{stdout}"
+    );
+    let written: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join(".claude").join("settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        written["statusLine"]["command"],
+        "ai-usage-tui --statusline"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Bug: the user's other hooks, their `env` block or the order of their keys disturbed by an
+/// uninstall -- and their secrets echoed by it.
+#[test]
+fn uninstall_hook_leaves_the_users_settings_alone() {
+    let dir = scratch("uninstall-hook");
+    let claude = dir.join(".claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    let settings = claude.join("settings.json");
+    std::fs::write(
+        &settings,
+        r#"{
+  "env": { "ANTHROPIC_API_KEY": "sk-planted-secret" },
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "Edit", "hooks": [ { "type": "command", "command": "prettier --write" } ] },
+      { "matcher": "Bash", "hooks": [
+        { "type": "command", "command": "/opt/ai-usage-tui --claude-code-hook", "timeout": 30 },
+        { "type": "command", "command": "notify-send done" } ] }
+    ],
+    "PostToolUseFailure": [
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "\"/opt/ai-usage-tui\" --claude-code-hook" } ] }
+    ]
+  },
+  "permissions": { "allow": [ "Bash(ai-usage-tui:*)" ] },
+  "model": "opus"
+}
+"#,
+    )
+    .unwrap();
+
+    let (status, stdout, stderr) = run(writer(&dir).arg("--uninstall-hook"));
+    assert!(status.success(), "{stderr}");
+    assert!(stdout.contains("Removed the Claude Code hook"), "{stdout}");
+    assert!(
+        !stdout.contains("sk-planted-secret") && !stderr.contains("sk-planted-secret"),
+        "the file's other contents are never printed"
+    );
+    let text = std::fs::read_to_string(&settings).unwrap();
+    assert!(!text.contains("ai-usage-tui --claude-code-hook"), "{text}");
+    let written: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        written.as_object().unwrap().keys().collect::<Vec<_>>(),
+        ["env", "hooks", "permissions", "model"],
+        "key order kept"
+    );
+    assert_eq!(written["env"]["ANTHROPIC_API_KEY"], "sk-planted-secret");
+    let list = written["hooks"]["PostToolUse"].as_array().unwrap();
+    assert_eq!(list.len(), 2, "{list:?}");
+    assert_eq!(list[0]["hooks"][0]["command"], "prettier --write");
+    assert_eq!(list[1]["hooks"].as_array().unwrap().len(), 1);
+    assert_eq!(list[1]["hooks"][0]["command"], "notify-send done");
+    assert!(
+        written["hooks"].get("PostToolUseFailure").is_none(),
+        "the list we emptied goes: {text}"
+    );
+    assert_eq!(written["permissions"]["allow"][0], "Bash(ai-usage-tui:*)");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Bug: a settings file that does not parse overwritten with one that does -- or its contents
+/// read back to the user in the error.
+#[test]
+fn install_hook_refuses_a_settings_file_it_cannot_parse() {
+    let dir = scratch("install-broken");
+    let claude = dir.join(".claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    let settings = claude.join("settings.json");
+    let body = "{ \"env\": { \"ANTHROPIC_API_KEY\": \"sk-planted-secret\" ";
+    std::fs::write(&settings, body).unwrap();
+
+    let (status, stdout, stderr) = run(writer(&dir).arg("--install-hook"));
+    assert_eq!(status.code(), Some(2), "a failure exits 2: {stderr}");
+    assert!(stderr.contains(&settings.display().to_string()), "{stderr}");
+    assert!(stderr.contains("nothing was written"), "{stderr}");
+    assert!(
+        !stderr.contains("sk-planted-secret") && !stdout.contains("sk-planted-secret"),
+        "{stderr}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&settings).unwrap(),
+        body,
+        "untouched"
+    );
+
+    let (status, stdout, _) = run(writer(&dir).arg("--doctor"));
+    assert!(status.success(), "--doctor reports, it does not fail");
+    assert!(stdout.contains("settings     unreadable"), "{stdout}");
+    assert!(!stdout.contains("sk-planted-secret"));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Bug: another program's status line replaced by an install, or removed by an uninstall.
+#[test]
+fn install_statusline_refuses_to_replace_another_status_line() {
+    let dir = scratch("install-statusline-foreign");
+    let claude = dir.join(".claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    let settings = claude.join("settings.json");
+    let body = "{\"statusLine\":{\"type\":\"command\",\"command\":\"starship prompt\"}}\n";
+    std::fs::write(&settings, body).unwrap();
+
+    let (status, _, stderr) = run(writer(&dir).arg("--install-statusline"));
+    assert_eq!(status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("starship prompt"), "names theirs: {stderr}");
+    assert!(
+        stderr.contains("ai-usage-tui --statusline"),
+        "names ours: {stderr}"
+    );
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), body);
+
+    let (status, stdout, stderr) = run(writer(&dir).arg("--uninstall-statusline"));
+    assert!(status.success(), "{stderr}");
+    assert!(stdout.contains("not this tool's"), "{stdout}");
+    assert!(stdout.contains("left alone"), "{stdout}");
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), body);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Bug: an uninstall that deletes the journal, or one that leaves a cache behind.
+#[test]
+fn uninstall_removes_the_caches_and_keeps_the_data() {
+    let dir = scratch("uninstall-all");
+    let data = dir.join("data-home").join("ai-usage-tui");
+    let config_dir = dir.join("config-home").join("ai-usage-tui");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let caches = [
+        "zen-pricing.toml",
+        "zen-models.json",
+        "update-check.json",
+        "statusline-limits.json",
+        "ai-usage-tui.log",
+    ];
+    for name in caches {
+        std::fs::write(data.join(name), "x").unwrap();
+    }
+    let journal = dir.join("usage.db");
+    std::fs::write(&journal, "").unwrap();
+    let config = config_dir.join("config.toml");
+    std::fs::write(&config, "days = 3\n").unwrap();
+    let claude = dir.join(".claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    let settings = claude.join("settings.json");
+    std::fs::write(
+        &settings,
+        r#"{"model":"opus","statusLine":{"type":"command","command":"ai-usage-tui --statusline"}}"#,
+    )
+    .unwrap();
+
+    let (status, stdout, stderr) = run(writer(&dir).arg("--uninstall"));
+    assert!(status.success(), "{stderr}");
+    for name in caches {
+        assert!(!data.join(name).exists(), "{name} left behind:\n{stdout}");
+        assert!(
+            stdout.contains(&format!("Removed {}", data.join(name).display())),
+            "{stdout}"
+        );
+    }
+    assert!(journal.is_file(), "the journal is the user's");
+    assert!(config.is_file(), "the config is the user's");
+    assert!(stdout.contains("Kept your data:"), "{stdout}");
+    assert!(
+        stdout.contains(&format!(
+            "rm '{}' '{}'",
+            journal.display(),
+            config.display()
+        )),
+        "the command to delete them is printed, not run:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Removed the Claude Code status line"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("No Claude Code hook of this tool"),
+        "{stdout}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&settings).unwrap(),
+        "{\n  \"model\": \"opus\"\n}\n"
+    );
+
+    let (status, stdout, stderr) = run(writer(&dir).arg("--uninstall"));
+    assert!(status.success(), "a second run is not an error: {stderr}");
+    assert!(stdout.contains("Not present:"), "{stdout}");
+    assert!(journal.is_file());
+    let _ = std::fs::remove_dir_all(dir);
 }

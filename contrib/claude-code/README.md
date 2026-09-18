@@ -20,9 +20,14 @@ only the failures.
 
 ### Install
 
-Merge the `hooks` block into `~/.claude/settings.json` (every project) or a project's
-`.claude/settings.json` (that project, and shareable). Hook entries merge across the two, so an
-existing `PostToolUse` list keeps its other entries:
+`ai-usage-tui --install-hook` does it: the two entries are appended to `~/.claude/settings.json`
+(created if needed), every other hook stays, a second run writes nothing, and the binary's
+absolute path is written when `ai-usage-tui` is not on `PATH`. `--doctor` then shows the hook
+under `CLAUDE CODE`.
+
+By hand -- for a project's `.claude/settings.json` (that project, and shareable), or to see what
+the command does -- merge the `hooks` block. Hook entries merge across the two files, so an
+existing `PostToolUse` list in the other keeps its entries:
 
 ```bash
 jq -s '.[0] * .[1]' ~/.claude/settings.json contrib/claude-code/settings.json > /tmp/settings.json \
@@ -52,8 +57,9 @@ not be attributed to its transcript is logged with why.
 
 ### Uninstall
 
-Remove the two entries from the settings file. Events already journaled stay; they are routing
-events like any other and are dropped by deleting the journal (`--doctor` names it).
+`ai-usage-tui --uninstall-hook`, or remove the two entries from the settings file by hand.
+Events already journaled stay; they are routing events like any other and are dropped by
+deleting the journal (`--doctor` names it).
 
 ## Status line
 
@@ -72,8 +78,9 @@ is correct rather than 0%.
 
 ### Install
 
-Merge it the same way. `statusLine` is a single object, so `jq`'s `*` replaces one that is
-already there:
+`ai-usage-tui --install-statusline` sets it, and refuses -- naming what is there -- when another
+status line is already configured. By hand, merge it the same way; `statusLine` is a single
+object, so `jq`'s `*` replaces one that is already there:
 
 ```bash
 jq -s '.[0] * .[1]' ~/.claude/settings.json contrib/claude-code/statusline-settings.json > /tmp/settings.json \
@@ -99,7 +106,8 @@ ai-usage-tui                          # `l` shows the row
 
 ### Uninstall
 
-Remove the `statusLine` key from the settings file. The cached windows go stale on their own
+`ai-usage-tui --uninstall-statusline`, which leaves a status line that is not this tool's, or
+remove the `statusLine` key from the settings file by hand. The cached windows go stale on their own
 after 30 minutes and are dimmed rather than alarmed from then on; delete
 `statusline-limits.json` from the data directory (`--doctor` names it) to remove the row at once.
 

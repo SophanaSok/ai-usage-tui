@@ -20,6 +20,7 @@ break them, and says so in `CHANGELOG.md`.
 | **Journal** | `usage.db` stores its schema version in `PRAGMA user_version` (currently `1`). A release can read every journal an earlier release wrote. A writer refuses a journal stamped with a *newer* version than it knows rather than writing into it. See [`data-model.md`](data-model.md). |
 | **Environment variables** | The variables in the README's table keep their names and meanings. |
 | **Omarchy record** | `--omarchy-record` writes Omarchy's own record format (`schemaVersion` 1). It follows Omarchy's format, not this project's release numbers. |
+| **Claude Code settings** | `--install-hook` and `--install-statusline` write Claude Code's own `settings.json` format (`hooks`, `statusLine`), adding only this tool's entries; `--uninstall-hook` and `--uninstall-statusline` remove only those. It follows Claude Code's format, not this project's release numbers. |
 
 ## Not stable
 
@@ -32,7 +33,8 @@ when they do:
   `--doctor`; `--statusline`; the status line; error messages; the prose of `--agent-guide` and
   the `meaning` strings in `--schema`. Parse `--summary-json` or `--json`, not these.
 - **Files the tool keeps for itself.** `zen-pricing.toml`, `zen-models.json`, `update-check.json`,
-  `statusline-limits.json` and the `AI_USAGE_LOG` diagnostic log.
+  `statusline-limits.json` and the `AI_USAGE_LOG` diagnostic log. `--uninstall` removes exactly
+  these, and a test holds that list to this one.
 - **Figures that come from outside.** Pricing rates are data. A release that updates a rate or adds a
   model changes a computed cost, and that is not a breaking change. Which of these a figure rests on
   is what `cost_status` and `provenance` report.

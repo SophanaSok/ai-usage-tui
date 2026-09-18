@@ -90,6 +90,16 @@ pub struct Cli {
     pub statusline: bool,
     pub routing_json: bool,
     pub routing_csv_path: Option<PathBuf>,
+    /// Register the Claude Code hook in Claude Code's `settings.json`, and exit.
+    pub install_hook: bool,
+    /// Remove this tool's hook from Claude Code's `settings.json`, and exit.
+    pub uninstall_hook: bool,
+    /// Register `--statusline` as Claude Code's status line, and exit.
+    pub install_statusline: bool,
+    /// Remove this tool's status line from Claude Code's `settings.json`, and exit.
+    pub uninstall_statusline: bool,
+    /// Remove both entries and this tool's caches, say how to delete the rest, and exit.
+    pub uninstall: bool,
 }
 
 impl Default for Cli {
@@ -149,6 +159,11 @@ impl Default for Cli {
             statusline: false,
             routing_json: false,
             routing_csv_path: None,
+            install_hook: false,
+            uninstall_hook: false,
+            install_statusline: false,
+            uninstall_statusline: false,
+            uninstall: false,
         }
     }
 }
@@ -364,6 +379,21 @@ struct Args {
     /// Write usage and budgets as a record for Omarchy's agents panel
     #[arg(long, group = "action")]
     omarchy_record: bool,
+    /// Register the Claude Code hook (PostToolUse and PostToolUseFailure, for Bash) in Claude Code's settings.json, appending to what is there, and exit
+    #[arg(long, group = "action")]
+    install_hook: bool,
+    /// Remove this tool's hook from Claude Code's settings.json, leaving every other entry, and exit
+    #[arg(long, group = "action")]
+    uninstall_hook: bool,
+    /// Register `ai-usage-tui --statusline` as Claude Code's status line in its settings.json, unless another program's is there, and exit
+    #[arg(long, group = "action")]
+    install_statusline: bool,
+    /// Remove this tool's status line from Claude Code's settings.json, if it is this tool's, and exit
+    #[arg(long, group = "action")]
+    uninstall_statusline: bool,
+    /// Remove the hook, the status line and this tool's caches; print how to delete the journal and config, which are kept; and exit
+    #[arg(long, group = "action")]
+    uninstall: bool,
 }
 
 /// How many projects and sessions `--summary-json` lists unless told otherwise.
@@ -385,6 +415,11 @@ const COLLECTION_ACTIONS: &[&str] = &[
     "statusline",
     "omarchy_record",
     "doctor",
+    "install_hook",
+    "uninstall_hook",
+    "install_statusline",
+    "uninstall_statusline",
+    "uninstall",
 ];
 
 /// The parser's `Command`, for help, completions and the man page.
@@ -518,6 +553,11 @@ impl Cli {
             statusline: args.statusline,
             routing_json: args.routing_json,
             routing_csv_path: args.routing_csv,
+            install_hook: args.install_hook,
+            uninstall_hook: args.uninstall_hook,
+            install_statusline: args.install_statusline,
+            uninstall_statusline: args.uninstall_statusline,
+            uninstall: args.uninstall,
             source_enabled: Default::default(),
         }
     }
@@ -589,6 +629,7 @@ EXIT STATUS:
 EXAMPLES:
     ai-usage-tui
     OPENCODE_DB_PATH=/path/to/opencode.db ai-usage-tui
+    ai-usage-tui --install-hook      # routing data from Claude Code's test runs
 
 MORE:
     Website and docs   {homepage}
@@ -807,6 +848,10 @@ mod tests {
             ["--refresh-zen", "--refresh-pricing"],
             ["--record-ollama", "--record-routing"],
             ["--claude-code-hook", "--record-routing"],
+            ["--install-hook", "--uninstall-hook"],
+            ["--install-statusline", "--uninstall"],
+            ["--uninstall", "--json"],
+            ["--install-hook", "--doctor"],
         ] {
             let args = if pair[1] == "--csv" {
                 vec![pair[0], pair[1], "/tmp/x.csv"]
@@ -865,5 +910,29 @@ mod tests {
         assert!(parse_cli(["--omarchy-record", "--once"]).is_err());
         let cli = parse_cli(["--omarchy-record", "--omarchy-dir", "/x"]).unwrap();
         assert_eq!(cli.omarchy_dir.as_deref(), Some(std::path::Path::new("/x")));
+    }
+
+    /// The installers are single-purpose too, and `--claude-dir` reaches them: it is what
+    /// names the settings file, so a test can point one at a scratch directory.
+    #[test]
+    fn the_installers_are_single_purpose_actions() {
+        for flag in [
+            "--install-hook",
+            "--uninstall-hook",
+            "--install-statusline",
+            "--uninstall-statusline",
+            "--uninstall",
+        ] {
+            assert!(parse_cli([flag]).is_ok(), "{flag}");
+            assert!(parse_cli([flag, "--json"]).is_err(), "{flag} --json");
+            assert!(parse_cli([flag, "--once"]).is_err(), "{flag} --once");
+        }
+        let cli = parse_cli(["--install-hook", "--claude-dir", "/x/.claude/projects"]).unwrap();
+        assert!(cli.install_hook);
+        assert_eq!(
+            cli.claude_dir.as_deref(),
+            Some(std::path::Path::new("/x/.claude/projects"))
+        );
+        assert!(parse_cli(["--uninstall"]).unwrap().uninstall);
     }
 }

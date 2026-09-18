@@ -84,9 +84,11 @@ collapse into one unless one of them carries an `event_id` — send one when bat
 ## Recording from Claude Code
 
 `--claude-code-hook` is a shipped emitter: Claude Code's own hooks, recording every test run
-the agent makes. [`contrib/claude-code/settings.json`](../contrib/claude-code/settings.json)
-registers it on `PostToolUse` and `PostToolUseFailure` for the `Bash` tool; the
-[README there](../contrib/claude-code/README.md) covers installing and verifying it. The hook
+the agent makes. `ai-usage-tui --install-hook` registers it on `PostToolUse` and
+`PostToolUseFailure` for the `Bash` tool, appending to whatever hooks are there;
+[`contrib/claude-code/settings.json`](../contrib/claude-code/settings.json) is the block it
+merges, and the [README there](../contrib/claude-code/README.md) covers doing it by hand and
+verifying it. The hook
 reads the payload Claude Code writes to its stdin and, when that payload observed a test run,
 journals one event through the same path `--record-routing` takes.
 
