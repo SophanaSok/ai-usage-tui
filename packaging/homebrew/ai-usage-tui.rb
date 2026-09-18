@@ -18,16 +18,19 @@ class AiUsageTui < Formula
     end
   end
 
+  # The static builds. Homebrew on Linux is mostly found on LTS distributions, and the gnu
+  # archives need the glibc of the release runner (2.39 through v0.20.0), which Ubuntu 22.04 and
+  # Debian 12 do not have: the formula installed a binary that would not start.
   on_linux do
     on_intel do
-      url "https://github.com/SophanaSok/ai-usage-tui/releases/download/__TAG__/ai-usage-tui-__TAG__-x86_64-linux.tar.gz"
-      sha256 "__LINUX_SHA256__"
+      url "https://github.com/SophanaSok/ai-usage-tui/releases/download/__TAG__/ai-usage-tui-__TAG__-x86_64-linux-musl.tar.gz"
+      sha256 "__LINUX_MUSL_SHA256__"
     end
     # The aarch64-linux tarball has been built and published since v0.2.0; the formula simply
     # never offered it, so `brew install` on an ARM Linux box fell through to no bottle at all.
     on_arm do
-      url "https://github.com/SophanaSok/ai-usage-tui/releases/download/__TAG__/ai-usage-tui-__TAG__-aarch64-linux.tar.gz"
-      sha256 "__LINUX_ARM_SHA256__"
+      url "https://github.com/SophanaSok/ai-usage-tui/releases/download/__TAG__/ai-usage-tui-__TAG__-aarch64-linux-musl.tar.gz"
+      sha256 "__LINUX_ARM_MUSL_SHA256__"
     end
   end
 

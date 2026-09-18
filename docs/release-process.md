@@ -23,15 +23,25 @@ a release is a pull request like any other, and then a tag.
    Merge when CI and the dry run are green.
 5. On `main`, pulled: run `scripts/release.sh X.Y.Z` once more, then tag the merged commit and
    push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-6. GitHub Actions (`release.yml`) automatically builds nine artifacts:
-   - Linux: `-x86_64-linux.tar.gz`, `-aarch64-linux.tar.gz`
+6. GitHub Actions (`release.yml`) automatically builds eleven artifacts:
+   - Linux, static: `-x86_64-linux-musl.tar.gz`, `-aarch64-linux-musl.tar.gz` (the aarch64 one
+     through `cargo-zigbuild` with a pinned zig; both checked with `file`, and the x86_64 one run
+     on a bare Alpine). What `install.sh`, `cargo binstall` on a musl host and the Homebrew formula
+     on Linux install.
+   - Linux, glibc: `-x86_64-linux.tar.gz`, `-aarch64-linux.tar.gz`. They need the runner's glibc
+     or newer; the AUR package uses them, since Arch always has it.
    - macOS: `-x86_64-macos.tar.gz`, `-aarch64-macos.tar.gz` (both cross-compiled on
      `macos-latest` with an explicit `--target`; v0.2.0 shipped an arm64 binary labelled x86_64
      because the build had no `--target`)
    - Windows: `-x86_64-windows.zip`
-   - Packages: `-amd64.deb`, `-arm64.deb`, `-amd64.rpm`, `-arm64.rpm`
+   - Packages: `-amd64.deb`, `-arm64.deb`, `-amd64.rpm`, `-arm64.rpm`, built from the static
+     binaries, checked to require no C library, and the amd64 pair installed and run on Debian 11,
+     Ubuntu 20.04, Rocky 8 and Fedora.
+   After the release job a `Chocolatey package` job runs `choco pack` on the rendered manifests
+   and checks the payload, on dry runs too; it pushes only on a tag and only when the
+   `CHOCOLATEY_API_KEY` secret exists.
 7. CI generates `checksums.txt` (SHA256) and publishes the GitHub Release through
-   `scripts/publish-release.sh`: it creates the release as a draft, uploads the sixteen assets one
+   `scripts/publish-release.sh`: it creates the release as a draft, uploads the eighteen assets one
    at a time, confirms each against the API (`state: uploaded`, and the size on disk), retries one
    that is stuck, and makes the release public only once every asset is confirmed. The dry run
    runs the same script's `--plan`, which checks the asset list without uploading.
