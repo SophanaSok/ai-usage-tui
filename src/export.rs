@@ -315,11 +315,27 @@ pub fn print_summary(cli: &Cli, budgets: &crate::budget::BudgetEngine) -> Result
     Ok(())
 }
 
+/// One CSV field: quoted when it has to be, and never a formula.
+///
+/// A spreadsheet runs a cell that begins with `=`, `+`, `-` or `@` (and a tab or a carriage
+/// return in front of one does not stop it). The text columns here are other programs' strings
+/// -- a model name out of a transcript, a project path, an `agent` handed to `--record-event` --
+/// so a name like `=HYPERLINK(...)` would arrive in the user's spreadsheet as something to
+/// execute. Such a field gets the apostrophe a spreadsheet reads as "this is text" and does not
+/// display. A number is left alone: `-0.5` is a value, not a formula, and the guard exists for
+/// text.
 pub fn csv_field(value: &str) -> String {
-    if value.contains(',') || value.contains('"') || value.contains('\n') {
-        format!("\"{}\"", value.replace('"', "\"\""))
+    let formula =
+        value.starts_with(['=', '+', '-', '@', '\t', '\r']) && value.parse::<f64>().is_err();
+    let value = if formula {
+        format!("'{value}")
     } else {
         value.to_string()
+    };
+    if value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r') {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value
     }
 }
 
@@ -394,5 +410,24 @@ mod tests {
         assert_eq!(csv_field("plain"), "plain");
         assert_eq!(csv_field("model,one"), "\"model,one\"");
         assert_eq!(csv_field("say \"hi\""), "\"say \"\"hi\"\"\"");
+    }
+
+    #[test]
+    fn a_field_a_spreadsheet_would_run_is_marked_as_text() {
+        assert_eq!(csv_field("=1+1"), "'=1+1");
+        assert_eq!(csv_field("@SUM(A1)"), "'@SUM(A1)");
+        assert_eq!(csv_field("+cmd|' /C calc'!A0"), "'+cmd|' /C calc'!A0");
+        assert_eq!(csv_field("-2+3"), "'-2+3");
+        assert_eq!(csv_field("\t=1"), "'\t=1");
+        // Guarded first, then quoted: the comma still needs its quotes.
+        assert_eq!(
+            csv_field("=HYPERLINK(\"x\",\"y\")"),
+            "\"'=HYPERLINK(\"\"x\"\",\"\"y\"\")\""
+        );
+        // A number is a value, and an ordinary name is untouched wherever the sign sits.
+        assert_eq!(csv_field("-0.5"), "-0.5");
+        assert_eq!(csv_field("+3"), "+3");
+        assert_eq!(csv_field("claude-opus-5"), "claude-opus-5");
+        assert_eq!(csv_field(""), "");
     }
 }

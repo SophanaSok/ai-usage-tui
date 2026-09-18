@@ -1061,6 +1061,45 @@ fn the_text_output_path_also_survives_a_closed_pipe() {
     assert!(status.success(), "got {status}");
 }
 
+/// A model name is another program's string, and `--record-event` takes one from anybody. One
+/// that a spreadsheet would run must reach the CSV as text, and must still be the same name in
+/// the JSON, which no spreadsheet reads.
+#[test]
+fn a_model_name_that_is_a_formula_reaches_the_csv_as_text() {
+    let dir = scratch("csv-formula");
+    let journal = dir.join("usage.db");
+    let events = dir.join("events.ndjson");
+    std::fs::write(
+        &events,
+        r#"{"provider":"aider","model":"=HYPERLINK(\"http://x\",\"y\")","event_id":"f-1","created":1758000000,"input_tokens":10,"output_tokens":3,"project":"@home","session_id":"-s1","cost":0.01}
+"#,
+    )
+    .unwrap();
+    record(&journal, events.to_str().unwrap(), "--record-event");
+
+    let mut command = bin();
+    command.args(["--csv", "-", "--all"]);
+    hermetic_with(
+        &mut command,
+        std::path::Path::new("/nonexistent/opencode.db"),
+        &journal,
+    );
+    let output = command.output().expect("run --csv -");
+    assert!(output.status.success());
+    let csv = String::from_utf8(output.stdout).expect("utf8");
+    let row = csv.lines().nth(1).expect("one row under the header");
+    assert!(
+        row.starts_with(r#"aider,"'=HYPERLINK(""http://x"",""y"")","#),
+        "{row}"
+    );
+    assert!(row.contains(",'@home,'-s1,"), "{row}");
+    assert!(row.contains(",0.01,"), "a number is left a number: {row}");
+
+    let rows = journal_rows(&journal);
+    assert_eq!(rows[0]["model"], r#"=HYPERLINK("http://x","y")"#);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `--record-event` is the way in for a tool with no collector: an adapter prints the tool's own
 /// usage in this tool's terms. What it has to prove end to end is that the rows arrive *as usage*
 /// -- in the project and session views, which the response recorders could never reach -- and
