@@ -554,6 +554,17 @@ The journal defaults to:
 Override it with `--journal PATH`, the `journal` config setting, or
 `AI_USAGE_JOURNAL_PATH`.
 
+The journal is the only copy of what was recorded into it, so nothing deletes from it on its own:
+not the dashboard, not a recorder, not a timer. `--doctor` shows its size, its routing events and
+its oldest row, and `ai-usage-tui --prune-journal DAYS` deletes rows older than `DAYS` and hands
+the space back (`VACUUM`), saying how many rows of how many went. It refuses fewer than 31 days
+and never reaches into the current month, because a monthly budget still reads those rows. It
+keeps the routing events of a Claude Code session that is still recording, since the hook counts
+a session's earlier rows to know which requests it has already attributed. And it keeps the single
+highest-numbered usage row, so an open dashboard misses nothing recorded afterwards. Copy the
+file first if you are unsure; a dashboard open across a prune keeps what it had read until it is
+restarted.
+
 ### Pricing tables
 
 When a provider reports no cost, it is estimated from the tables bundled in the
@@ -1229,6 +1240,7 @@ does not load it automatically.
 | `--install-statusline` | Register `ai-usage-tui --statusline` as Claude Code's status line in its `settings.json`, unless another program's is there, and exit |
 | `--uninstall-statusline` | Remove this tool's status line from Claude Code's `settings.json`, if it is this tool's, and exit |
 | `--uninstall` | Remove the hook, the status line and this tool's caches; print how to delete the journal and config, which are kept; and exit |
+| `--prune-journal DAYS` | Delete journal rows older than `DAYS` (31 or more), reclaim the space, report what was deleted and what was kept, and exit; nothing else ever deletes from the journal |
 | `--routing-json` | Print aggregated routing analytics as JSON — all history unless a range flag is given |
 | `--routing-csv PATH` | Write aggregated routing analytics as CSV |
 
@@ -1246,7 +1258,7 @@ Environment variables:
 | `CODEX_HOME` | Codex home; session logs are read from `sessions/` and `archived_sessions/` beneath it |
 | `COPILOT_HOME` | Copilot home; its CLI store and `session-state/` logs are read beneath it |
 | `GEMINI_TELEMETRY_OUTFILE` | Gemini CLI's own telemetry output path; when set, it is read from there rather than `~/.gemini/telemetry.json` |
-| `AI_USAGE_LOG` | Write diagnostics to a file — `1` for the default location, or a path. Off when unset. |
+| `AI_USAGE_LOG` | Write diagnostics to a file — `1` for the default location, or a path. Off when unset. Past 5 MiB the file is renamed to `<name>.old`, replacing the previous one, and started again. |
 | `NO_COLOR` | Any non-empty value draws the dashboard without colour ([no-color.org](https://no-color.org)); the selected row is shown in reverse video instead |
 | `XDG_CONFIG_HOME` | Base directory for the default config path |
 | `XDG_DATA_HOME` | Base directory for default database, journal, and cache paths |

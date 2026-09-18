@@ -47,10 +47,76 @@ impl std::fmt::Display for SkippedRows {
     }
 }
 
-/// `load_journal`, with what was skipped for the caller to surface.
+/// `load_journal`, with what was skipped for the caller to surface. The whole table: a one-shot
+/// read is a cursor that has seen nothing.
 pub(crate) fn load_journal_counting(path: &Path) -> Result<(Vec<Usage>, Option<SkippedRows>)> {
+    load_journal_since(path, &mut JournalCursor::default())
+}
+
+/// How far a live collector has read, so a poll reads what was recorded since the last one.
+///
+/// Until this existed the collector ran `SELECT ... FROM usage_event` with no `WHERE` every
+/// sixty seconds and left `merge`'s dedup to throw all of it away again -- the defect the
+/// roadmap filed against Gemini's `read_to_string`, in SQL.
+///
+/// `id` is the high-water mark: `INTEGER PRIMARY KEY`, and a new row takes `MAX(id) + 1`. That
+/// is only monotonic while the highest row is never deleted -- delete it and its id is handed
+/// out again, *below* this cursor, to a row no poll will ever see. `prune` keeps the max-id row
+/// for exactly this reason, and says so. `VACUUM` keeps the ids of a table with an explicit
+/// `INTEGER PRIMARY KEY`, and rewrites the file in place, so it disturbs neither half.
+#[derive(Debug, Default)]
+pub(crate) struct JournalCursor {
+    /// Every row with an `id` at or below this has been read, mapped or counted as skipped.
+    after_id: i64,
+    /// Which file that was true of: device and inode. `None` where there is no such thing, so a
+    /// journal *replaced* by a bigger one goes unnoticed there until restart; a smaller one is
+    /// caught by `MAX(id)` everywhere.
+    identity: Option<(u64, u64)>,
+    /// Skipped rows so far. Kept here because a poll no longer re-reads them: a count local to
+    /// one read would put the warning on the status line for one poll and then take it away
+    /// while the row was as unreadable as before.
+    skipped: usize,
+    first_error: Option<String>,
+}
+
+impl JournalCursor {
+    fn skipped_rows(&self) -> Option<SkippedRows> {
+        (self.skipped > 0).then(|| SkippedRows {
+            count: self.skipped,
+            first: self.first_error.clone().unwrap_or_default(),
+        })
+    }
+}
+
+fn file_identity(path: &Path) -> Option<(u64, u64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let meta = std::fs::metadata(path).ok()?;
+        Some((meta.dev(), meta.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
+}
+
+/// The rows recorded since `cursor`, and everything skipped since it was last reset.
+pub(crate) fn load_journal_since(
+    path: &Path,
+    cursor: &mut JournalCursor,
+) -> Result<(Vec<Usage>, Option<SkippedRows>)> {
     if !path.exists() {
+        *cursor = JournalCursor::default();
         return Ok((Vec::new(), None));
+    }
+    let identity = file_identity(path);
+    if cursor.identity != identity {
+        *cursor = JournalCursor {
+            identity,
+            ..Default::default()
+        };
     }
     let conn = Connection::open_with_flags(
         path,
@@ -63,7 +129,23 @@ pub(crate) fn load_journal_counting(path: &Path) -> Result<(Vec<Usage>, Option<S
         |row| row.get(0),
     )?;
     if !has_events {
+        *cursor = JournalCursor {
+            identity,
+            ..Default::default()
+        };
         return Ok((Vec::new(), None));
+    }
+    // A table whose highest id is below the cursor is not the table the cursor read: the file
+    // was recreated in place, or emptied. One b-tree lookup, not a scan.
+    let max_id: i64 =
+        conn.query_row("SELECT COALESCE(MAX(id), 0) FROM usage_event", [], |row| {
+            row.get(0)
+        })?;
+    if max_id < cursor.after_id {
+        *cursor = JournalCursor {
+            identity,
+            ..Default::default()
+        };
     }
     // A journal written by an older build lacks the columns added since, and this is a read-only
     // path that cannot migrate it. Each is selected only when it actually exists -- probed one by
@@ -84,17 +166,18 @@ pub(crate) fn load_journal_counting(path: &Path) -> Result<(Vec<Usage>, Option<S
         })
     };
     let mut stmt = conn.prepare(&format!(
-        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, {}, id, {}, {}, {} FROM usage_event",
+        "SELECT provider, model, category, cost_status, requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost, created, {}, id, {}, {}, {} FROM usage_event WHERE id > ?1 ORDER BY id",
         optional("event_id")?,
         optional("session_id")?,
         optional("project")?,
         optional("billing")?,
     ))?;
-    let mut rows = stmt.query([])?;
+    let mut rows = stmt.query([cursor.after_id])?;
     let mut usages = Vec::new();
     let mut skipped = 0usize;
     let mut first_error = None;
     let mut position = 0usize;
+    let mut highest = cursor.after_id;
     // Driven by hand rather than through `query_map`'s iterator, so the two kinds of failure
     // are told apart: a step error (`next()?`) means the file cannot be read past this point
     // and is the whole read's error, while a row that steps but does not map is one row.
@@ -102,6 +185,11 @@ pub(crate) fn load_journal_counting(path: &Path) -> Result<(Vec<Usage>, Option<S
     // after it vanished uncounted.
     while let Some(row) = rows.next()? {
         position += 1;
+        // Read past it whether or not it maps: a row that cannot be read today cannot be read
+        // on the next poll either, and it has been counted.
+        if let Ok(id) = row.get::<_, i64>(13) {
+            highest = highest.max(id);
+        }
         match usage_from_row(row) {
             Ok(usage) => usages.push(usage),
             Err(error) => {
@@ -111,11 +199,14 @@ pub(crate) fn load_journal_counting(path: &Path) -> Result<(Vec<Usage>, Option<S
             }
         }
     }
-    let skipped = (skipped > 0).then(|| SkippedRows {
-        count: skipped,
-        first: first_error.unwrap_or_default(),
-    });
-    Ok((usages, skipped))
+    // Only now, with the scan complete: a step error above returned early and left the cursor
+    // where it was, so the rows it did not reach are read again rather than lost.
+    cursor.after_id = highest;
+    cursor.skipped += skipped;
+    if cursor.first_error.is_none() {
+        cursor.first_error = first_error;
+    }
+    Ok((usages, cursor.skipped_rows()))
 }
 
 /// One `usage_event` row, or why it could not be read.
@@ -256,6 +347,20 @@ pub const JOURNAL_SCHEMA_VERSION: i64 = 1;
 /// hook, where waiting is a few milliseconds nobody sees.
 const WRITER_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// The journal's schema version, or the refusal to touch one stamped by a newer build. Every
+/// path that changes the file asks this under its write lock: the writers, and `prune`.
+fn refuse_newer(conn: &Connection, path: &Path) -> Result<i64> {
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    anyhow::ensure!(
+        version <= JOURNAL_SCHEMA_VERSION,
+        "{} was written by a newer ai-usage-tui (journal schema {version}; this build writes \
+         {JOURNAL_SCHEMA_VERSION}). Upgrade this copy -- `ai-usage-tui --doctor` shows where it \
+         came from -- rather than writing into a journal it may not understand.",
+        path.display()
+    );
+    Ok(version)
+}
+
 /// Open the journal for writing, running `migrate` for the caller's table under the write lock.
 ///
 /// `BEGIN IMMEDIATE` takes that lock *before* anything is probed. The migrations were
@@ -275,14 +380,7 @@ fn open_for_writing(
     conn.busy_timeout(WRITER_BUSY_TIMEOUT)?;
     conn.execute_batch("BEGIN IMMEDIATE")?;
     let migrated = (|| -> Result<()> {
-        let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        anyhow::ensure!(
-            version <= JOURNAL_SCHEMA_VERSION,
-            "{} was written by a newer ai-usage-tui (journal schema {version}; this build writes \
-             {JOURNAL_SCHEMA_VERSION}). Upgrade this copy -- `ai-usage-tui --doctor` shows where it \
-             came from -- rather than writing into a journal it may not understand.",
-            path.display()
-        );
+        let version = refuse_newer(&conn, path)?;
         migrate(&conn)?;
         if version < JOURNAL_SCHEMA_VERSION {
             conn.execute_batch(&format!("PRAGMA user_version = {JOURNAL_SCHEMA_VERSION}"))?;
@@ -949,6 +1047,10 @@ pub fn load_routing(path: &Path) -> Result<Vec<RoutingEvent>> {
 ///
 /// A plain prefix comparison rather than `LIKE`, whose `_` and `%` would be wildcards inside
 /// the session id the prefix carries.
+///
+/// This sum is a cursor over rows written long ago, which is why [`prune`] never deletes a row
+/// of a session that still has newer ones. A harness that keeps a cursor under another prefix
+/// has to be taught to `prune` as well, or pruning will make it count requests twice.
 pub fn attributed_requests(path: &Path, prefix: &str) -> Result<u64> {
     if !path.exists() {
         return Ok(0);
@@ -1209,12 +1311,258 @@ fn test_result(json: &Value) -> Result<Option<bool>> {
     }
 }
 
+/// The youngest age `--prune-journal` accepts, in days.
+///
+/// Budgets read back to the first of the local month and `--month` reads thirty days, so a row
+/// younger than this is one the dashboard is still counting. Deleting it would not be retention,
+/// it would be a smaller bill.
+pub const PRUNE_MIN_DAYS: u64 = 31;
+
+/// What a prune did to one table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TablePrune {
+    /// Rows in the table before.
+    pub before: u64,
+    /// Rows older than the cutoff.
+    pub eligible: u64,
+    /// Rows deleted. Less than `eligible` by the rows that were kept on purpose: the newest-id
+    /// usage row, and routing rows of a session that is still recording.
+    pub deleted: u64,
+}
+
+/// What `--prune-journal` did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PruneReport {
+    /// Rows created before this (Unix seconds) were eligible.
+    pub cutoff: i64,
+    /// `None` when the table does not exist: each is created by its own writer, on first use.
+    pub usage: Option<TablePrune>,
+    pub routing: Option<TablePrune>,
+    pub bytes_before: u64,
+    pub bytes_after: u64,
+    /// Whether the space was handed back. A failed `VACUUM` -- a full disk, a busy journal --
+    /// leaves the rows deleted and the file the size it was; running the command again retries.
+    pub vacuum: std::result::Result<(), String>,
+}
+
+/// Delete rows older than `days`, then `VACUUM`. `None` when there is no journal.
+///
+/// The only place this tool deletes anything a user recorded, and only on the command: the
+/// journal is the sole copy of what `--record-*` and the hook wrote, so nothing prunes it on a
+/// timer, at startup or from the dashboard. It creates nothing either -- no file, no table, no
+/// version stamp -- because "nothing to prune" must not leave a journal behind.
+///
+/// Three kinds of row older than the cutoff are kept, each for a number that would otherwise go
+/// wrong:
+///
+/// - **Rows of the current local month**, whatever `days` says: the cutoff is never later than
+///   `local_month_start`, which is how far back a monthly budget reads.
+/// - **The usage row with the highest id.** `id` is `INTEGER PRIMARY KEY` without
+///   `AUTOINCREMENT`, so a new row takes `MAX(id) + 1`. Delete the highest and its id is handed
+///   out again -- below the `JournalCursor` of a dashboard that is open, to a row it will never
+///   read. `created` is the caller's, so a replayed old log really can own the highest ids.
+/// - **Routing rows of a Claude Code session that has newer rows.** The hook sums a session's
+///   rows to know which requests it has already attributed ([`attributed_requests`]); take the
+///   old ones away and it attributes those requests again. The session is the event id through
+///   its second colon (`claude-code:{session}:`); an id that does not have that shape yields a
+///   shorter key, which can only keep more rows, never fewer. Rows under any other id have no
+///   cursor and go by `created` alone.
+///
+/// Undated rows (`created <= 0`) are kept: their age is not known. No index on `created` is
+/// added for this -- a full scan is fine for a command run a few times a year, and an index is a
+/// schema change every older writer would have to tolerate.
+pub fn prune(path: &Path, days: u64, now: i64) -> Result<Option<PruneReport>> {
+    anyhow::ensure!(
+        days >= PRUNE_MIN_DAYS,
+        "refusing to prune rows younger than {PRUNE_MIN_DAYS} days: budgets and --month still read them"
+    );
+    if !path.exists() {
+        return Ok(None);
+    }
+    let bytes_before = fs::metadata(path)?.len();
+    let age = i64::try_from(days.saturating_mul(86_400)).unwrap_or(i64::MAX);
+    let cutoff = now
+        .saturating_sub(age)
+        .min(crate::utils::local_month_start());
+
+    // Opened read-write and *not* create: a path that vanished between the check and here is an
+    // error, not a new empty journal.
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    conn.busy_timeout(WRITER_BUSY_TIMEOUT)?;
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let deleted = (|| -> Result<(Option<TablePrune>, Option<TablePrune>)> {
+        refuse_newer(&conn, path)?;
+        let has_table = |name: &str| -> rusqlite::Result<bool> {
+            conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+                [name],
+                |row| row.get(0),
+            )
+        };
+        let counts = |table: &str| -> rusqlite::Result<(u64, u64)> {
+            let before: i64 =
+                conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })?;
+            let eligible: i64 = conn.query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE created > 0 AND created < ?1"),
+                [cutoff],
+                |row| row.get(0),
+            )?;
+            Ok((count(before), count(eligible)))
+        };
+
+        let usage = if has_table("usage_event")? {
+            let (before, eligible) = counts("usage_event")?;
+            let deleted = conn.execute(
+                "DELETE FROM usage_event
+                 WHERE created > 0 AND created < ?1
+                   AND id < (SELECT MAX(id) FROM usage_event)",
+                [cutoff],
+            )?;
+            Some(TablePrune {
+                before,
+                eligible,
+                deleted: deleted as u64,
+            })
+        } else {
+            None
+        };
+
+        let routing = if has_table("routing_event")? {
+            let (before, eligible) = counts("routing_event")?;
+            let has_event_id: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('routing_event') WHERE name = 'event_id')",
+                [],
+                |row| row.get(0),
+            )?;
+            let deleted = if has_event_id {
+                // `?2` is `claude-code:`. The session key is that plus everything up to and
+                // including the next colon; `instr` is 0 when there is none, leaving `?2` itself.
+                let session = "substr(event_id, 1, length(?2) + instr(substr(event_id, length(?2) + 1), ':'))";
+                conn.execute(
+                    &format!(
+                        "DELETE FROM routing_event
+                         WHERE created > 0 AND created < ?1
+                           AND ( event_id IS NULL
+                              OR substr(event_id, 1, length(?2)) <> ?2
+                              OR {session} NOT IN (
+                                   SELECT {session} FROM routing_event
+                                   WHERE created >= ?1 AND substr(event_id, 1, length(?2)) = ?2 ) )"
+                    ),
+                    params![cutoff, format!("{}:", crate::harness::claude_code::AGENT)],
+                )?
+            } else {
+                // A table from before `event_id`: no hook has ever written to it.
+                conn.execute(
+                    "DELETE FROM routing_event WHERE created > 0 AND created < ?1",
+                    [cutoff],
+                )?
+            };
+            Some(TablePrune {
+                before,
+                eligible,
+                deleted: deleted as u64,
+            })
+        } else {
+            None
+        };
+        Ok((usage, routing))
+    })();
+    let (usage, routing) = match deleted {
+        Ok(tables) => {
+            conn.execute_batch("COMMIT")?;
+            tables
+        }
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(error);
+        }
+    };
+
+    // Outside the transaction, where `VACUUM` has to run. Also when nothing was deleted but
+    // free pages remain, so that running the command again finishes a `VACUUM` that failed.
+    let any_deleted = [usage, routing]
+        .iter()
+        .flatten()
+        .any(|table| table.deleted > 0);
+    let free_pages: i64 = conn.query_row("PRAGMA freelist_count", [], |row| row.get(0))?;
+    let vacuum = if any_deleted || free_pages > 0 {
+        conn.execute_batch("VACUUM")
+            .map_err(|error| error.to_string())
+    } else {
+        Ok(())
+    };
+    drop(conn);
+    Ok(Some(PruneReport {
+        cutoff,
+        usage,
+        routing,
+        bytes_before,
+        bytes_after: fs::metadata(path)?.len(),
+        vacuum,
+    }))
+}
+
+/// What `--doctor` says about the journal beyond its usage rows: how big it is, how many routing
+/// events it holds -- which no source row counts -- and how far back it goes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JournalStats {
+    pub bytes: u64,
+    pub usage_rows: Option<u64>,
+    pub routing_rows: Option<u64>,
+    /// The oldest dated row in either table, Unix seconds.
+    pub oldest: Option<i64>,
+}
+
+pub fn stats(path: &Path) -> Result<Option<JournalStats>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let bytes = fs::metadata(path)?.len();
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+    )?;
+    conn.busy_timeout(Duration::from_millis(250))?;
+    let table = |name: &str| -> rusqlite::Result<Option<(u64, Option<i64>)>> {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+            [name],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Ok(None);
+        }
+        conn.query_row(
+            &format!("SELECT COUNT(*), MIN(CASE WHEN created > 0 THEN created END) FROM {name}"),
+            [],
+            |row| Ok(Some((count(row.get(0)?), row.get(1)?))),
+        )
+    };
+    let usage = table("usage_event")?;
+    let routing = table("routing_event")?;
+    let oldest = [usage, routing]
+        .iter()
+        .flatten()
+        .filter_map(|(_, oldest)| *oldest)
+        .min();
+    Ok(Some(JournalStats {
+        bytes,
+        usage_rows: usage.map(|(rows, _)| rows),
+        routing_rows: routing.map(|(rows, _)| rows),
+        oldest,
+    }))
+}
+
 pub struct JournalCollector {
     pub journal_path: PathBuf,
     pub interval_secs: u64,
     /// What the last poll had to skip, for the live status line. The log is off by default,
     /// so a count that reached only the log reached the dashboard's user nowhere.
     pub skipped: Option<String>,
+    /// How far the polls have read; see [`JournalCursor`].
+    pub(crate) cursor: JournalCursor,
 }
 
 impl Collector for JournalCollector {
@@ -1225,8 +1573,10 @@ impl Collector for JournalCollector {
         Duration::from_secs(self.interval_secs)
     }
     fn poll(&mut self) -> Result<Vec<Usage>> {
-        let (usages, skipped) = load_journal_counting(&self.journal_path)?;
-        if let Some(skipped) = &skipped {
+        let before = self.cursor.skipped;
+        let (usages, skipped) = load_journal_since(&self.journal_path, &mut self.cursor)?;
+        // Logged when the count moves, not every poll: the rows are read once now.
+        if let Some(skipped) = skipped.as_ref().filter(|_| self.cursor.skipped != before) {
             crate::logging::error(ID, &skipped.to_string());
         }
         self.skipped = skipped.map(|s| format!("{} row(s) unreadable", s.count));
@@ -1276,6 +1626,7 @@ pub(crate) fn collector(
         journal_path: roots.journal.clone(),
         interval_secs,
         skipped: None,
+        cursor: JournalCursor::default(),
     })
 }
 
@@ -1590,12 +1941,369 @@ mod tests {
             journal_path: journal.clone(),
             interval_secs: 60,
             skipped: None,
+            cursor: JournalCursor::default(),
         };
         assert_eq!(collector.poll().expect("poll").len(), 1);
         assert_eq!(
             collector.warning().as_deref(),
             Some("1 row(s) unreadable"),
             "the collector must carry the count to the status line"
+        );
+        // The next poll reads nothing -- the cursor is past both rows -- and the row is as
+        // unreadable as it was. Bug: a count local to one read, so the warning showed for one
+        // poll and then the status line went clean.
+        assert!(collector.poll().expect("poll").is_empty());
+        assert_eq!(collector.warning().as_deref(), Some("1 row(s) unreadable"));
+    }
+
+    fn cursor_event(id: &str) -> Value {
+        json!({
+            "provider": "aider", "model": "claude-sonnet-5", "event_id": id,
+            "input_tokens": 1200, "output_tokens": 300, "created": 1_758_000_000
+        })
+    }
+
+    fn journal_collector(journal: &Path) -> JournalCollector {
+        JournalCollector {
+            journal_path: journal.to_path_buf(),
+            interval_secs: 60,
+            skipped: None,
+            cursor: JournalCursor::default(),
+        }
+    }
+
+    /// Bug: `SELECT ... FROM usage_event` with no `WHERE`, every sixty seconds, for `merge` to
+    /// throw away again.
+    #[test]
+    fn a_poll_reads_only_what_was_recorded_since_the_last_one() {
+        let scratch = scratch_journal("cursor");
+        let journal = scratch.journal.clone();
+        let mut collector = journal_collector(&journal);
+        assert!(collector.poll().expect("no journal yet").is_empty());
+
+        record_events(&journal, &[cursor_event("c1"), cursor_event("c2")]).expect("record");
+        assert_eq!(collector.poll().expect("poll").len(), 2);
+        assert!(
+            collector.poll().expect("poll").is_empty(),
+            "a poll with nothing new re-read the table"
+        );
+
+        record_events(&journal, &[cursor_event("c3")]).expect("record");
+        let third = collector.poll().expect("poll");
+        assert_eq!(third.len(), 1, "only the row recorded since");
+        assert!(third[0].event_id.as_deref().unwrap().ends_with("c3"));
+
+        // The one-shot read is a cursor that has seen nothing: every row, every time.
+        assert_eq!(load_journal(&journal).expect("read").len(), 3);
+        assert_eq!(load_journal(&journal).expect("read").len(), 3);
+    }
+
+    /// Bug: a cursor left pointing into a journal that is no longer there -- deleted and
+    /// started again -- hiding every row below the old high-water mark.
+    #[test]
+    fn a_replaced_journal_is_read_from_the_start() {
+        let scratch = scratch_journal("cursor-replaced");
+        let journal = scratch.journal.clone();
+        let mut collector = journal_collector(&journal);
+        record_events(
+            &journal,
+            &[cursor_event("r1"), cursor_event("r2"), cursor_event("r3")],
+        )
+        .expect("record");
+        assert_eq!(collector.poll().expect("poll").len(), 3);
+
+        fs::remove_file(&journal).expect("delete the journal");
+        assert!(collector.poll().expect("absent").is_empty());
+        record_events(&journal, &[cursor_event("r4")]).expect("record");
+        let rows = collector.poll().expect("poll");
+        assert_eq!(
+            rows.len(),
+            1,
+            "id 1 of the new journal is below the old cursor"
+        );
+
+        // Emptied in place, same file: caught by MAX(id), with or without an inode to compare.
+        let conn = Connection::open(&journal).expect("open");
+        conn.execute_batch("DELETE FROM usage_event;")
+            .expect("empty");
+        drop(conn);
+        assert!(collector.poll().expect("poll").is_empty());
+        record_events(&journal, &[cursor_event("r5")]).expect("record");
+        assert_eq!(collector.poll().expect("poll").len(), 1, "id 1 again");
+    }
+
+    const DAY: i64 = 86_400;
+
+    fn dated_usage(id: &str, created: i64) -> Value {
+        let mut event = cursor_event(id);
+        event["created"] = json!(created);
+        event
+    }
+
+    fn hook_event(id: &str, created: i64) -> Value {
+        let mut event = event(id, created);
+        event["event_id"] = json!(id);
+        event
+    }
+
+    fn routing_ids(journal: &Path) -> Vec<String> {
+        let conn = Connection::open(journal).expect("open");
+        let mut stmt = conn
+            .prepare("SELECT COALESCE(event_id, task) FROM routing_event ORDER BY id")
+            .expect("prepare");
+        let ids = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query")
+            .map(|id| id.expect("row"))
+            .collect();
+        ids
+    }
+
+    fn usage_row_ids(journal: &Path) -> Vec<i64> {
+        let conn = Connection::open(journal).expect("open");
+        let mut stmt = conn
+            .prepare("SELECT id FROM usage_event ORDER BY id")
+            .expect("prepare");
+        let ids = stmt
+            .query_map([], |row| row.get::<_, i64>(0))
+            .expect("query")
+            .map(|id| id.expect("row"))
+            .collect();
+        ids
+    }
+
+    /// Bug: pruning routing rows by age alone. The hook sums a session's rows to know which
+    /// requests it has already attributed; without the old ones it attributes them again, and
+    /// the panel shows requests that were never made.
+    #[test]
+    fn a_prune_never_takes_rows_from_a_session_that_is_still_recording() {
+        let scratch = scratch_journal("prune-live");
+        let journal = scratch.journal.clone();
+        let now = crate::utils::now();
+        let old = now - 100 * DAY;
+        for event in [
+            hook_event("claude-code:live:main:t1", old),
+            hook_event("claude-code:live:Explore:t2", old + 1),
+            hook_event("claude-code:live:main:t3", now - 60),
+            hook_event("claude-code:finished:main:t1", old + 2),
+            hook_event("claude-code:finished:main:t2", old + 3),
+            hook_event("my-harness-7", old + 4),
+            event("no-id-of-its-own", old + 5),
+            hook_event("my-harness-8", now - 120),
+        ] {
+            assert_eq!(record_routing_event(&journal, &event).expect("record"), 1);
+        }
+        let conn = Connection::open(&journal).expect("open");
+        conn.execute_batch(
+            "INSERT INTO routing_event (event_id, task, phase, agent, model, provider, category,
+                cost_status, requests, tokens, created)
+             VALUES ('undated', 'undated', '', 'a', 'm', 'p', 'UNKNOWN', 'unavailable', 1, 10, 0);",
+        )
+        .expect("an undated row");
+        drop(conn);
+        let live_main = "claude-code:live:main:";
+        assert_eq!(attributed_requests(&journal, live_main).unwrap(), 2);
+
+        let report = prune(&journal, 31, now).expect("prune").expect("a journal");
+        assert_eq!(
+            report.routing,
+            Some(TablePrune {
+                before: 9,
+                eligible: 6,
+                deleted: 4
+            })
+        );
+        assert_eq!(report.usage, None, "no usage was ever recorded here");
+        assert_eq!(report.vacuum, Ok(()));
+        assert_eq!(
+            routing_ids(&journal),
+            [
+                "claude-code:live:main:t1",
+                "claude-code:live:Explore:t2",
+                "claude-code:live:main:t3",
+                "my-harness-8",
+                "undated",
+            ],
+            "the live session whole -- its subagent's rows too -- and the row of unknown age"
+        );
+        assert_eq!(
+            attributed_requests(&journal, live_main).unwrap(),
+            2,
+            "the hook's cursor moved: it would attribute those requests again"
+        );
+        assert_eq!(
+            attributed_requests(&journal, "claude-code:finished:main:").unwrap(),
+            0
+        );
+        // Nothing left to do: no rows, no free pages, no second VACUUM.
+        let again = prune(&journal, 31, now).unwrap().unwrap();
+        assert_eq!(again.routing.unwrap().deleted, 0);
+        assert_eq!(again.bytes_before, again.bytes_after);
+    }
+
+    /// Bug: deleting the highest-id row. SQLite hands that id out again, below the cursor of a
+    /// dashboard that is open, to a row it will never read.
+    #[test]
+    fn a_prune_keeps_the_newest_id_so_an_open_dashboard_misses_nothing() {
+        let scratch = scratch_journal("prune-max-id");
+        let journal = scratch.journal.clone();
+        let now = crate::utils::now();
+        // A replayed old log: the *oldest* events own the *highest* ids.
+        record_events(
+            &journal,
+            &[
+                dated_usage("recent", now - 60),
+                dated_usage("old-1", now - 200 * DAY),
+                dated_usage("old-2", now - 199 * DAY),
+            ],
+        )
+        .expect("record");
+        let mut collector = journal_collector(&journal);
+        assert_eq!(collector.poll().expect("poll").len(), 3);
+
+        let report = prune(&journal, 90, now).unwrap().unwrap();
+        assert_eq!(
+            report.usage,
+            Some(TablePrune {
+                before: 3,
+                eligible: 2,
+                deleted: 1
+            })
+        );
+        assert_eq!(
+            usage_row_ids(&journal),
+            [1, 3],
+            "ids survive VACUUM, and the highest stays"
+        );
+
+        record_events(&journal, &[dated_usage("after-the-prune", now)]).expect("record");
+        assert_eq!(usage_row_ids(&journal), [1, 3, 4], "no id was reused");
+        let seen = collector.poll().expect("poll");
+        assert_eq!(
+            seen.len(),
+            1,
+            "the row recorded after the prune reached the dashboard"
+        );
+        assert!(seen[0]
+            .event_id
+            .as_deref()
+            .unwrap()
+            .ends_with("after-the-prune"));
+    }
+
+    /// Bug: a row the dashboard still counts deleted because `DAYS` said so. A monthly budget
+    /// reads back to the first of the local month.
+    #[test]
+    fn a_prune_refuses_young_rows_and_never_reaches_into_this_month() {
+        let scratch = scratch_journal("prune-floor");
+        let journal = scratch.journal.clone();
+        let now = crate::utils::now();
+        record_events(
+            &journal,
+            &[dated_usage("a", now - 40 * DAY), dated_usage("b", now)],
+        )
+        .expect("record");
+        let error = prune(&journal, 30, now).unwrap_err().to_string();
+        assert!(error.contains("31"), "{error}");
+        assert_eq!(usage_row_ids(&journal), [1, 2], "a refusal deletes nothing");
+
+        let report = prune(&journal, 31, now).unwrap().unwrap();
+        assert!(report.cutoff <= crate::utils::local_month_start());
+        assert!(report.cutoff <= now - 31 * DAY);
+
+        // The clock is a parameter, so the clause can be reached: forty days into a month that
+        // never gets that long, thirty-one days back is the 9th -- and the cutoff is still the 1st.
+        let month_start = crate::utils::local_month_start();
+        let report = prune(&journal, 31, month_start + 40 * DAY)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            report.cutoff, month_start,
+            "rows of the current month were eligible: a monthly budget still reads them"
+        );
+    }
+
+    /// Bug: "nothing to prune" leaving a journal behind -- a file, a table, a version stamp.
+    #[test]
+    fn a_prune_creates_nothing() {
+        let scratch = scratch_journal("prune-creates-nothing");
+        let journal = scratch.journal.clone();
+        let now = crate::utils::now();
+        assert_eq!(prune(&journal, 31, now).expect("no journal"), None);
+        assert!(!journal.exists(), "a prune created the journal");
+        assert_eq!(stats(&journal).expect("stats"), None);
+
+        // Only the routing writer has ever run: there is no `usage_event`, and there still is not.
+        record_routing_event(&journal, &event("t", now)).expect("record");
+        let schema = |journal: &Path| -> Vec<String> {
+            let conn = Connection::open(journal).expect("open");
+            let mut stmt = conn
+                .prepare("SELECT name FROM sqlite_master ORDER BY name")
+                .expect("prepare");
+            let names = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .expect("query")
+                .map(|name| name.expect("row"))
+                .collect();
+            names
+        };
+        let before = schema(&journal);
+        let report = prune(&journal, 31, now).unwrap().unwrap();
+        assert_eq!(report.usage, None);
+        assert_eq!(report.routing.unwrap().deleted, 0);
+        assert_eq!(schema(&journal), before);
+
+        let found = stats(&journal).unwrap().unwrap();
+        assert_eq!((found.usage_rows, found.routing_rows), (None, Some(1)));
+        assert_eq!(found.oldest, Some(now));
+        assert!(found.bytes > 0);
+    }
+
+    /// Bug: a prune writing into a journal whose shape it may not understand.
+    #[test]
+    fn a_prune_refuses_a_journal_from_a_newer_build() {
+        let scratch = scratch_journal("prune-newer");
+        let journal = scratch.journal.clone();
+        let now = crate::utils::now();
+        record_events(
+            &journal,
+            &[dated_usage("old", now - 200 * DAY), dated_usage("new", now)],
+        )
+        .expect("record");
+        let conn = Connection::open(&journal).expect("open");
+        conn.execute_batch("PRAGMA user_version = 99;")
+            .expect("stamp");
+        drop(conn);
+        let error = prune(&journal, 31, now).unwrap_err().to_string();
+        assert!(error.contains("newer ai-usage-tui"), "{error}");
+        assert_eq!(usage_row_ids(&journal), [1, 2], "rows intact");
+    }
+
+    /// Bug: a `VACUUM` that failed once -- a full disk -- never retried, because the rerun finds
+    /// no rows to delete and stops there.
+    #[test]
+    fn a_rerun_reclaims_the_space_a_failed_vacuum_left() {
+        let scratch = scratch_journal("prune-freelist");
+        let journal = scratch.journal.clone();
+        let now = crate::utils::now();
+        let events: Vec<Value> = (0..3000)
+            .map(|n| dated_usage(&format!("bulk-{n}"), now))
+            .collect();
+        record_events(&journal, &events).expect("record");
+        // Rows gone, pages still in the file: what a prune whose VACUUM failed leaves.
+        let conn = Connection::open(&journal).expect("open");
+        conn.execute_batch("DELETE FROM usage_event WHERE id < 3000;")
+            .expect("delete");
+        drop(conn);
+
+        let report = prune(&journal, 31, now).unwrap().unwrap();
+        assert_eq!(report.usage.unwrap().deleted, 0);
+        assert_eq!(report.vacuum, Ok(()));
+        assert!(
+            report.bytes_after < report.bytes_before,
+            "free pages were left in the file: {} -> {}",
+            report.bytes_before,
+            report.bytes_after
         );
     }
 

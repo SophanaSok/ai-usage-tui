@@ -249,6 +249,70 @@ fn created_at(attributes: &serde_json::Map<String, Value>) -> i64 {
         .unwrap_or_default()
 }
 
+/// The file from `offset` to its end, and the offset the read really started at.
+///
+/// This was `read_to_string` of the whole file on every poll, sliced afterwards: the *parse* was
+/// incremental and the *read* was not, so a telemetry log that had grown for months was pulled
+/// into memory every thirty seconds to look at its last few hundred bytes. Now the file is
+/// opened, sought and read from the offset on. A record still being written needs nothing
+/// resumable: `complete_objects` stops at the last complete object, the offset stops there too,
+/// and the next poll reads that tail again.
+///
+/// Two ways the remembered offset stops being true, both answered by starting over at `0` --
+/// the replay is absorbed by the dedup in `merge`:
+///
+/// - **The file shrank**: rotated or truncated. The offset is past the end.
+/// - **The file was rewritten in place** to the same length or longer, which keeps the offset in
+///   range while putting it inside a multi-byte sequence. The tail then opens with a
+///   continuation byte and is not UTF-8. When the whole file was one `String` this was
+///   `&text[start..]` on a non-boundary index: a panic, contained by `catch_unwind` in
+///   `background.rs`, so the symptom was this source restart-looping and going `Dead` after
+///   MAX_RESTARTS -- not a crash, just Gemini quietly disappearing.
+///
+/// A sequence cut off at the *end* of the tail is neither: the writer is mid-flush. It is
+/// trimmed, and belongs to an object that is incomplete anyway. Anything else that is not UTF-8
+/// is the error `read_to_string` gave.
+fn read_tail(path: &Path, offset: u64) -> std::io::Result<(String, u64)> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    fn decode(bytes: Vec<u8>) -> Result<String, std::str::Utf8Error> {
+        match String::from_utf8(bytes) {
+            Ok(text) => Ok(text),
+            Err(error) => {
+                let utf8 = error.utf8_error();
+                if utf8.error_len().is_some() {
+                    return Err(utf8);
+                }
+                let mut bytes = error.into_bytes();
+                bytes.truncate(utf8.valid_up_to());
+                String::from_utf8(bytes).map_err(|error| error.utf8_error())
+            }
+        }
+    }
+    let invalid =
+        |error: std::str::Utf8Error| std::io::Error::new(std::io::ErrorKind::InvalidData, error);
+
+    let mut file = std::fs::File::open(path)?;
+    let start = if offset > file.metadata()?.len() {
+        0
+    } else {
+        offset
+    };
+    let mut read_from = |start: u64| -> std::io::Result<Vec<u8>> {
+        file.seek(SeekFrom::Start(start))?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    };
+    match decode(read_from(start)?) {
+        Ok(text) => Ok((text, start)),
+        Err(error) if start > 0 && error.valid_up_to() == 0 => {
+            Ok((decode(read_from(0)?).map_err(invalid)?, 0))
+        }
+        Err(error) => Err(invalid(error)),
+    }
+}
+
 /// Read every usage row in the telemetry log.
 pub fn load_gemini(
     root: Option<&Path>,
@@ -268,22 +332,9 @@ pub fn load_gemini(
         ));
     }
 
-    let text = std::fs::read_to_string(&path)?;
-    let start = offsets.files.get(&path).copied().unwrap_or(0) as usize;
-    // A file that shrank was rotated or truncated; start over rather than reading from a stale
-    // offset into the middle of a record.
-    //
-    // The boundary check is not redundant with the length check. A file rewritten in place to the
-    // same length or longer keeps the offset in range while putting it inside a multi-byte
-    // sequence, and `&text[start..]` panics on a non-boundary index. `catch_unwind` in
-    // `background.rs` contains that, so the symptom is this source restart-looping and going
-    // `Dead` after MAX_RESTARTS -- not a crash, just Gemini quietly disappearing.
-    let start = if start > text.len() || !text.is_char_boundary(start) {
-        0
-    } else {
-        start
-    };
-    let (objects, consumed) = complete_objects(&text[start..]);
+    let resume = offsets.files.get(&path).copied().unwrap_or(0);
+    let (text, start) = read_tail(&path, resume)?;
+    let (objects, consumed) = complete_objects(&text);
 
     let mut usages = Vec::new();
     for object in objects {
@@ -297,9 +348,7 @@ pub fn load_gemini(
             Err(_) => offsets.skipped.malformed(),
         }
     }
-    offsets
-        .files
-        .insert(path.clone(), (start + consumed) as u64);
+    offsets.files.insert(path.clone(), start + consumed as u64);
 
     let note = match offsets.skipped.detail() {
         Some(detail) => format!(" · {detail}"),
@@ -732,5 +781,80 @@ mod tests {
         let (third, _) = load_gemini(Some(dir.path()), &mut offsets, Billing::PerToken).unwrap();
         assert_eq!(third.len(), 1, "only the appended record");
         assert!(third[0].event_id.as_deref().unwrap().contains("p-2"));
+    }
+
+    /// Bug: the parse was incremental and the read was not -- `read_to_string` of the whole
+    /// log, every poll, to look at its tail.
+    #[test]
+    fn a_poll_reads_only_the_tail_from_disk() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("telemetry.json");
+        let first = record("p-1", "2026-08-24T10:00:00.000Z", "");
+        let second = record("p-2", "2026-08-24T10:00:05.000Z", "");
+        std::fs::write(&path, format!("{first}{second}")).unwrap();
+
+        let (tail, start) = read_tail(&path, first.len() as u64).unwrap();
+        assert_eq!(start, first.len() as u64);
+        assert_eq!(tail, second, "exactly the bytes after the offset");
+        let (nothing, start) = read_tail(&path, (first.len() + second.len()) as u64).unwrap();
+        assert_eq!(
+            (nothing.as_str(), start),
+            ("", (first.len() + second.len()) as u64)
+        );
+
+        // A multi-byte character cut off at the end is a writer mid-flush, not bad data.
+        let mut cut = first.clone().into_bytes();
+        cut.extend_from_slice(&"é".as_bytes()[..1]);
+        std::fs::write(&path, cut).unwrap();
+        let (tail, _) = read_tail(&path, 0).unwrap();
+        assert_eq!(tail, first);
+    }
+
+    /// Bug, twice over. A stale offset past the end of a rotated file reads nothing, for ever.
+    /// And a file rewritten in place can leave the offset inside a multi-byte character, which
+    /// was a slice panic: the source restart-looped and went `Dead`.
+    #[test]
+    fn a_shrunken_file_restarts_and_a_rewrite_inside_a_character_does_not_panic() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("telemetry.json");
+        let two = format!(
+            "{}{}",
+            record("p-1", "2026-08-24T10:00:00.000Z", ""),
+            record("p-2", "2026-08-24T10:00:05.000Z", "")
+        );
+        std::fs::write(&path, &two).unwrap();
+        let mut offsets = Offsets::new();
+        let (first, _) = load_gemini(Some(dir.path()), &mut offsets, Billing::PerToken).unwrap();
+        assert_eq!(first.len(), 2);
+        // Where the cursor really stopped: after the last `}`, before the newline that follows.
+        let offset = two.trim_end().len();
+
+        // Rewritten in place, no shorter, with `é` straddling the remembered offset.
+        let padded = |pad: usize| {
+            record(
+                "p-3",
+                "2026-08-24T10:00:10.000Z",
+                &format!(",\n    \"pad\": \"{}é{}\"", "x".repeat(pad), "y".repeat(64)),
+            )
+        };
+        let base = padded(0).find('é').unwrap();
+        let rewritten = padded(offset - 1 - base);
+        assert_eq!(
+            rewritten.find('é').unwrap(),
+            offset - 1,
+            "the offset is mid-character"
+        );
+        assert!(rewritten.len() >= offset && !rewritten.is_char_boundary(offset));
+        std::fs::write(&path, &rewritten).unwrap();
+        let (again, _) = load_gemini(Some(dir.path()), &mut offsets, Billing::PerToken)
+            .expect("a rewrite is re-read, not an error");
+        assert_eq!(again.len(), 1, "re-read from the start");
+        assert!(again[0].event_id.as_deref().unwrap().contains("p-3"));
+
+        // Shrunk: the offset is past the end.
+        std::fs::write(&path, record("p-4", "2026-08-24T10:00:15.000Z", "")).unwrap();
+        let (shrunk, _) = load_gemini(Some(dir.path()), &mut offsets, Billing::PerToken).unwrap();
+        assert_eq!(shrunk.len(), 1, "a rotated file is read from the start");
+        assert!(shrunk[0].event_id.as_deref().unwrap().contains("p-4"));
     }
 }

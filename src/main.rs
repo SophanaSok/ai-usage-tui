@@ -198,6 +198,9 @@ fn dispatch() -> Result<()> {
         let path = journal_path(&cli)?;
         return record_routing(&path);
     }
+    if let Some(days) = cli.prune_journal {
+        return prune_journal(&journal_path(&cli)?, days);
+    }
     if cli.claude_code_hook {
         let path = journal_path(&cli)?;
         return ai_usage_tui::harness::claude_code::record_from_stdin(&SourceRoots::from_cli(
@@ -653,6 +656,93 @@ fn uninstall_everything(cli: &ai_usage_tui::cli::Cli) -> Result<()> {
     Ok(())
 }
 
+/// A byte count a person can read. Decimal, as `ls -h --si` and every disk vendor count.
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "kB", "MB", "GB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1000.0 && unit < UNITS.len() - 1 {
+        value /= 1000.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+/// A Unix timestamp as a local calendar date.
+fn local_date(seconds: i64) -> String {
+    use chrono::TimeZone as _;
+    chrono::Local
+        .timestamp_opt(seconds, 0)
+        .single()
+        .map(|date| date.format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|| format!("@{seconds}"))
+}
+
+/// `--prune-journal DAYS`: the one command that deletes what the user recorded, so it says
+/// exactly what it did -- per table, how many of how many, and what it kept and why. A `VACUUM`
+/// that failed is a failure of the command, reported after the counts: the rows are gone either
+/// way, and running it again retries the `VACUUM` alone.
+fn prune_journal(path: &std::path::Path, days: u64) -> Result<()> {
+    let Some(report) =
+        ai_usage_tui::collector::journal::prune(path, days, ai_usage_tui::utils::now())?
+    else {
+        print_line(&format!(
+            "Nothing to prune: {} does not exist",
+            path.display()
+        ))?;
+        return Ok(());
+    };
+    print_line(&format!(
+        "Pruned {}: rows created before {}",
+        path.display(),
+        local_date(report.cutoff)
+    ))?;
+    for (label, table, kept) in [
+        (
+            "usage",
+            report.usage,
+            "kept: the newest-id row, so no id is reused under an open dashboard",
+        ),
+        (
+            "routing",
+            report.routing,
+            "kept: Claude Code sessions that have newer events, so the hook attributes no request twice",
+        ),
+    ] {
+        match table {
+            Some(table) => {
+                print_line(&format!(
+                    "  {label:<8} deleted {} of {} rows",
+                    table.deleted, table.before
+                ))?;
+                let spared = table.eligible.saturating_sub(table.deleted);
+                if spared > 0 {
+                    print_line(&format!("  {:<8} {spared} older row(s) {kept}", ""))?;
+                }
+            }
+            None => print_line(&format!("  {label:<8} nothing recorded yet"))?,
+        }
+    }
+    print_line(&format!(
+        "  {:<8} {} -> {} ({} reclaimed)",
+        "size",
+        human_bytes(report.bytes_before),
+        human_bytes(report.bytes_after),
+        human_bytes(report.bytes_before.saturating_sub(report.bytes_after))
+    ))?;
+    if let Err(error) = report.vacuum {
+        anyhow::bail!(
+            "the rows were deleted, but the space could not be reclaimed: {error}. \
+             Run the command again to retry."
+        );
+    }
+    Ok(())
+}
+
 /// Where the journal lives for a run: the flag, the config, then the platform default.
 ///
 /// Three commands write to it, and each one used to resolve the path itself.
@@ -706,6 +796,32 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
         if report.present {
             if let Some(detail) = &report.detail {
                 let _ = writeln!(out, "  {:<12} {:<19}  {}", "", "", detail);
+            }
+        }
+        // The journal is the one source this tool owns, so the one whose size is this tool's
+        // to report: bytes, the routing events no source row counts, and how far back it goes
+        // -- what a user needs to decide whether `--prune-journal` is worth running. A failure
+        // to read them is a line too, not a silence.
+        if report.present && report.id == ai_usage_tui::collector::journal::ID {
+            match ai_usage_tui::collector::journal::stats(&roots.journal) {
+                Ok(Some(stats)) => {
+                    let _ = writeln!(
+                        out,
+                        "  {:<12} {:<19}  {}, {} routing event(s), oldest row {}; \
+                         `--prune-journal DAYS` deletes older rows",
+                        "",
+                        "",
+                        human_bytes(stats.bytes),
+                        stats.routing_rows.unwrap_or(0),
+                        stats
+                            .oldest
+                            .map_or_else(|| "undated".to_string(), local_date)
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    let _ = writeln!(out, "  {:<12} {:<19}  size unknown: {error}", "", "");
+                }
             }
         }
         if !report.present {

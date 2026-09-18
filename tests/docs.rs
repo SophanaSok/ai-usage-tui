@@ -1124,7 +1124,7 @@ fn uninstall_removes_exactly_the_files_stability_calls_the_tools_own() {
         .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
         .collect();
     assert!(
-        removed.len() >= 5,
+        removed.len() >= 6,
         "own_files resolved nothing: is HOME unset? {removed:?}"
     );
     for name in &listed {
@@ -1134,9 +1134,6 @@ fn uninstall_removes_exactly_the_files_stability_calls_the_tools_own() {
         );
     }
     for name in &removed {
-        if name == "ai-usage-tui.log" {
-            continue;
-        }
         assert!(
             listed.contains(name.as_str()),
             "--uninstall removes {name}, which stability.md does not list under the tool's own files"

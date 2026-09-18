@@ -566,6 +566,7 @@ pub fn own_files(journal: PathBuf, config: Option<PathBuf>) -> OwnFiles {
         crate::update::check_cache_path(),
         crate::statusline::cache_path(),
         crate::logging::default_log_path(),
+        crate::logging::default_log_backup_path(),
     ]
     .into_iter()
     .flatten()

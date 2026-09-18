@@ -144,7 +144,14 @@ fn read_state(state: &RwLock<CollectorState>) -> RwLockReadGuard<'_, CollectorSt
 }
 
 pub struct CollectorState {
-    pub usages: Vec<Usage>,
+    /// Private, and mutated in exactly two places -- `merge` and `price_from` -- because each
+    /// must bump `generation`. A third that does not would be rows the dashboard never shows.
+    usages: Vec<Usage>,
+    /// Counts the changes to `usages`: a row added, a row re-priced. The dashboard remembers
+    /// the one it copied and copies again only when this has moved. It used to deep-clone every
+    /// row ever collected on every refresh, changed or not -- all of history, five strings a
+    /// row, every thirty seconds.
+    generation: u64,
     /// Membership index over `usages`, maintained alongside it. Rebuilding this per poll and
     /// scanning it linearly made merges quadratic in total history, on every poll, forever.
     seen: HashSet<UsageKey>,
@@ -159,6 +166,7 @@ impl CollectorState {
     fn new(pricing: Arc<PricingEngine>) -> Self {
         Self {
             usages: Vec::new(),
+            generation: 0,
             seen: HashSet::new(),
             sources: Vec::new(),
             health: HashMap::new(),
@@ -197,6 +205,9 @@ impl CollectorState {
             if self.seen.insert(usage_key(&u)) {
                 self.usages.push(u);
             }
+        }
+        if self.usages.len() > start {
+            self.generation += 1;
         }
         if !self.sources.contains(&source) {
             self.sources.push(source);
@@ -243,6 +254,12 @@ impl CollectorState {
     fn price_from(&mut self, start: usize) {
         let pricing = Arc::clone(&self.pricing);
         apply_estimated_pricing(&mut self.usages[start..], &pricing);
+        // Bumped whenever there was a row to price, without asking whether one changed. A
+        // reload is the case that matters -- it re-prices rows the dashboard already holds, and
+        // a refresh that never reached the screen is a bug this project has fixed once.
+        if start < self.usages.len() {
+            self.generation += 1;
+        }
     }
 
     /// Rebuild the engine from disk and re-price everything already collected.
@@ -256,6 +273,20 @@ impl CollectorState {
         self.pricing = pricing;
         self.apply_pricing();
     }
+}
+
+/// Whether a poll's row count is worth a log line: when it differs from the last one logged.
+///
+/// Every successful poll of every collector used to log `poll ok` -- six lines every thirty
+/// seconds while the dashboard is open, some seventeen thousand a day, all saying the same
+/// thing. That was the log's growth, not errors. The warning above follows the same rule, for
+/// the same reason: the log is for noticing, not for counting.
+fn count_changed(logged: &mut Option<usize>, count: usize) -> bool {
+    if *logged == Some(count) {
+        return false;
+    }
+    *logged = Some(count);
+    true
 }
 
 /// Shutdown signal that a sleeping collector can be woken from.
@@ -326,6 +357,7 @@ impl CollectorHandle {
                 // Logged when it changes, not every poll: an unreadable transcript stays
                 // unreadable for hours, and the log is for noticing, not for counting.
                 let mut logged_warning: Option<String> = None;
+                let mut logged_count: Option<usize> = None;
                 while !shutdown.is_set() {
                     let result = catch_unwind(AssertUnwindSafe(|| collector.poll()));
                     match result {
@@ -356,8 +388,8 @@ impl CollectorHandle {
                             drop(s);
                             if refreshes_pricing {
                                 logging::info(&name, "pricing refreshed and reloaded");
-                            } else {
-                                logging::info(&name, &format!("poll ok, {} usage rows", count));
+                            } else if count_changed(&mut logged_count, count) {
+                                logging::info(&name, &format!("poll ok, {count} new rows"));
                             }
                         }
                         Ok(Err(e)) => {
@@ -412,6 +444,16 @@ impl CollectorHandle {
 
     pub fn snapshot(&self) -> Vec<Usage> {
         read_state(&self.state).usages.clone()
+    }
+
+    /// The rows and their generation, unless `seen` is already that generation.
+    ///
+    /// Read under one lock, so the pair always belongs together. Rows are never evicted -- key
+    /// `4` (ALL TIME) and the budgets read the whole list, and a dashboard left running must
+    /// show what a freshly started one does -- so the saving is in not copying them.
+    pub fn snapshot_if_newer(&self, seen: Option<u64>) -> Option<(u64, Vec<Usage>)> {
+        let state = read_state(&self.state);
+        (seen != Some(state.generation)).then(|| (state.generation, state.usages.clone()))
     }
 
     /// Per-collector health, sorted by name so the status line does not reshuffle each frame.
@@ -575,6 +617,52 @@ mod tests {
         fn poll(&mut self) -> Result<Vec<Usage>> {
             Ok(self.usages.clone())
         }
+    }
+
+    /// Bug: one `poll ok` line per collector per poll, which is what filled the log.
+    #[test]
+    fn a_poll_is_logged_when_its_count_changes_and_not_otherwise() {
+        let mut logged = None;
+        let lines: Vec<bool> = [0, 0, 0, 3, 0, 0, 2, 2]
+            .into_iter()
+            .map(|count| count_changed(&mut logged, count))
+            .collect();
+        assert_eq!(
+            lines,
+            [true, false, false, true, true, false, true, false],
+            "the first poll, and every change after it"
+        );
+    }
+
+    /// Bug: the dashboard copying every row on every refresh. The generation is what lets it
+    /// ask "anything new?" first.
+    #[test]
+    fn a_snapshot_is_handed_out_once_per_generation() {
+        let handle = CollectorHandle::spawn(vec![Box::new(StubCollector {
+            name: "a".into(),
+            interval_secs: 999,
+            usages: vec![Usage {
+                provider: "p".into(),
+                model: "m".into(),
+                input: 100,
+                ..Default::default()
+            }],
+        })]);
+        let (generation, rows) = wait_for(|| {
+            handle
+                .snapshot_if_newer(None)
+                .filter(|(_, rows)| !rows.is_empty())
+        })
+        .expect("the collector should have produced a row");
+        assert_eq!(rows.len(), 1);
+        assert!(
+            handle.snapshot_if_newer(Some(generation)).is_none(),
+            "nothing changed, and the rows were copied again"
+        );
+        assert!(
+            handle.snapshot_if_newer(Some(generation + 1)).is_some(),
+            "a generation the state is not at is always answered"
+        );
     }
 
     #[test]
@@ -1041,6 +1129,51 @@ mod pricing_reload_tests {
             state.usages[0].cost.is_some(),
             "a reload is the pass that reaches a row collected before the rate: {:?}",
             state.usages[0]
+        );
+    }
+
+    /// Bug: the resolved P1 "a pricing refresh never reached the running dashboard", coming
+    /// back through the copy the dashboard now skips. A reload re-prices rows the dashboard
+    /// already holds; if that does not move the generation, the new cost never leaves this lock.
+    #[test]
+    fn a_repricing_bumps_the_generation() {
+        let mut state = CollectorState::for_test();
+        let mut row = unpriced_row("claude-sonnet-4-5");
+        row.cost = None;
+        row.cost_status = CostStatus::Unavailable;
+        state.usages.push(row);
+        let before = state.generation;
+        state.reload_pricing(Arc::new(PricingEngine::bundled()));
+        assert!(
+            state.usages[0].cost.is_some(),
+            "the fixture must be priceable"
+        );
+        assert_ne!(
+            state.generation, before,
+            "a reload changed a row and left the generation where it was"
+        );
+    }
+
+    /// Bug: every row ever collected deep-cloned on every refresh, changed or not.
+    #[test]
+    fn a_poll_that_adds_nothing_does_not_bump_the_generation() {
+        let mut state = CollectorState::for_test();
+        let row = || {
+            let mut row = unpriced_row("claude-sonnet-4-5");
+            row.event_id = Some("same".into());
+            row
+        };
+        let start = state.merge("test", vec![row()], "test: ok".into(), None);
+        state.price_from(start);
+        let after_first = state.generation;
+        assert_ne!(after_first, 0, "a row was added");
+
+        let start = state.merge("test", vec![row()], "test: ok".into(), None);
+        state.price_from(start);
+        assert_eq!(state.usages.len(), 1);
+        assert_eq!(
+            state.generation, after_first,
+            "a replayed poll added nothing and still invalidated the dashboard's copy"
         );
     }
 

@@ -3403,6 +3403,7 @@ fn uninstall_removes_the_caches_and_keeps_the_data() {
         "update-check.json",
         "statusline-limits.json",
         "ai-usage-tui.log",
+        "ai-usage-tui.log.old",
     ];
     for name in caches {
         std::fs::write(data.join(name), "x").unwrap();
@@ -3457,5 +3458,146 @@ fn uninstall_removes_the_caches_and_keeps_the_data() {
     assert!(status.success(), "a second run is not an error: {stderr}");
     assert!(stdout.contains("Not present:"), "{stdout}");
     assert!(journal.is_file());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// --- --prune-journal -----------------------------------------------------------------------
+
+/// Run `command` with `input` on its stdin.
+fn feed(command: &mut Command, input: &str) -> (std::process::ExitStatus, String, String) {
+    use std::io::Write;
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(input.as_bytes())
+        .expect("write stdin");
+    let output = child.wait_with_output().expect("wait");
+    (
+        output.status,
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// Through the binary, with real recorders: old rows go, the live hook session and the row of
+/// this month stay, the report counts both, `--doctor` shows what there is to prune, and the
+/// exports stop showing what was deleted. Bug: a journal that only ever grew, and a `--doctor`
+/// that could not say by how much.
+#[test]
+fn prune_journal_deletes_old_rows_and_says_what_it_kept() {
+    let dir = scratch("prune-journal");
+    let journal = dir.join("usage.db");
+    let now = chrono::Utc::now().timestamp();
+    let old = now - 100 * 86_400;
+    let usage = |id: &str, created: i64| {
+        format!(
+            "{{\"provider\":\"aider\",\"model\":\"m\",\"event_id\":\"{id}\",\"created\":{created},\
+             \"input_tokens\":10,\"output_tokens\":3}}\n"
+        )
+    };
+    let (status, _, stderr) = feed(
+        writer(&dir).arg("--record-event"),
+        &[
+            usage("recent", now),
+            usage("old-1", old),
+            usage("old-2", old + 1),
+        ]
+        .concat(),
+    );
+    assert!(status.success(), "{stderr}");
+    for (id, created) in [
+        ("claude-code:live:main:t1", old),
+        ("claude-code:live:main:t2", now),
+        ("claude-code:finished:main:t1", old),
+        ("some-harness-1", old),
+    ] {
+        let (status, _, stderr) = feed(
+            writer(&dir).arg("--record-routing"),
+            &format!(
+                "{{\"agent\":\"claude-code\",\"model\":\"m\",\"task\":\"t\",\"tokens\":10,\
+                 \"created\":{created},\"event_id\":\"{id}\"}}"
+            ),
+        );
+        assert!(status.success(), "{stderr}");
+    }
+
+    let (_, doctor, _) = run(writer(&dir).arg("--doctor"));
+    assert!(doctor.contains("4 routing event(s)"), "{doctor}");
+    assert!(doctor.contains("oldest row "), "{doctor}");
+    assert!(doctor.contains("--prune-journal DAYS"), "{doctor}");
+
+    let (status, stdout, stderr) = run(writer(&dir).arg("--prune-journal").arg("31"));
+    assert!(status.success(), "{stderr}");
+    assert!(stdout.contains("usage    deleted 1 of 3 rows"), "{stdout}");
+    assert!(stdout.contains("routing  deleted 2 of 4 rows"), "{stdout}");
+    assert!(
+        stdout.contains("newest-id row"),
+        "says why a row stayed: {stdout}"
+    );
+    assert!(stdout.contains("attributes no request twice"), "{stdout}");
+    assert!(stdout.contains("reclaimed"), "{stdout}");
+
+    let (_, routing, _) = run(writer(&dir).arg("--routing-json"));
+    let routing: serde_json::Value = serde_json::from_str(&routing).expect("routing json");
+    assert_eq!(routing["events"], 2, "the live session, whole: {routing}");
+    let (_, doctor, _) = run(writer(&dir).arg("--doctor"));
+    assert!(doctor.contains("2 routing event(s)"), "{doctor}");
+
+    let (status, stdout, _) = run(writer(&dir).arg("--prune-journal").arg("31"));
+    assert!(status.success(), "a second prune is not an error");
+    assert!(stdout.contains("usage    deleted 0 of 2 rows"), "{stdout}");
+    assert!(journal.is_file());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Bug: a number of days that deletes rows a monthly budget is still counting -- and "nothing
+/// to prune" leaving a journal behind.
+#[test]
+fn prune_journal_refuses_young_rows_and_creates_nothing() {
+    let dir = scratch("prune-journal-refusals");
+    let journal = dir.join("usage.db");
+    let (status, _, stderr) = run(writer(&dir).arg("--prune-journal").arg("30"));
+    assert_eq!(status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("31"), "names the floor: {stderr}");
+    assert!(stderr.contains("budget"), "and says why: {stderr}");
+    assert!(!journal.exists());
+
+    let (status, stdout, stderr) = run(writer(&dir).arg("--prune-journal").arg("90"));
+    assert!(status.success(), "no journal is not a failure: {stderr}");
+    assert!(stdout.contains("Nothing to prune"), "{stdout}");
+    assert!(!journal.exists(), "a prune created the journal");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Bug: a diagnostic log that grew for as long as `AI_USAGE_LOG` stayed set. Through the
+/// binary, because the sink is one per process and keyed off the real environment.
+#[test]
+fn a_log_past_its_cap_is_rotated_on_the_next_line() {
+    let dir = scratch("log-rotation");
+    let log = dir.join("x.log");
+    let backup = dir.join("x.log.old");
+    let cap = ai_usage_tui::logging::MAX_LOG_BYTES;
+    std::fs::File::create(&log)
+        .and_then(|file| file.set_len(cap + 1))
+        .expect("a log past the cap");
+
+    let (status, _, stderr) = run(writer(&dir).env("AI_USAGE_LOG", &log).arg("--doctor"));
+    assert!(status.success(), "{stderr}");
+    assert_eq!(
+        std::fs::metadata(&backup)
+            .expect("the old log, moved aside")
+            .len(),
+        cap + 1
+    );
+    let fresh = std::fs::read_to_string(&log).expect("a fresh log");
+    assert!(fresh.contains("starting"), "{fresh}");
+    assert!((fresh.len() as u64) < cap);
     let _ = std::fs::remove_dir_all(dir);
 }

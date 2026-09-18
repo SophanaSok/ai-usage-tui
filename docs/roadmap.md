@@ -423,7 +423,46 @@ bindings table and the parser rather than a list kept in the test. Decisions wor
    merge into `~/.claude/settings.json`. An `--install-hook` / `--uninstall-hook` pair, and an
    uninstall path for the data directory, would close it. The consent question is the one the update
    story settled: the command is the consent.
-5. **Data lifecycle.** `usage.db` has no retention or `VACUUM`; the collector's in-memory rows grow
+5. **Resolved (2026-09-18). Data lifecycle.** Four findings, and the shape of three was not
+   what the wording suggested.
+
+   *The journal.* `--prune-journal DAYS` deletes old rows and `VACUUM`s; `--doctor` shows the
+   journal's size, its routing events and its oldest row. **Nothing prunes automatically, and no
+   config key exists to make it**: the journal is the only copy of what `--record-*` and the hook
+   wrote, which is the decision `--uninstall` had just taken about the same file. The floor is 31
+   days and the cutoff never passes the first of the local month, because a monthly budget reads
+   that far. Two rules came out of reading the code rather than the finding. Routing rows of a
+   Claude Code session that has newer rows are kept, because `attributed_requests` sums a
+   session's old rows as the hook's cursor and would attribute those requests again -- an
+   invented number. And the usage row with the highest id is kept, because without
+   `AUTOINCREMENT` SQLite hands a deleted top id out again, below the cursor of an open
+   dashboard; `created` is the emitter's, so a replayed old log really can own the top ids.
+
+   *In-memory rows.* **Resolved by decision: rows are never evicted.** Every collector loads all
+   of history at startup and key `4` and the budgets read the whole list, so a dashboard that
+   dropped old rows would disagree with one started a minute ago. About 600 bytes a row; what was
+   wasteful was the work done over them. The dashboard deep-cloned all of history on every
+   refresh, changed or not -- `CollectorState` now counts its changes (`generation`) and
+   `snapshot_if_newer` copies only when the count moved. A pricing reload moves it, held by a
+   test, because a refresh that never reached the screen is a bug fixed here once already.
+
+   *Re-reading.* Gemini's poll seeks to its offset and reads the tail (`read_tail`), starting over
+   when the file shrank or the tail does not open on a character boundary. The same defect was in
+   the journal collector, unfiled: `SELECT ... FROM usage_event` with no `WHERE`, every sixty
+   seconds. It now reads above an id high-water mark (`JournalCursor`) and starts over when the
+   file is another file or its highest id went down.
+
+   *The log.* Rotated past 5 MiB to one `.old` backup, without a lock (`src/logging.rs` says how,
+   and which race is accepted). Its growth was not errors: every successful poll of every
+   collector logged a line, some seventeen thousand a day. A poll is now logged when its count
+   changes.
+
+   Left, and small: `load_routing` still reads the whole `routing_event` table on every dashboard
+   refresh (one row per test run). On Windows there is no inode to compare, so a journal *replaced*
+   by a larger one is not noticed until restart. A Gemini log rewritten in place to a length that
+   puts the old offset on a character boundary still resumes mid-record, as before.
+
+   *As filed:* `usage.db` has no retention or `VACUUM`; the collector's in-memory rows grow
    for the life of the process; Gemini re-reads its whole telemetry file into memory each poll
    (`gemini.rs`, `read_to_string`); the opt-in log never rotates.
 6. **Coverage.** Codex rollouts carry `rate_limits` on every token event and nothing reads them, so

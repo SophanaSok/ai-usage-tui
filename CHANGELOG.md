@@ -27,6 +27,48 @@
   `contrib/claude-code/README.md` now name the commands first and keep the hand merge as the
   alternative.
 
+- **`--prune-journal DAYS` deletes old journal rows and hands the space back; `--doctor` says
+  how big the journal is.** `usage.db` had no retention and no `VACUUM`, and `--doctor` counted
+  its usage rows and nothing else -- not its bytes, not its routing events, which no source row
+  counts, not how far back it goes. The journal is also the *only* copy of what `--record-*` and
+  the hook wrote, so the answer is a command and not a policy: nothing prunes on a timer, at
+  startup or from the dashboard, and no config key exists to make it. The command refuses fewer
+  than 31 days and never reaches into the current month, because a monthly budget still reads
+  those rows. It keeps the routing events of a Claude Code session that has newer ones -- the hook
+  sums a session's earlier rows to know which requests it has already attributed, and would
+  attribute them again -- and the usage row with the highest id, because SQLite hands a deleted
+  top id out again, below the cursor of a dashboard that is open. It reports rows deleted of rows
+  present per table, what it kept and why, and bytes before and after; it creates nothing when
+  there is nothing to prune; and a `VACUUM` that fails exits `2` with the rows still deleted, to
+  be retried by running it again.
+
+### Fixed
+
+- **A poll reads what is new, and the dashboard copies what changed.** Three places re-did all
+  of history on a timer. Gemini's collector tracked a byte offset and then read the whole
+  telemetry log into memory every thirty seconds to slice its tail off; it now seeks and reads
+  the tail, starting over when the file shrank or the tail does not open on a character boundary
+  -- the second was a slice panic once, contained by the collector's restart guard, so the symptom
+  was Gemini going `Dead` and quietly disappearing. The journal collector ran `SELECT ... FROM
+  usage_event` with no `WHERE` every sixty seconds and left deduplication to throw it away; it now
+  reads the rows above the highest id it has seen, and starts over when the journal is another
+  file or its highest id went down. And the dashboard deep-cloned every row ever collected on
+  every refresh, changed or not; the collector state now counts its changes and the dashboard
+  copies only when the count moved -- a pricing reload moves it, which is the case that matters,
+  since a refresh that never reached the screen is a bug this project has fixed once. Rows are
+  still never evicted, by decision: every source loads all of history at startup and ALL TIME and
+  the budgets read it, so a dashboard that dropped old rows would disagree with one just started.
+
+- **The diagnostic log is bounded, and quieter.** With `AI_USAGE_LOG` set the file grew for as
+  long as the variable stayed set -- and what grew it was not errors: every successful poll of
+  every collector logged `poll ok`, six lines every thirty seconds, some seventeen thousand a day.
+  A poll is now logged when its row count changes. Past 5 MiB the file is renamed to `<name>.old`,
+  replacing the previous backup, and started again. Several processes write the one file -- the
+  dashboard, each hook, each status-line redraw -- and the rotation takes no lock: whoever finds
+  the path over the cap renames it, and a process whose open handle is over the cap while the path
+  is not knows it is holding the backup, and reopens; without that second half a dashboard would
+  write into the backup for the rest of its life. `--uninstall` removes the backup with the log.
+
 ### Changed
 
 - **JSON objects keep the order their keys were written in.** `serde_json` now builds with

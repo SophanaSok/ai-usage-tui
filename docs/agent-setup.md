@@ -28,6 +28,7 @@ Everything not listed here only reads local files and prints.
 | `--omarchy-record` | one record in Omarchy's agents directory | no |
 | `--install-hook`, `--uninstall-hook`, `--install-statusline`, `--uninstall-statusline` | Claude Code's `settings.json`, in its config directory: this tool's own entries, and nothing else in the file | no |
 | `--uninstall` | removes the two entries above and this tool's caches; names the journal and the config file and deletes neither | no |
+| `--prune-journal DAYS` | **deletes** journal rows older than `DAYS` (31 or more) and compacts `usage.db`; the only command that deletes recorded usage, so say so and ask first | no |
 | `--csv PATH`, `--routing-csv PATH` | that file (`-` is stdout) | no |
 | `--refresh-pricing`, `--refresh-zen` | a pricing or catalog cache | yes: opencode.ai |
 | `--check-update` | `update-check.json` | yes: api.github.com |
