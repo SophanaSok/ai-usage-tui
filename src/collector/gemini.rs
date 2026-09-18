@@ -155,13 +155,10 @@ pub fn parse_record(value: &Value, decision_billing: Billing) -> Option<Usage> {
     if model.is_empty() {
         return None;
     }
-    let count = |key: &str| -> u64 {
-        attributes
-            .get(key)
-            .and_then(Value::as_i64)
-            .unwrap_or(0)
-            .max(0) as u64
-    };
+    // The shared rule for what a count is (`helpers::count`): a negative one used to be read
+    // as `0` here, and an `i64::MAX` as nine quintillion tokens.
+    let record = value.get("attributes")?;
+    let count = |key: &str| -> u64 { crate::helpers::number(record, &[key]) };
 
     // Google's `cachedContentTokenCount` is a *subset* of `promptTokenCount`, unlike Anthropic's
     // cache-read count which is reported alongside its input. Subtracting keeps the buckets
@@ -171,7 +168,7 @@ pub fn parse_record(value: &Value, decision_billing: Billing) -> Option<Usage> {
     // Every `api_response` record carries both counts; absent is a format change, not a zero.
     let incomplete = ["input_token_count", "output_token_count"]
         .iter()
-        .any(|key| attributes.get(*key).and_then(Value::as_i64).is_none());
+        .any(|key| crate::helpers::count(record, &[key]).is_none());
     let prompt = count("input_token_count");
     let cache_read = count("cached_content_token_count").min(prompt);
     let input = prompt.saturating_sub(cache_read);

@@ -5,6 +5,8 @@ pub mod codex;
 pub mod copilot;
 pub mod gemini;
 pub mod journal;
+#[cfg(test)]
+mod mutation;
 pub mod opencode;
 pub mod pricing_refresh;
 pub mod registry;
