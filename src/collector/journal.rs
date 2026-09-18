@@ -376,6 +376,9 @@ fn open_for_writing(
         .parent()
         .ok_or_else(|| anyhow::anyhow!("journal path has no parent directory"))?;
     fs::create_dir_all(parent)?;
+    // SQLite creates at the umask, and its `-wal` and `-journal` files take the main file's
+    // bits -- so the journal is made owner-only first, and an empty file is an empty database.
+    crate::helpers::create_private(path)?;
     let conn = Connection::open(path)?;
     conn.busy_timeout(WRITER_BUSY_TIMEOUT)?;
     conn.execute_batch("BEGIN IMMEDIATE")?;

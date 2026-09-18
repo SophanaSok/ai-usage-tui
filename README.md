@@ -1117,6 +1117,12 @@ alerts are POSTed as JSON with this shape:
 `spend` and `pct` are floors when `unpriced_requests` is non-zero.
 `--check-budgets` prints the same per-alert object.
 
+A webhook URL is treated as the credential it usually is: no message, log line or `--doctor` row
+repeats it, only its host. Over plain `http://` to another machine the alert -- scope, limit and
+spend -- can be read on the way, and `--check-budgets`, `--doctor` and the log each say so;
+`http://localhost` is exempt, and nothing is refused, because the usual plain-HTTP target is a
+notifier on your own network.
+
 `--check-budgets` exits `1` when a budget is over and `2` when the check itself failed, so a
 scheduled run can tell the two apart. It posts synchronously before exiting `1` and prints
 `warning: budget webhook dispatch failed: …` on stderr if the POST fails. The
@@ -1387,6 +1393,11 @@ Default local storage paths (when the corresponding XDG variable is unset):
 | Zen model catalog | `~/.local/share/ai-usage-tui/zen-models.json` |
 | Latest-release answer, written only by `--check-update` or an opted-in `--doctor` | `~/.local/share/ai-usage-tui/update-check.json` |
 | Configuration | `~/.config/ai-usage-tui/config.toml` |
+
+Everything under `~/.local/share/ai-usage-tui/` is created readable and writable by you alone
+(`0600`), the journal's SQLite side files and the diagnostic log included. A file that is
+already there keeps the permissions it has: a journal made by an earlier release stays as wide
+as it was, `--doctor` says so, and `chmod 600` is yours to run.
 
 ## Troubleshooting
 

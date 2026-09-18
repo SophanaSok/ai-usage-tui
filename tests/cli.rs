@@ -1061,6 +1061,146 @@ fn the_text_output_path_also_survives_a_closed_pipe() {
     assert!(status.success(), "got {status}");
 }
 
+/// SQLite creates a database at the umask, so the journal is made first. End to end, because
+/// the unit test cannot show that SQLite then opens the empty file it finds, or that the log and
+/// the `-wal` beside the journal follow.
+#[cfg(unix)]
+#[test]
+fn the_journal_and_the_log_are_created_owner_only() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = scratch("private-files");
+    let journal = dir.join("data").join("usage.db");
+    let log = dir.join("diagnostics.log");
+    let fixture = format!(
+        "{}/tests/fixtures/usage_events.ndjson",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let output = bin()
+        .arg("--record-event")
+        .arg("--journal")
+        .arg(&journal)
+        .env("AI_USAGE_LOG", &log)
+        .stdin(std::fs::File::open(&fixture).unwrap())
+        .output()
+        .expect("run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        journal_rows(&journal).len(),
+        2,
+        "the journal SQLite found empty still works"
+    );
+
+    let mut checked = 0;
+    for entry in std::fs::read_dir(journal.parent().unwrap())
+        .unwrap()
+        .flatten()
+    {
+        let mode = entry.metadata().unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "{}", entry.path().display());
+        checked += 1;
+    }
+    assert!(checked >= 1);
+    if log.exists() {
+        let mode = std::fs::metadata(&log).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the log");
+    }
+
+    // A journal that was already wider is left as it is, and the doctor says so.
+    std::fs::set_permissions(&journal, std::fs::Permissions::from_mode(0o644)).unwrap();
+    record(&journal, &fixture, "--record-event");
+    let mode = std::fs::metadata(&journal).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o644);
+    let mut doctor = bin();
+    doctor.arg("--doctor");
+    hermetic_with(
+        &mut doctor,
+        std::path::Path::new("/nonexistent/opencode.db"),
+        &journal,
+    );
+    let text = String::from_utf8(doctor.output().expect("doctor").stdout).unwrap();
+    assert!(
+        text.contains("mode 644") && text.contains("chmod 600"),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The summary's `build.update` is `null` on every hermetic run, because the check is opt-in and
+/// nothing has cached one. So the populated shape is planted here and held to the glossary too --
+/// and the run proves the document is built from the cache alone, with no network to reach.
+#[test]
+fn the_summary_reports_a_cached_update_check_and_the_glossary_knows_it() {
+    let dir = scratch("summary-build");
+    let data = dir.join("data");
+    std::fs::create_dir_all(data.join("ai-usage-tui")).unwrap();
+    std::fs::write(
+        data.join("ai-usage-tui").join("update-check.json"),
+        r#"{"latest":"v999.0.0","checked":1787000000}"#,
+    )
+    .unwrap();
+    let mut command = bin();
+    command.arg("--summary-json");
+    hermetic(&mut command).env("XDG_DATA_HOME", &data);
+    let output = command.output().expect("run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+
+    assert_eq!(document["build"]["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(document["build"]["update"]["latest"], "v999.0.0");
+    assert_eq!(document["build"]["update"]["newer"], true);
+    assert_eq!(document["build"]["update"]["checked_at"], 1_787_000_000);
+    let problems = ai_usage_tui::schema::unknown("--summary-json", &document);
+    assert!(problems.is_empty(), "{problems:#?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A model name is another program's string, and `--record-event` takes one from anybody. One
+/// that a spreadsheet would run must reach the CSV as text, and must still be the same name in
+/// the JSON, which no spreadsheet reads.
+#[test]
+fn a_model_name_that_is_a_formula_reaches_the_csv_as_text() {
+    let dir = scratch("csv-formula");
+    let journal = dir.join("usage.db");
+    let events = dir.join("events.ndjson");
+    std::fs::write(
+        &events,
+        r#"{"provider":"aider","model":"=HYPERLINK(\"http://x\",\"y\")","event_id":"f-1","created":1758000000,"input_tokens":10,"output_tokens":3,"project":"@home","session_id":"-s1","cost":0.01}
+"#,
+    )
+    .unwrap();
+    record(&journal, events.to_str().unwrap(), "--record-event");
+
+    let mut command = bin();
+    command.args(["--csv", "-", "--all"]);
+    hermetic_with(
+        &mut command,
+        std::path::Path::new("/nonexistent/opencode.db"),
+        &journal,
+    );
+    let output = command.output().expect("run --csv -");
+    assert!(output.status.success());
+    let csv = String::from_utf8(output.stdout).expect("utf8");
+    let row = csv.lines().nth(1).expect("one row under the header");
+    assert!(
+        row.starts_with(r#"aider,"'=HYPERLINK(""http://x"",""y"")","#),
+        "{row}"
+    );
+    assert!(row.contains(",'@home,'-s1,"), "{row}");
+    assert!(row.contains(",0.01,"), "a number is left a number: {row}");
+
+    let rows = journal_rows(&journal);
+    assert_eq!(rows[0]["model"], r#"=HYPERLINK("http://x","y")"#);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `--record-event` is the way in for a tool with no collector: an adapter prints the tool's own
 /// usage in this tool's terms. What it has to prove end to end is that the rows arrive *as usage*
 /// -- in the project and session views, which the response recorders could never reach -- and

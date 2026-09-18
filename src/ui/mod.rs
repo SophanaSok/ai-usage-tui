@@ -97,6 +97,13 @@ where
         })?;
     // The dispatcher owns a blocking HTTP client; give it its own thread and talk to it over
     // a channel. Dropping the sender when `run` returns ends the worker.
+    if let Some(notice) = dispatcher
+        .webhook_url
+        .as_deref()
+        .and_then(crate::budget::webhook_notice)
+    {
+        crate::logging::warn("budget", &notice);
+    }
     let alert_sink = dispatcher.webhook_url.is_some().then(|| {
         let (tx, rx) = mpsc::channel::<Vec<Alert>>();
         std::thread::spawn(move || {

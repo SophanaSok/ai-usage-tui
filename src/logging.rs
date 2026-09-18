@@ -84,7 +84,16 @@ impl Sink {
 }
 
 fn open_for_append(path: &Path) -> std::io::Result<File> {
-    OpenOptions::new().create(true).append(true).open(path)
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    // Only when this creates it: the log names files under the home directory, and the file a
+    // rotation starts is created here too.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(crate::helpers::PRIVATE_MODE);
+    }
+    options.open(path)
 }
 
 /// `<name>.old`, appended to the whole file name: `with_extension` would turn `x.log` into

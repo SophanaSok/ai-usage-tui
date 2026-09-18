@@ -14,8 +14,9 @@ ai-usage-tui --summary-json --month    # --today | --week | --month | --days N |
 
 One line of JSON, roughly 25-35 KB: `totals`, then the same bucket shape `by_category`,
 `by_model`, `by_project`, `by_session` (largest first, `--top N`, default 10, the rest folded into
-`other`) and `by_day`; plus `sources`, `pricing`, `burn`, `budgets`, `limits`, `escalations`,
-`provenance` and `routing`.
+`other`) and `by_day`; plus `build`, `sources`, `pricing`, `burn`, `budgets`, `limits`,
+`escalations`, `provenance` and `routing`. `build.update` is the last *cached* answer of an opt-in
+update check: `null` means nobody has asked, never "up to date".
 
 **Do not start with `--json`.** It prints one object per request -- megabytes, often more than
 your context window. Use it only after narrowing (step 2).

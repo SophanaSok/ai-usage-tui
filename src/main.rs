@@ -411,7 +411,14 @@ fn check_budgets(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()
     if has_alerts {
         // Report a failed dispatch rather than swallowing it: a webhook that silently never
         // fires is indistinguishable from a budget that never trips.
-        let mut dispatcher = AlertDispatcher::new(webhook_url(cli, config));
+        let url = webhook_url(cli, config);
+        if let Some(notice) = url
+            .as_deref()
+            .and_then(ai_usage_tui::budget::webhook_notice)
+        {
+            eprintln!("warning: {notice}");
+        }
+        let mut dispatcher = AlertDispatcher::new(url);
         if let Err(error) = dispatcher.dispatch(&alerts) {
             eprintln!("warning: budget webhook dispatch failed: {}", error);
         }
@@ -823,6 +830,19 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
                     let _ = writeln!(out, "  {:<12} {:<19}  size unknown: {error}", "", "");
                 }
             }
+            // A journal made before this tool created its files owner-only, or copied from
+            // somewhere. Said, not changed: the file is the user's, as `--uninstall` holds.
+            if let Some(mode) = ai_usage_tui::helpers::wider_than_private(&roots.journal) {
+                let _ = writeln!(
+                    out,
+                    "  {:<12} {:<19}  mode {:03o}: other accounts on this machine can read it; \
+                     `chmod 600 {}` makes it private",
+                    "",
+                    "",
+                    mode,
+                    roots.journal.display()
+                );
+            }
         }
         if !report.present {
             if let Some(hint) = absence_hint(report.id) {
@@ -877,6 +897,17 @@ fn doctor(cli: &ai_usage_tui::cli::Cli, config: &ConfigFile) -> Result<()> {
     }
     let budgets = config.budgets.as_ref().map_or(0, |b| b.entry.len());
     let _ = writeln!(out, "  budgets      {budgets} configured");
+    // The host, never the URL: a webhook's token is in its path.
+    if let Some(url) = webhook_url(cli, config) {
+        let _ = writeln!(
+            out,
+            "  webhook      {}",
+            ai_usage_tui::budget::webhook_host(&url)
+        );
+        if let Some(notice) = ai_usage_tui::budget::webhook_notice(&url) {
+            let _ = writeln!(out, "               {notice}");
+        }
+    }
     match ai_usage_tui::logging::log_path() {
         Some(path) => {
             let _ = writeln!(out, "  log          {}", path.display());
