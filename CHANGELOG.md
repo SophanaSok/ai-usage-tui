@@ -27,6 +27,21 @@
   `contrib/claude-code/README.md` now name the commands first and keep the hand merge as the
   alternative.
 
+- **`--prune-journal DAYS` deletes old journal rows and hands the space back; `--doctor` says
+  how big the journal is.** `usage.db` had no retention and no `VACUUM`, and `--doctor` counted
+  its usage rows and nothing else -- not its bytes, not its routing events, which no source row
+  counts, not how far back it goes. The journal is also the *only* copy of what `--record-*` and
+  the hook wrote, so the answer is a command and not a policy: nothing prunes on a timer, at
+  startup or from the dashboard, and no config key exists to make it. The command refuses fewer
+  than 31 days and never reaches into the current month, because a monthly budget still reads
+  those rows. It keeps the routing events of a Claude Code session that has newer ones -- the hook
+  sums a session's earlier rows to know which requests it has already attributed, and would
+  attribute them again -- and the usage row with the highest id, because SQLite hands a deleted
+  top id out again, below the cursor of a dashboard that is open. It reports rows deleted of rows
+  present per table, what it kept and why, and bytes before and after; it creates nothing when
+  there is nothing to prune; and a `VACUUM` that fails exits `2` with the rows still deleted, to
+  be retried by running it again.
+
 ### Fixed
 
 - **A poll reads what is new, and the dashboard copies what changed.** Three places re-did all

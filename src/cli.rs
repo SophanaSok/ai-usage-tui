@@ -100,6 +100,8 @@ pub struct Cli {
     pub uninstall_statusline: bool,
     /// Remove both entries and this tool's caches, say how to delete the rest, and exit.
     pub uninstall: bool,
+    /// Delete journal rows older than this many days, reclaim the space, and exit.
+    pub prune_journal: Option<u64>,
 }
 
 impl Default for Cli {
@@ -164,6 +166,7 @@ impl Default for Cli {
             install_statusline: false,
             uninstall_statusline: false,
             uninstall: false,
+            prune_journal: None,
         }
     }
 }
@@ -394,6 +397,24 @@ struct Args {
     /// Remove the hook, the status line and this tool's caches; print how to delete the journal and config, which are kept; and exit
     #[arg(long, group = "action")]
     uninstall: bool,
+    /// Delete journal rows older than DAYS (31 or more), then reclaim the space, and exit; nothing else ever deletes from the journal
+    #[arg(long, value_name = "DAYS", group = "action", value_parser = prune_days)]
+    prune_journal: Option<u64>,
+}
+
+/// `--prune-journal`'s number: whole days, and no fewer than the dashboard still reads.
+fn prune_days(text: &str) -> std::result::Result<u64, String> {
+    let floor = crate::collector::journal::PRUNE_MIN_DAYS;
+    let days: u64 = text
+        .parse()
+        .map_err(|_| format!("`{text}` is not a whole number of days"))?;
+    if days < floor {
+        return Err(format!(
+            "{days} is below the floor of {floor} days: a monthly budget reads back to the first \
+             of the month and --month reads 30 days, so a younger row is one still being counted"
+        ));
+    }
+    Ok(days)
 }
 
 /// How many projects and sessions `--summary-json` lists unless told otherwise.
@@ -420,6 +441,7 @@ const COLLECTION_ACTIONS: &[&str] = &[
     "install_statusline",
     "uninstall_statusline",
     "uninstall",
+    "prune_journal",
 ];
 
 /// The parser's `Command`, for help, completions and the man page.
@@ -558,6 +580,7 @@ impl Cli {
             install_statusline: args.install_statusline,
             uninstall_statusline: args.uninstall_statusline,
             uninstall: args.uninstall,
+            prune_journal: args.prune_journal,
             source_enabled: Default::default(),
         }
     }
@@ -823,8 +846,11 @@ mod tests {
                 .get_action()
                 .takes_values();
             let mut args = vec!["--once".to_string(), flag.clone()];
+            // A value every value-taking action accepts: a provider name to `--record-usage`,
+            // a number of days to `--prune-journal`. With `llamacpp` the second was rejected for
+            // its value, and the conflict this test is about was never reached.
             if takes_a_value {
-                args.push("llamacpp".to_string());
+                args.push("90".to_string());
             }
             assert!(
                 parse_cli(args.iter().map(String::as_str)).is_err(),
@@ -852,11 +878,13 @@ mod tests {
             ["--install-statusline", "--uninstall"],
             ["--uninstall", "--json"],
             ["--install-hook", "--doctor"],
+            ["--json", "--prune-journal"],
+            ["--uninstall", "--prune-journal"],
         ] {
-            let args = if pair[1] == "--csv" {
-                vec![pair[0], pair[1], "/tmp/x.csv"]
-            } else {
-                vec![pair[0], pair[1]]
+            let args = match pair[1] {
+                "--csv" => vec![pair[0], pair[1], "/tmp/x.csv"],
+                "--prune-journal" => vec![pair[0], pair[1], "90"],
+                _ => vec![pair[0], pair[1]],
             };
             assert!(
                 parse_cli(args.clone()).is_err(),
@@ -910,6 +938,35 @@ mod tests {
         assert!(parse_cli(["--omarchy-record", "--once"]).is_err());
         let cli = parse_cli(["--omarchy-record", "--omarchy-dir", "/x"]).unwrap();
         assert_eq!(cli.omarchy_dir.as_deref(), Some(std::path::Path::new("/x")));
+    }
+
+    /// Bug: a number of days young enough to delete rows a monthly budget is still counting.
+    #[test]
+    fn prune_journal_takes_days_and_refuses_fewer_than_the_dashboard_reads() {
+        assert_eq!(
+            parse_cli(["--prune-journal", "31"]).unwrap().prune_journal,
+            Some(31)
+        );
+        assert_eq!(
+            parse_cli(["--prune-journal", "365"]).unwrap().prune_journal,
+            Some(365)
+        );
+        for refused in ["30", "7", "0", "-1", "ninety", "90.5"] {
+            assert!(
+                parse_cli(["--prune-journal", refused]).is_err(),
+                "--prune-journal {refused} was accepted"
+            );
+        }
+        assert!(
+            parse_cli(["--prune-journal"]).is_err(),
+            "the number is required"
+        );
+        assert_eq!(parse_cli(["--json"]).unwrap().prune_journal, None);
+        let cli = parse_cli(["--prune-journal", "90", "--journal", "/x/usage.db"]).unwrap();
+        assert_eq!(
+            cli.journal_path.as_deref(),
+            Some(std::path::Path::new("/x/usage.db"))
+        );
     }
 
     /// The installers are single-purpose too, and `--claude-dir` reaches them: it is what

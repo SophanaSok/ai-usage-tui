@@ -55,6 +55,34 @@ concurrent hooks cannot race a migration, and refuse a journal stamped with a ne
 they know rather than writing into a shape they may not understand. Readers open it read-only and
 adapt to the columns they find.
 
+### Pruning
+
+Nothing deletes from the journal but `--prune-journal DAYS` (`journal::prune`): it is the only
+copy of what was recorded into it. Under the same write lock the writers take, and refusing a
+newer journal as they do, it deletes rows whose `created` is older than `DAYS` days -- never fewer
+than 31, and never later than the first of the local month, which is how far back a monthly
+budget reads -- and then runs `VACUUM`. It creates nothing: no file, no table, no version stamp.
+Kept on purpose, and reported:
+
+- **The `usage_event` row with the highest `id`.** `id` is `INTEGER PRIMARY KEY` without
+  `AUTOINCREMENT`, so a new row takes `MAX(id) + 1`; delete the highest and its id is reused
+  below the journal collector's cursor, for a row an open dashboard would never read. `created`
+  is the emitter's, so a replayed old log really can own the highest ids.
+- **`routing_event` rows of a Claude Code session that has newer rows.** `--claude-code-hook`
+  sums a session's rows (`attributed_requests`) to know which requests it has already
+  attributed; without the old ones it would attribute them again. The session is the `event_id`
+  through its second colon (`claude-code:{session}:`). Rows under any other id prune by
+  `created` alone.
+- **Undated rows** (`created <= 0`): their age is not known.
+
+Two consequences. An identity is forgotten with its row, so replaying an old log after a prune
+records it again. And `--routing-json` still means all history -- all that was kept. `VACUUM`
+preserves the ids of both tables and rewrites the file in place, so neither the cursor nor an
+open reader is disturbed; it needs free disk space about the size of the journal, and if it fails
+the rows stay deleted, the command exits `2`, and running it again retries the `VACUUM` alone.
+No index on `created` exists or is added: a full scan is fine for a rare command, and an index is
+a schema change every older writer would have to tolerate.
+
 ## Budget Configuration
 
 ```text
