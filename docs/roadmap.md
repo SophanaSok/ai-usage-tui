@@ -608,6 +608,608 @@ bindings table and the parser rather than a list kept in the test. Decisions wor
 
    *As filed:* The Windows zip carries no completions (PowerShell is never generated); no musl
    static Linux build; macOS binaries unsigned; AUR blocked upstream; Chocolatey never pushed.
+9. **Resolved (2026-09-18), but for one call that is the maintainer's. Hygiene.**
+   `CODE_OF_CONDUCT.md` has a reporting address (the one `SECURITY.md` gives, held together by
+   a test), GitHub's own channel for a report about the sole maintainer, and what follows.
+   `LICENSE` names the author `Cargo.toml` names, with the contributors. Every changelog heading
+   is `## [x.y.z] - YYYY-MM-DD`, in order, the newest matching `Cargo.toml`; normalising them
+   showed the release workflow cut its release notes by *substring* of the version, which takes
+   `1.0.0` out of `11.0.0`, and it matches `[x.y.z]` now. `.claude/settings.local.json` was
+   already in the repository's `.gitignore` by the time this was reached.
+
+   **Left to the maintainer: `v0.1.0` has a tag and no GitHub Release.** Creating one is a public
+   act on the project's release page, so it was not done unasked. The recommendation is to leave
+   it: the tag is the initial commit, it predates the release workflow, and a release with no
+   assets is a download page with nothing to download -- `install.sh --version v0.1.0` would
+   still refuse it for having no `checksums.txt`. If it is wanted:
+   `gh release create v0.1.0 --latest=false --notes "Initial release. No binaries were built for it."`
+
+   *As filed:* 
+
+## Positioning` filed
+a new P1 (quota and reset windows existed only on Omarchy), which v0.13.0 and `--statusline`
+closed the next day. Findings numbered since the audit take the priority they would have had
+there, so a P1 can be open again — read `## Positioning` alongside `## Outstanding findings`,
+not instead of it. Nothing above P2 is open as of 2026-09-02.
+
+Sources read today: OpenCode SQLite, Claude Code JSONL, Codex CLI rollouts, GitHub Copilot's store and legacy logs,
+Gemini CLI telemetry, the local-model/routing journal (Ollama, llama.cpp and other OpenAI-compatible servers), and
+the Zen pricing table. Verified end to end against ~103MB of real Claude Code logs — 5,879 requests
+parsed in 0.27s with **zero unpriced rows**. On a subscription account those rows are `quota`
+rather than priced, and carry the list-rate figure as `api_equivalent_cost` instead of `cost`.
+
+The two things worth defending, and the reason to prefer depth over breadth below.
+Both claims are stated at the narrowest width that survives contact with the field as
+surveyed 2026-09-01; the wider versions they replace were true when written and are not now.
+
+- **Cost provenance, scoped to per-request cost.** A rate we do not have yields
+  `CostStatus::Unavailable`, and `quota` is its own state with `api_equivalent_cost` kept
+  beside it and never summed into a budget. The earlier phrasing — "no competitor refuses to
+  invent a number" — **has expired**: `claude-monitor` 4.0.0 ships provenance labels
+  (`official` / `local_estimate` / `experimental` / `unknown`). Theirs label a *rate-limit*
+  reading as official-or-estimated; this labels a *per-request cost*, and nothing in the field
+  distinguishes "billed against a subscription quota" from "we could not price it".
+  `ccusage --mode display` still prints `$0.00` for a row it cannot price, which is the
+  concrete behaviour this convention exists to refuse. Do not restate the claim more broadly
+  than this paragraph without re-checking the field.
+- **Routing analytics.** Retries / escalations / test pass-fail / review defects per model —
+  "is Opus actually worth 5× Sonnet on my codebase?" This one still holds unqualified: no other
+  local terminal tool computes cost per delivered result. The tools that do are gateways
+  (LiteLLM, Helicone, Langfuse) and org-level SaaS, which need a proxy hop or an admin account.
+  It is also the weaker half of the pitch by placement, not by substance — see the note under
+  *Positioning* below.
+
+### Resolved — the Copilot schema is validated against a real account
+
+The collector shipped in v0.12.0 without a Copilot install to test against: the store's
+filename, the `assistant_usage_events` column set and the unit of
+`modelMetrics.<model>.requests.cost` were all derived from Copilot's published behaviour and
+from other readers of the same files. It is now checked against bytes the CLI actually wrote —
+Copilot CLI 1.0.82, driven non-interactively twice, once with a tool-using prompt.
+
+**The schema probe did its job**: nothing produced a wrong number, and an absent column
+degraded to `NULL` exactly as designed. But three assumptions were wrong, and two of them cost
+data:
+
+- **A turn is not a request.** `event_id` was `copilot:{session}:{turn_index}`, and the capture
+  has a `user` row and an `agent` row sharing `turn_index` 0 inside one session — a tool-using
+  prompt produces several requests per turn, and `turn_index` was `0` on every row of every
+  session captured. Against the real store the collector reported **2 rows where Copilot
+  recorded 3**, discarding the extra rows' tokens with them. Identity is now the table's own
+  autoincrement `id`. This is the same defect the Gemini validation found, in a different
+  spelling: there it was keying six `api_response` records on a shared `prompt_id`.
+- **`cwd` and `repository` are not columns of `assistant_usage_events`.** They are on
+  `sessions`. The probe found neither, selected both as `NULL`, and every Copilot row came out
+  with no project at all. The select list now looks on `sessions` too and joins when it must,
+  still preferring the usage table so a build that moves them onto it needs no join.
+- **`created_at` is declared `TEXT` and written as RFC 3339**, while the incremental read bound
+  an `i64`. SQLite orders every integer before every string, so `created_at >= <integer>` was
+  *always true* and the cursor filtered nothing — every poll re-read the whole table. The cursor
+  now also keeps the store's own spelling and compares text with text.
+
+**`requests.cost` is a premium-request count, not dollars, so the billing decision stands.** The
+capture settles the question the previous entry left open: a `session.shutdown` reporting
+`"totalPremiumRequests": 1` carries `modelMetrics.<model>.requests = {"count": 1, "cost": 1}`,
+and the request table spells the same thing as `request_multiplier` (`1.0`). The real money
+figure is `total_nano_aiu` — `231429600` nano AI Units for the run the CLI summarised as
+"AI Credits 0.23" — which is a Copilot billing unit and not a dollar amount. So `cost: None`
+with `CostStatus::Unavailable` is right and stays right, and nothing here reaches a budget.
+
+**What the capture confirmed.** `session-store.db` is the real filename (the first candidate
+tried). The inclusive-token convention holds in the bytes: a shutdown reporting
+`usage.inputTokens: 13864` alongside `cacheReadTokens: 1152` also reports
+`tokenDetails.input.tokenCount: 12712`, which is the subtraction this collector does — the
+v0.12.0 cache double-count fix was right. The legacy `session.shutdown` shape parses as written,
+including the empty-`modelMetrics` case a session that made no model call produces. The store is
+in WAL mode and the read-only open handles it.
+
+`tests/fixtures/copilot_home/session-store.db` is the redacted capture — the real DDL, with
+identifiers and paths replaced and a `FIXTURE_SECRET` planted in `turns.user_message` and
+`sessions.summary` so the content-leak assertion has something to catch.
+
+Left open, and needing a Copilot user rather than this machine: whether a store that has been
+through several CLI upgrades still matches, and whether a seat on a **paid** plan spells
+`request_multiplier` as something other than `1.0` — every model reachable here multiplies to 1.
+
+### Resolved — `claude-review` reviewed nothing, three ways over
+
+Two independent faults, both now understood, both fixed; what is left is to *verify* the fix
+against a pull request carrying real defects.
+
+**Fault 1: the workflow denied its own review skill.** `--allowedTools` **replaces** the default
+allowlist rather than extending it, and the generated workflow named
+`mcp__github_inline_comment__create_inline_comment` and nothing else — while the `prompt:` was
+`/code-review:code-review`, a slash command the model invokes through the **`Skill`** tool. First
+move denied, then `"subtype": "success"` and silence. Four runs against a pull request carrying
+two deliberate defects:
+
+| allowlist | turns | denials | outcome |
+| --- | --- | --- | --- |
+| comment tool only (generated) | 6 | 1 — `Skill` | never reviewed |
+| flag removed, defaults | 21 | 7 | reviewed, no way to post |
+| `+ Read,Grep,Glob,Bash` | 7 | 1 — `Skill` | never reviewed |
+| `+ Skill` (PR #75) | 7 | **0** | skill ran, spawned 2 subagents |
+
+**Fault 2: the review fans out to background tasks, and the parent does not wait.** With `Skill`
+allowed the review starts and then ends having posted nothing. Run 33568706427 carries
+`"subtype": "background_tasks_changed"`, `"task_started"`, `"task_progress"` and finishes at
+
+```
+"num_turns": 6, "permission_denials": [],
+"result": "I'll wait for the background agent's completion notification before continuing."
+```
+
+Six turns is nowhere near a cap: **the parent stopped voluntarily**, waiting for a notification a
+`-p` invocation never delivers. Raising `--max-turns` — which an earlier version of this entry
+proposed as the cheapest fix — buys nothing, and that is worth not re-deriving.
+
+The plugin's command fans out by design: a Haiku eligibility agent, five parallel Sonnet
+reviewers, a Haiku confidence scorer per issue. Reading it also showed **the posting path never
+matched either**: step 8 posts one summary comment with `gh pr comment` (its frontmatter allows
+`Bash(gh pr comment:*)`) and it never creates an inline comment, so
+`mcp__github_inline_comment__create_inline_comment` and the action's buffered-comment step were
+looking for something that was never going to be produced. Its command body has no `$ARGUMENTS`
+either, so the `--comment <repo>/pull/N` the workflow passed was noise.
+
+**The fix** replaces the slash command with a direct prompt that reviews in-process — no
+subagents, no background tasks — and posts with `gh pr comment`, with an allowlist naming exactly
+the tools that prompt uses. It also posts a "No issues found" comment rather than staying silent,
+because silence is indistinguishable from a review that never ran, which is what made the first
+eight runs so expensive to read.
+
+**Why none of this can be tested on the pull request that changes it.** `claude-code-action`
+validates the workflow file before it runs anything:
+
+```
+##[warning]Skipping action due to workflow validation: Workflow validation failed. The workflow
+file must exist and have identical content to the version on the repository's default branch.
+```
+
+It then exits `Exiting due to workflow validation skip` — and **the job still reports success**.
+Run 33571283816 did exactly this in 14 seconds. So every pull request that edited this workflow
+(#67, #68, #69, #71, #72, #75 and the one carrying this note) had its review silently skipped,
+which is a second, entirely separate way to get a green check and no review. It also means the
+measurement loop is: merge the workflow change to `main` first, *then* open a separate pull
+request that does not touch `.github/` and read the run on that. `show_full_output` has to be on
+in `main` for the measuring run and taken back off afterwards, which is what #72 followed by #76
+was doing.
+
+**It works, and the first thing it reviewed it caught.** On PR #81 the in-process review posted
+a finding within a minute: the new per-agent journal cursor was built as
+`claude-code:{session}:{agent_id}:` while `event_id` was still written as
+`claude-code:{session}:{tool_use_id}`, so the prefix matched nothing in SQL and every subagent run
+re-attributed from the start of its transcript. Real, ours, and not caught by `fmt`, `clippy`, the
+suite or the author. Fixed in the same pull request, with the reply posted back on the thread.
+`show_full_output` is off again.
+
+**It caught a second one on PR #83, and that run exposed a third way to get a green check with
+no review.** The finding was good — a `## Positioning` section filed a new *open* P1 while the
+untouched summary line two sections up still said every P1 had shipped, which is the drifted
+claim that pull request existed to retire, reintroduced by the same commit. It was fixed and
+answered on the thread. But **the re-run after the fix reviewed nothing and still reported
+success**: run 33583870670 finished `"num_turns": 2`, `"is_error": false`, no permission
+denials, $0.07, and posted no comment at all.
+
+That is step 1 of the prompt doing what it says — *"Skip the review entirely — post nothing and
+stop — if the pull request ... already carries a code review comment from you"* — an
+anti-duplicate guard. The consequence is the part worth knowing: **the review runs once per pull
+request, ever.** Every push after the first is a green `claude-review` check over an unreviewed
+diff, and a fix made *in response to a finding* is the one change guaranteed never to be looked
+at. The "no issues found" comment was added because silence reads like a review that never ran;
+this path restores exactly that ambiguity, one layer up, and the check colour actively argues
+against noticing.
+
+**Fixed after v0.13.0, by the first of the alternatives.** The choice was between keying the skip
+on the head sha rather than on the comment's existence (re-reviews every push, and pays for it),
+replying in a thread instead of a new top-level comment, or leaving it and treating a second green
+check as meaningless — which is fine only while someone knows it is. The sha won: the prompt is
+handed `github.event.pull_request.head.sha`, every review comment opens with `Reviewed <sha>`,
+and the skip rule is "a comment of mine already names *this* sha". A push gets its own review and
+the same commit never gets two; the cost is one review per push, which is the point. The same
+sha now feeds the permalinks, which used to come from `git rev-parse HEAD` on a checkout that
+sits on the pull request's *merge* commit. Run 33583870670 remains the cheapest example in the
+repository of the failure mode, at seven cents rather than the eight runs the first one cost.
+Remember that the action runs the workflow from `main`, so this change was only exercised by the
+pull request after the one that made it.
+
+**How this was found, and the methodology error to avoid repeating.** The denial was invisible
+until `show_full_output: true` (#72) printed
+`{"tool_name":"Skill","tool_input":{"skill":"code-review:code-review"}}`. Three prior guesses at
+the allowlist cost about $0.75 and settled nothing. Turn that input back on before changing
+anything else, and turn it off again afterwards — this repository is public and so are the logs.
+
+Separately: the first test bed was titled `DO NOT MERGE — smoke test` and said so in its body. The
+reviewer read the PR metadata, applied its own stop condition for a PR that "does not need code
+review", and additionally flagged the body's instruction-shaped text as a prompt-injection attempt
+— correctly. **A test PR must look like ordinary work**, or it measures the reviewer's refusal
+rather than its ability.
+
+**Reproduction.** Two defects in `cursor_is_installed()` in `src/main.rs`, chosen because no test
+covers that function — `cargo fmt --check`, `clippy -D warnings` and the whole suite pass with
+both in place, so the reviewer is the only thing that can catch them. Present them as an ordinary
+refactor, with no mention of testing or reviewers:
+
+```diff
+ fn cursor_is_installed() -> bool {
+-    let Some(home) = ai_usage_tui::utils::home_dir() else {
+-        return false;
+-    };
++    let home = ai_usage_tui::utils::home_dir().unwrap();
+     [
+         home.join(".cursor"),
+         home.join(".config/Cursor"),
+         home.join("Library/Application Support/Cursor"),
+         home.join("AppData/Roaming/Cursor"),
+     ]
+     .iter()
+-    .any(|path| path.exists())
++    .all(|path| path.exists())
+ }
+```
+
+The first makes `--doctor` panic rather than degrade when `HOME` is unset; the second requires
+Cursor at all four platform paths at once, so the notice can never fire. Revert both before
+merging anything.
+
+## V1 readiness — 2026-09-17
+
+A production-readiness audit on 2026-09-17 (three read-only sweeps: core robustness, CI and
+release, providers and UX, each claim checked against the code) found the numbers sound and the
+gaps around them. v0.16.0 shipped the unreleased rustls advisory fix the same day. The blockers
+were split into five pull requests: terminal lifecycle (signals, quitting behind a poll, a
+collector printing into the frame, recorders panicking on a closed pipe); failures that never
+reached the screen (`collector::skipped`, dropped limit windows); concurrent writers (the journal
+migration race, reproduced at 8 of 40 parallel writes, plus shared cache temporaries and
+`PRAGMA user_version`); first run and terminals (`NO_COLOR`, `--print-config`, an empty state, a
+minimum height); and the contract itself (`docs/stability.md`, `schema_version` in every JSON
+document, `#![forbid(unsafe_code)]`, stale security and privacy text). **The decision taken:** 1.0
+stabilises the command-line tool and its data formats, and the Rust library API is declared
+unstable, so refactors never force a 2.0.
+
+**Suggested path:** cut a minor release once those are merged, let it run, then tag 1.0.0. Items 1–3
+below are the first 1.x work. **v0.17.0, the 1.0 candidate, shipped 2026-09-17** with all five merged.
+
+**Readable by an LLM -- added 2026-09-17, after v0.17.0.** Asked before returning to this list:
+can an agent read the data and help optimise usage and routing? It could not. `--json` is one
+object per request (13 MB here, ~130 tokens a row), no aggregated JSON existed, no efficiency
+figure was computed, nothing described the keys, and `contrib/` only fed data in. Shipped in
+answer: `--summary-json` (`src/summary.rs`: one compact document, ~33 KB for the same history,
+with `cache_hit_pct`, `tokens_per_request`, `cost_per_request`, `list_input_rate` and the rest per
+model, project, session and day), `--project`/`--session` drill-down, `--csv -`, `--schema`
+(`docs/json-glossary.json`, held to real output by a test), `--agent-guide`
+(`docs/agent-guide.md`), a Claude Code skill with the repository as its own plugin marketplace,
+and an `AGENTS.md` snippet. Two decisions worth keeping:
+
+- **The tool gives facts; the reader advises.** No thresholds, no verdicts, no "you would save
+  $X". A savings estimate prices a hypothetical, which is the thing this project refuses to do,
+  and on a subscription there is no per-request money to save. The judgement is coached in the
+  guide instead -- and an end-to-end run against a real account is what wrote half of it: a model
+  given only names called an escalation to a newer, pricier model a "downgrade", which is why the
+  list rates are now in the data, and one wrote "actual cost: $0 (quota)", which is why the guide
+  says never to.
+- **No MCP server in V1.** Every agent this is for can run a shell command, the CLI surface is
+  already under the stability contract, and an MCP server is a second stable surface to test and
+  version. The summary document is what one would serve; revisit if a client without shell access
+  (Claude Desktop, an IDE assistant) turns out to matter.
+
+**Extendable by an LLM -- added 2026-09-17, after v0.18.0.** The readable surface was read-only:
+asked to "track my other tool", "set me a budget" or "put it in my bar", an agent had nothing to
+go on. Shipped in answer, in five pull requests (#117--#121): `--record-event`
+(`src/collector/journal.rs`: usage in this tool's own terms, one JSON object per line, with
+project, session, cache writes, a reported cost or subscription billing -- the way in for any
+tool with no collector); `--agent-guide [TOPIC]` with three embedded guides beside the reading
+one (`setup`, `recipes`, `extend`); a contributor's guide that says what a new source really
+takes, `AGENTS.md`'s "Extending it" and a project skill; and guards that ask the registry, the
+bindings table and the parser rather than a list kept in the test. Decisions worth keeping:
+
+- **Both decisions above still hold, and have a corollary: the tool writes into no other
+  program's files, except on an explicit keystroke.** `--install-hook` and `--install-statusline`
+  (item 4 below, resolved 2026-09-18) merge this tool's own entries into `~/.claude/settings.json`
+  and change nothing else there; the dashboard never does, and the guide tells an agent to name
+  the command and the file before running one. Everything else the agent edits by hand, and the
+  guide tells it how to merge and how to verify.
+- **Nothing installed names a topic.** A copied skill or pasted block outlives its binary, and a
+  release before topics rejects one. The default guide lists them; a test refuses one anywhere
+  else.
+- **An embedded guide carries what it refers to.** No channel ships `contrib/`, so the hook JSON
+  and the units are inside `--agent-guide setup`, held to the files byte for byte.
+- **`--record-event` makes "no measurement, no row" a convention for adapters, where for
+  collectors it is code.** It refuses an event without its counts and any `cost_status` but
+  `reported`, and cannot stop a script inventing counts upstream. The guides say so in those words.
+- **A recipe is code, so it is run.** Every `jq`-only block in the guides executes in the test
+  suite through a shim that pins every source. What that cannot catch -- a misspelt key whose
+  `null` the recipe handles politely -- the schema guard covers from the other side.
+- **Checked end to end, once, against a real account**, with Sonnet, the installed skill and
+  nothing else: asked for a budget it read `setup`, checked billing and declined to set one that
+  would count nothing on a subscription; asked to track a tool it read `extend`, checked `sources`
+  for an overlap and wrote an adapter keyed on the log's own ids; asked for a Waybar module it
+  adapted the recipe and said the thresholds were the user's.
+
+**Found and not yet done, ranked.** Each has its evidence; none blocks the contract above.
+
+1. **Resolved. Unknown stays unknown, in the four places it did not.** An absent token field
+   read as `0`, so an upstream rename priced zero output; now the counts a source always reports
+   are read through `helpers::required`, a record missing one is kept, marked `Usage::incomplete`,
+   refused by `PricingEngine::estimate_cost` (the one chokepoint both the estimate and a
+   subscription's list-rate figure pass through) and counted onto the status line by
+   `collector::skipped`. An absent timestamp still stores as `0` -- making `created` optional is
+   a change to every rollup -- but is no longer silent: undated rows are counted the same way,
+   and the summary's `by_day.undated_requests` already reported them. `is_free_model` takes a name
+   as evidence only as a provider's documented suffix (`-free`, `:free`), and never against a rate
+   the pricing table lists. The recorders say when they stamp the time of recording.
+
+   Worth knowing: the rule was checked against this machine's logs before it was written --
+   40,805 of 40,805 Claude Code `usage` blocks carry both required counts and a timestamp -- and
+   the change moved no figure on 25,659 real requests. It exists for the day a format changes.
+   Deliberately not done: `incomplete_requests` in every summary bucket. It would be zero in
+   nearly all of them, and the source's `status` and `unpriced_requests` already say it.
+2. **Half resolved: bundled pricing now has an age check, and its warnings reach the screen.**
+   The tables' `# Updated:` dates are read at load, and past 90 days
+   (`BUNDLED_PRICING_MAX_AGE_DAYS`) the engine says so; a fresh refreshed cache supersedes the
+   curated table's date, so then only the community snapshot's age counts. The notice and the
+   engine's faults reach the dashboard's status line (`App::pricing_note`; only a fault turns the
+   header red), `--doctor` and `--summary-json`, which also carry the table dates and `USD`.
+   Every date in the tests is injected -- a test reading the clock would start failing by itself
+   ninety days after `just pricing`.
+
+   **Resolved by decision (2026-09-17): the community table stays release-bound.** Refreshing it
+   at runtime would mean `--refresh-pricing` fetching this repository's generated table -- a new
+   host for that command, for a tool whose pitch is that it transmits nothing -- when releases
+   here are frequent and the notice above now tells a user when to take one. What was missing
+   was the other end: nothing made sure the table a release is cut from was fresh.
+   `.github/workflows/pricing-drift.yml` does, monthly: it regenerates the table, runs the
+   pricing engine's tests against it, pushes one branch and opens one issue with what changed
+   (`scripts/pricing-drift-summary.py`) and a link that opens the pull request. It opens an issue
+   and not the pull request because one opened by the workflow token gets no CI run, and it does
+   not go red on drift because `just pricing-check` is kept out of CI for that reason.
+
+   Its first dry run paid for it. Fifteen days after the last refresh upstream had 177 repriced
+   entries and ~650 new ones, and the regenerated table **failed a classification test**: it
+   lists OpenRouter's `...:free` models at an explicit `0.0`, and `bundled_lists_a_rate` -- added
+   the same day -- took "a rate is listed" to mean "costs money". That was already wrong on
+   `main`: the committed table lists `llama-3.3-70b-instruct-turbo-free` at `0.0`, so a free model
+   the table knew about was `PAID` at an estimated $0.00. A published rate of zero is the table
+   agreeing a model is free; only a rate above zero contradicts its name.
+
+   *As filed:* **Bundled pricing has no age check.** Only the refreshed cache is dated (30 days); the tables
+   compiled into the binary are never compared to the clock, so a six-month-old install prices at
+   six-month-old rates without a word. `--refresh-pricing` refreshes Zen only, not the LiteLLM
+   table. Engine warnings reach `--doctor` only. Figures are USD list rates and nothing says so.
+3. **Resolved. Supply chain.** Every archive and Linux package is attested by the release
+   workflow (`actions/attest-build-provenance`, over `checksums.txt`), and each release ships a
+   CycloneDX bill of materials attested against the same files (`cargo-cyclonedx`, pinned by
+   version and digest). Actions are pinned by commit with a version comment; `release.yml` is
+   read-only except the release job, the tap job holds no repository token, and every workflow
+   declares `permissions:` -- two tests in `tests/docs.rs` hold both. `install.sh` verifies the
+   attestation when a usable `gh` is there to do it, lets the lack of one through with a notice,
+   refuses a check that fails, and `--require-attestation` refuses both.
+   "Protect main" is enforced, rewritten first: as it stood it required checks named `build`,
+   `test` and `lint`, none of which exist, and an approving code-owner review, which a project
+   with one maintainer can never give -- enabling it would have stopped every merge. It now
+   requires a pull request (no approvals), the seven real checks, no force-push and no deletion,
+   with no bypass; so the release commit goes through a pull request too
+   (`docs/release-process.md`). A second ruleset keeps `v*` tags from being moved or deleted.
+
+   Worth knowing: `--signer-workflow` alone is not enough to verify a download. The release
+   workflow can be dispatched by hand on any branch, and with `attest=true` that run's artifacts
+   are attested as well -- correctly, as built from that branch. `--source-ref refs/tags/<tag>` is
+   what separates a release from a dry run, and the installer and the README both pass it. And the
+   attested dry run is what found that `publish-release.sh --publish` swallowed its own errors.
+
+   Still open from the finding: no code signing (the macOS binaries are unsigned; item 8), and
+   crates.io is published with a long-lived token. crates.io supports trusted publishing over
+   OIDC, which would remove the `CARGO_REGISTRY_TOKEN` secret; it needs the crate's owner to
+   register `release.yml` as a trusted publisher on crates.io first.
+
+   *As filed:* No build-provenance attestation, no signing, no SBOM. Actions pinned by tag, not
+   SHA, and the MSRV job on `dtolnay/rust-toolchain@master`. `release.yml` granted
+   `contents: write` to every job, and `ci.yml` had no `permissions:` block. The "Protect main"
+   ruleset existed with `enforcement: disabled`.
+4. **Resolved (2026-09-18). Onboarding.** `--install-hook` / `--uninstall-hook`,
+   `--install-statusline` / `--uninstall-statusline` and `--uninstall` (`src/install.rs`). The
+   decisions: the command is the consent, as the update story settled -- no config key, no
+   prompt, the TUI never writes there; both installers append and never replace, write nothing
+   when the entry is there, keep every other key in the order found (`serde_json` now builds with
+   `preserve_order`), keep the file's permission bits, refuse a file that is not a JSON object,
+   and never print a byte of it but this tool's own entries; the command written is the bare name
+   when a binary of that name is on `PATH` and the running binary's absolute path otherwise, and
+   the report says which; `--install-statusline` refuses to replace another program's status line
+   and names it; `--uninstall` removes the two entries and the caches `docs/stability.md` calls
+   the tool's own (a test holds the two lists together), then prints the journal's and the config
+   file's paths with the `rm` that would delete them, and does not run it. `--doctor` gained a
+   `CLAUDE CODE` section from the same detector the installers use, so what it calls installed is
+   what `--uninstall-hook` removes. What `include_str!` gives: the installer merges the shipped
+   `contrib/claude-code/*.json`, the same bytes the setup guide shows.
+
+   *As filed:* Routing analytics, the differentiating feature, sits behind a hand-run `jq`
+   merge into `~/.claude/settings.json`. An `--install-hook` / `--uninstall-hook` pair, and an
+   uninstall path for the data directory, would close it. The consent question is the one the update
+   story settled: the command is the consent.
+5. **Resolved (2026-09-18). Data lifecycle.** Four findings, and the shape of three was not
+   what the wording suggested.
+
+   *The journal.* `--prune-journal DAYS` deletes old rows and `VACUUM`s; `--doctor` shows the
+   journal's size, its routing events and its oldest row. **Nothing prunes automatically, and no
+   config key exists to make it**: the journal is the only copy of what `--record-*` and the hook
+   wrote, which is the decision `--uninstall` had just taken about the same file. The floor is 31
+   days and the cutoff never passes the first of the local month, because a monthly budget reads
+   that far. Two rules came out of reading the code rather than the finding. Routing rows of a
+   Claude Code session that has newer rows are kept, because `attributed_requests` sums a
+   session's old rows as the hook's cursor and would attribute those requests again -- an
+   invented number. And the usage row with the highest id is kept, because without
+   `AUTOINCREMENT` SQLite hands a deleted top id out again, below the cursor of an open
+   dashboard; `created` is the emitter's, so a replayed old log really can own the top ids.
+
+   *In-memory rows.* **Resolved by decision: rows are never evicted.** Every collector loads all
+   of history at startup and key `4` and the budgets read the whole list, so a dashboard that
+   dropped old rows would disagree with one started a minute ago. About 600 bytes a row; what was
+   wasteful was the work done over them. The dashboard deep-cloned all of history on every
+   refresh, changed or not -- `CollectorState` now counts its changes (`generation`) and
+   `snapshot_if_newer` copies only when the count moved. A pricing reload moves it, held by a
+   test, because a refresh that never reached the screen is a bug fixed here once already.
+
+   *Re-reading.* Gemini's poll seeks to its offset and reads the tail (`read_tail`), starting over
+   when the file shrank or the tail does not open on a character boundary. The same defect was in
+   the journal collector, unfiled: `SELECT ... FROM usage_event` with no `WHERE`, every sixty
+   seconds. It now reads above an id high-water mark (`JournalCursor`) and starts over when the
+   file is another file or its highest id went down.
+
+   *The log.* Rotated past 5 MiB to one `.old` backup, without a lock (`src/logging.rs` says how,
+   and which race is accepted). Its growth was not errors: every successful poll of every
+   collector logged a line, some seventeen thousand a day. A poll is now logged when its count
+   changes.
+
+   Left, and small: `load_routing` still reads the whole `routing_event` table on every dashboard
+   refresh (one row per test run). On Windows there is no inode to compare, so a journal *replaced*
+   by a larger one is not noticed until restart. A Gemini log rewritten in place to a length that
+   puts the old offset on a character boundary still resumes mid-record, as before.
+
+   *As filed:* `usage.db` has no retention or `VACUUM`; the collector's in-memory rows grow
+   for the life of the process; Gemini re-reads its whole telemetry file into memory each poll
+   (`gemini.rs`, `read_to_string`); the opt-in log never rotates.
+6. **Resolved (2026-09-18). Coverage.** Five findings, and three of them turned up a defect
+   nobody had filed -- which is the argument for the item.
+
+   *A captured Claude Code transcript* (`tests/fixtures/claude_capture`, 2.1.276, a session that
+   delegates to a subagent). Its first read found that **a subagent's output tokens were counted
+   from a placeholder**: one request is a line per content block under one `requestId`, the
+   inline fixtures and the hook's own comment said every line carries the same usage, and in a
+   subagent's transcript the first line says `output_tokens: 3` where the closing one says `190`.
+   Deduplication kept the first. On this machine: 916 of 16,523 requests, every one in a subagent,
+   7.5% of all output tokens. `collector::supersedes` -- the reading with more tokens wins, which
+   is "later" without depending on read order -- is applied in the one-shot merge, across polls
+   (the row is replaced and re-priced, because a poll lands between the two lines), and in the
+   hook's attribution, where the second line must not move the skipped-request cursor.
+
+   *Codex `rate_limits`.* Read by `codex::latest_rate_limits`, a fourth producer for
+   `limits::load`. There is no Codex account here, so the Gemini trick was repeated:
+   `scripts/codex-standin.py` answers the Responses API and the real CLI wrote real rollouts
+   (`tests/fixtures/codex_capture`). That validated the synthetic fixture the collector had been
+   built on -- every token assumption held -- and found that **the thread keeps one snapshot and
+   the last header family parsed replaces the rest**, so a rollout can carry another limit's
+   window on every line and the default family on none. Keyed on `limit_id`; three newest
+   rollouts, last mebibyte of each, because `limits::load` is stateless and runs every refresh.
+   Settled here: `plan_type` and `credits` are not read (null in every captured block, so nothing
+   to measure a rule against); a windowless snapshot never wins a merge, because Omarchy rewrites
+   its "Sign-in expired" record every fifteen minutes and would have evicted any older reading.
+
+   *`.jsonl.zst`.* Behind `local_thread_store_compression`, off by default in 0.155.0. With it on,
+   the real CLI compressed the back-dated captures and deleted the originals, and the collector
+   reported two of six calls without a word. Read now, streamed, once per file (`ruzstd`: decoder
+   only, pure Rust). The real compressed file is the unredacted rollout and cannot be committed;
+   the fixture is the redacted one compressed to the same frame shape, and the real files were
+   read by the same code.
+
+   *Mutation tests* (`src/collector/mutation.rs`). Not a fuzzer and not `proptest`: every real
+   fixture, one value damaged at a time, read through the registry's own `load`, priced and
+   totalled. Deterministic, no dependency, names the record and the value, and walks the registry
+   so a new source cannot skip it. First run: a count of `1e308` became `u64::MAX` tokens and
+   overflowed `total_tokens`; `-1` was `0`; Gemini and Copilot had private copies of the same
+   flaw; OpenCode carried a cost of `-1` into totals. A count is now a whole number to 2^53 or it
+   is not a count. No real figure moved.
+
+   *Coverage measurement.* `just coverage` and a `Coverage` CI job, reported to the job summary
+   and **not gated, by decision**: a threshold is satisfied most cheaply by a test that runs a
+   line without checking it. 93.7% of lines at first measurement; what is low needs a terminal
+   (`ui/mod.rs`, `main.rs`) or the network (`pricing_refresh`, `update`, `zen`). Reading the table
+   is how the Zen catalogue was found still writing through a shared temporary.
+
+   Left, and small. Claude Code's `usage` now carries `output_tokens_details.thinking_tokens`
+   (63 of 166 in the capture); it is not split into the reasoning bucket because whether it sits
+   inside `output_tokens` has not been measured, only assumed. Codex writes a `token_usage_record`
+   line per response, with a `response_id` that would be a better identity than the content-based
+   one; not read, since `token_count` carries the same figures and older CLIs write only that.
+   Codex rows are always `provider: openai` although `session_meta.model_provider` names the
+   provider in force. A rate-limit reading more than a mebibyte from the end of its rollout is
+   not found until the next call. `number()` still answers `0` for an optional count that is
+   present and unreadable, where `required` flags the row.
+
+   *As filed:* Codex rollouts carry `rate_limits` on every token event and nothing reads them, so
+   Codex windows exist only on Omarchy. Claude Code, the largest source, has no captured transcript
+   fixture file, only inline strings. No fuzz or property tests over the parsers of other tools'
+   formats; no coverage measurement. `.jsonl.zst` Codex rollouts are not read.
+7. **Resolved (2026-09-18). Scripting surface.** Exit codes were settled on 2026-09-17 (below);
+   the five small findings left under it are done, and two were not what they looked like.
+
+   *The webhook.* Plain `http://` is **remarked on and not refused, by decision**: the payload is
+   a budget's scope, limit and spend, the usual plain-HTTP target is a notifier on the user's own
+   network (ntfy, Home Assistant, n8n), and a LAN name cannot be told from a public one without
+   resolving it; loopback is exempt. Deciding what that notice should print found the real
+   defect: **a webhook URL is its credential, and it was printed whole** -- by the bad-scheme
+   error, and by every `reqwest` error, which carries the URL, to stderr and to the log.
+   `budget::webhook_host` is now the only thing any message names.
+
+   *Permissions.* `helpers::PRIVATE_MODE`: `write_atomic` writes `0600`, the log is opened `0600`
+   when created, and `create_private` makes the journal before SQLite opens it, because SQLite
+   creates at the umask and its `-wal`/`-journal` files copy the main file's bits. An existing
+   file is left alone -- the journal is the user's, as `--uninstall` and `--prune-journal` hold
+   -- and `--doctor` prints a wider journal's mode with the `chmod`. The data directory itself is
+   not tightened: it may be a shared XDG root's child that something else expects to traverse.
+
+   *CSV.* `csv_field` prefixes `'` to a text field a spreadsheet would run, and leaves a number
+   alone. Both CSV writers go through it. Recorded in `docs/stability.md`, since it changes what
+   a consumer reads for such a name.
+
+   *Reset time.* An `AT` column in the Limits panel, local time, with the date once a weekday
+   alone would be ambiguous. Generic over the zone so the test names one. The README's
+   images were regenerated for it; the demo fixture has no Codex rollouts, so `limits.png` still
+   shows Claude Code's row alone.
+
+   *`--doctor --json`.* **Not built, by decision.** `--summary-json` gained a `build` block
+   (version, install channel, upgrade command, cached update check -- read, never fetched), which
+   was all that remained text-only. A second document would be a second stable surface.
+
+   *As filed:* **Exit codes resolved by decision (2026-09-17): `1` is a budget that
+   is over, `2` is the tool failing**, as `grep` and `diff` use them. One non-zero code covered
+   both, so a monitor could not tell them apart, and the shipped budget recipe parsed stdout to
+   find out which it had. The breach kept `1`, which is what the README had documented; failure
+   moved, and `docs/stability.md` had only ever promised "non-zero" for it, so no written promise
+   broke -- which is why this was the way round to do it, and why it had to be settled before
+   1.0.0 froze the other one. One exception, measured and not read: on Claude Code 2.1.275 a
+   `PostToolUse` hook that exits `2` has its stderr handed to the model, and one that exits `1`
+   does not, so a failed `--claude-code-hook` exits `1` -- decided from the arguments, because a
+   config that does not parse fails the hook before the hook's own code runs. **This was the last
+   decision that had to precede 1.0.0.** ~~No `--csv -`~~ (shipped with `--summary-json`). No
+   `--doctor --json` -- though what it was wanted for is now in `--summary-json`'s `sources` and
+   `pricing` blocks: per-source rows, status, billing decision, skipped data and pricing warnings.
+   What remains text-only is the install channel and the update check. No absolute reset time in
+   the Limits panel. CSV has no formula-injection guard. The journal and caches are written at the
+   default umask, and the webhook accepts plain `http://`.
+8. **Half resolved (2026-09-18). Distribution.** What needed no account is done; what is left
+   needs one that only the maintainer can open.
+
+   *"No musl static build" was filed as a missing nicety and was a defect.* `objdump -T` on the
+   v0.20.0 gnu binary: it needs `GLIBC_2.39`, the release runner's. So `install.sh` installed a
+   binary that would not start on Debian 12, Ubuntu 22.04 or RHEL 9; the `.deb` declared
+   `libc6 (>= 2.39)` and was refused there; the `.rpm` declared nothing and failed at run time.
+   Static `x86_64` (musl-tools) and `aarch64` (cargo-zigbuild, zig pinned from PyPI -- no aarch64
+   musl toolchain is packaged for the runner) targets joined the matrix, each checked with
+   `file`, the x86_64 one run on a bare Alpine against the fixture database. **Decided here: the
+   static build is the Linux default** -- the installer (when `checksums.txt` lists one, with a
+   spoken fallback for older tags and `--libc` to override), `cargo binstall` on a musl host,
+   Homebrew on Linux, and the `.deb`/`.rpm`, which are installed and run on Debian 11, Ubuntu
+   20.04, Rocky 8 and Fedora in the release build. The gnu archives stay, and the AUR package
+   keeps using them. Not done: pinning the gnu build to an older runner to lower its floor -- a
+   retired image queues forever (the `macos-13` lesson), and the static build makes it moot.
+   Proved by dry run 35382955799 on the branch, then by hand on its artifacts: `file` says static
+   for both, the x86_64 one read this machine's real history, the `.deb`'s `Depends` is empty.
+   The first dry run failed on the new check itself -- it grepped the whole control file for
+   `libc`, and the package description is the README, which now discusses glibc.
+
+   *PowerShell completions* are generated by the Windows build itself and ship in every archive.
+   Only PowerShell's from the Windows runner: a bash script written there gets CRLF endings.
+
+   *Chocolatey* is packed and its payload checked on every run; the push waits on a
+   `CHOCOLATEY_API_KEY` secret. **Needs the maintainer:** a chocolatey.org account and its API key
+   as that secret. The first submission is reviewed by a human moderator and can take weeks.
+
+   **Still open, each behind an account.** macOS signing and notarization need an Apple Developer
+   ID (paid, yearly); until then the README's `xattr` note stands, and `curl` downloads are not
+   quarantined. The AUR is blocked on Arch reopening account registration. crates.io trusted
+   publishing (item 3) needs the crate owner to register `release.yml` on crates.io.
+
+   *As filed:* The Windows zip carries no completions (PowerShell is never generated); no musl
+   static Linux build; macOS binaries unsigned; AUR blocked upstream; Chocolatey never pushed.
 9. **Hygiene.** `CODE_OF_CONDUCT.md` has no contact or enforcement path; `LICENSE` names
    "contributors" where `Cargo.toml` names the author; CHANGELOG headings mix `## [x.y.z]` and
    `## x.y.z`; `v0.1.0` has a tag and no GitHub Release; `.claude/settings.local.json` is ignored

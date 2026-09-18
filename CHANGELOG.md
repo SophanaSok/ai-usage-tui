@@ -177,6 +177,14 @@
 
 ### Changed
 
+- **Project hygiene.** `CODE_OF_CONDUCT.md` says where to report (the address `SECURITY.md`
+  gives), where to go when the report is about the one maintainer (GitHub's own channel), and
+  what follows; it had said only what was unwelcome. `LICENSE` names Sophana Sok and the
+  contributors, where it named "ai-usage-tui contributors" and everything else named a person.
+  Every changelog heading is `## [x.y.z] - YYYY-MM-DD` -- fourteen were unbracketed and `0.1.0`
+  undated -- and the release workflow now cuts release notes by `[x.y.z]`, not by substring,
+  which would have taken `1.0.0` out of `11.0.0`. Three tests hold all of it.
+
 - **The Chocolatey package is built and checked on every release run**, dry runs included. The
   manifests were rendered and attached to every release and never packed by CI, and the one hand
   run of `choco pack` had produced a package that installed nothing. The push is gated on a
@@ -992,7 +1000,7 @@ required counts and a timestamp, and no figure moved across 25,659 requests.
   developer's desktop; and **P2**, that there is no AUR package, no moving demo, and a name
   collision with an existing PyPI `aiusage`.
 
-## 0.12.1 - 2026-09-02
+## [0.12.1] - 2026-09-02
 
 ### Fixed
 
@@ -1081,7 +1089,7 @@ required counts and a timestamp, and no figure moved across 25,659 requests.
   branch, and reports success while doing it, so a workflow change can never be tested on the pull
   request that makes it.
 
-## 0.12.0 - 2026-09-01
+## [0.12.0] - 2026-09-01
 
 ### Added
 
@@ -1157,7 +1165,7 @@ required counts and a timestamp, and no figure moved across 25,659 requests.
   "Pricing tables" section for the provider-qualified-key rules and absorbed the Ollama journal
   semantics and OpenCode path it had never stated. The README is 964 lines, down from 1,009.
 
-## 0.11.0 - 2026-08-25
+## [0.11.0] - 2026-08-25
 
 ### Added
 
@@ -1248,7 +1256,7 @@ required counts and a timestamp, and no figure moved across 25,659 requests.
   the bindings live and what a new one must carry, and dropped `Binding::alias`, a field
   written on every binding and read by nothing.
 
-## 0.10.0 - 2026-08-25
+## [0.10.0] - 2026-08-25
 
 ### Fixed
 
@@ -1396,7 +1404,7 @@ required counts and a timestamp, and no figure moved across 25,659 requests.
   tests never saw it because they inject aggregates through a path that sorts. It is read before
   `recompute` now, and one test goes through `refresh` with a real journal.
 
-## 0.9.0 - 2026-08-25
+## [0.9.0] - 2026-08-25
 
 ### Added
 
@@ -1536,7 +1544,7 @@ required counts and a timestamp, and no figure moved across 25,659 requests.
   test distinguishes the two orders rather than assuming they agree.
 
 
-## 0.8.0 - 2026-08-24
+## [0.8.0] - 2026-08-24
 
 ### Added
 
@@ -1616,7 +1624,7 @@ required counts and a timestamp, and no figure moved across 25,659 requests.
     `total_token_count`** — only the timestamp separated them. Keying identity on `prompt_id`, or
     on `prompt_id` plus the total, would have reported one request instead of six.
 
-## 0.7.0 - 2026-08-24
+## [0.7.0] - 2026-08-24
 
 ### Added
 
@@ -1742,7 +1750,7 @@ required counts and a timestamp, and no figure moved across 25,659 requests.
   first `cargo test`. The same omission was in the documented commands in `CONTRIBUTING.md`,
   `docs/roadmap.md` and the `justfile`'s `run` recipe; all four now pin the journal.
 
-## 0.6.0 - 2026-08-24
+## [0.6.0] - 2026-08-24
 
 ### Changed
 
@@ -1922,7 +1930,7 @@ required counts and a timestamp, and no figure moved across 25,659 requests.
   sections now give `xattr -d com.apple.quarantine` and note that a `curl` download never sets
   the attribute.
 
-## 0.5.0 - 2026-08-23
+## [0.5.0] - 2026-08-23
 
 ### Added
 
@@ -2009,7 +2017,7 @@ required counts and a timestamp, and no figure moved across 25,659 requests.
 - **The dashboard swallowed a failed webhook POST.** It is now logged under `AI_USAGE_LOG` like any
   other collector error, rather than discarded.
 
-## 0.4.1 - 2026-08-20
+## [0.4.1] - 2026-08-20
 
 ### Fixed
 
@@ -2026,7 +2034,7 @@ required counts and a timestamp, and no figure moved across 25,659 requests.
   packages a distribution would audit were fine and the archives most people actually download
   were not. Affected every release through 0.4.0.
 
-## 0.4.0 - 2026-08-20
+## [0.4.0] - 2026-08-20
 
 ### Added
 
@@ -2174,7 +2182,7 @@ required counts and a timestamp, and no figure moved across 25,659 requests.
   model row count regardless of which table was visible, so on any other panel the selection
   either stopped short of the last row or ran past the end. It now follows the visible panel.
 
-## 0.3.0 - 2026-08-19
+## [0.3.0] - 2026-08-19
 
 ### Fixed
 
@@ -2387,7 +2395,7 @@ required counts and a timestamp, and no figure moved across 25,659 requests.
 
 - The unused `proptest` dev-dependency.
 
-## 0.2.0 - 2026-07-24
+## [0.2.0] - 2026-07-24
 
 ### Added
 
@@ -2425,6 +2433,6 @@ required counts and a timestamp, and no figure moved across 25,659 requests.
 - Budget spend only counts `ProviderReported`, `Calculated`, and `Estimated` costs.
 - Privacy: routing events store only metadata — no prompts, completions, API keys, or credentials.
 
-## 0.1.0
+## [0.1.0] - 2026-07-24
 
 - Initial btop-inspired OpenCode usage dashboard.
