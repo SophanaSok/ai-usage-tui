@@ -1140,3 +1140,114 @@ fn uninstall_removes_exactly_the_files_stability_calls_the_tools_own() {
         );
     }
 }
+
+fn repo_text(name: &str) -> String {
+    std::fs::read_to_string(format!("{}/{name}", env!("CARGO_MANIFEST_DIR")))
+        .unwrap_or_else(|error| panic!("read {name}: {error}"))
+        .replace("\r\n", "\n")
+}
+
+/// Every release heading is `## [x.y.z] - YYYY-MM-DD`, newest first, with `[Unreleased]` above.
+///
+/// Thirteen releases were `## [x.y.z]` and fourteen `## x.y.z`. Two things read these headings --
+/// `scripts/release.sh` greps for the bracketed form, and the release workflow cuts the release
+/// notes out by version -- and the workflow did it by substring, which takes `1.0.0` out of
+/// `11.0.0`. It matches `[x.y.z]` now, which is only safe while this holds.
+#[test]
+fn changelog_headings_are_one_form_and_in_order() {
+    let changelog = repo_text("CHANGELOG.md");
+    let headings: Vec<&str> = changelog
+        .lines()
+        .filter(|line| line.starts_with("## "))
+        .collect();
+    assert_eq!(headings.first(), Some(&"## [Unreleased]"));
+    let mut previous: Option<[u32; 3]> = None;
+    for heading in &headings[1..] {
+        let rest = heading
+            .strip_prefix("## [")
+            .unwrap_or_else(|| panic!("`{heading}` is not `## [x.y.z] - YYYY-MM-DD`"));
+        let (version, date) = rest
+            .split_once("] - ")
+            .unwrap_or_else(|| panic!("`{heading}` is not `## [x.y.z] - YYYY-MM-DD`"));
+        let parts: Vec<u32> = version
+            .split('.')
+            .map(|part| {
+                part.parse()
+                    .unwrap_or_else(|_| panic!("`{heading}`: version"))
+            })
+            .collect();
+        let parts: [u32; 3] = parts
+            .try_into()
+            .unwrap_or_else(|_| panic!("`{heading}`: three numbers"));
+        let shape: Vec<usize> = date.split('-').map(str::len).collect();
+        assert!(
+            shape == [4, 2, 2] && date.chars().all(|c| c.is_ascii_digit() || c == '-'),
+            "`{heading}`: the date is not YYYY-MM-DD"
+        );
+        if let Some(newer) = previous {
+            assert!(
+                parts < newer,
+                "`{heading}` is not older than the one above it"
+            );
+        }
+        previous = Some(parts);
+    }
+    assert!(
+        headings.len() > 20,
+        "only {} headings found",
+        headings.len()
+    );
+    // The top release is the one Cargo.toml names, or the next one is still unreleased.
+    let current = manifest()["package"]["version"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        headings[1].starts_with(&format!("## [{current}]")),
+        "the newest heading is `{}`, and Cargo.toml says {current}",
+        headings[1]
+    );
+}
+
+/// `LICENSE` said "ai-usage-tui contributors" while `Cargo.toml`, the .deb's copyright field and
+/// every package manifest named a person. A licence grants rights on someone's behalf; it should
+/// say whose.
+#[test]
+fn the_licence_names_the_author_cargo_toml_names() {
+    let author = manifest()["package"]["authors"][0]
+        .as_str()
+        .expect("an author")
+        .split(" <")
+        .next()
+        .unwrap()
+        .to_string();
+    let licence = repo_text("LICENSE");
+    let line = licence
+        .lines()
+        .find(|line| line.starts_with("Copyright"))
+        .expect("a copyright line");
+    assert!(line.contains(&author), "`{line}` does not name {author}");
+}
+
+/// A code of conduct nobody can report under is a statement of taste. It needs somewhere to
+/// write to, somewhere else when the report is about the one maintainer, and what follows.
+#[test]
+fn the_code_of_conduct_says_where_to_report_and_what_follows() {
+    let conduct = repo_text("CODE_OF_CONDUCT.md");
+    let address = manifest()["package"]["authors"][0]
+        .as_str()
+        .and_then(|author| author.split_once('<'))
+        .map(|(_, rest)| rest.trim_end_matches('>').to_string())
+        .expect("the author's address");
+    assert!(
+        conduct.contains(&address),
+        "no reporting address ({address})"
+    );
+    assert!(
+        conduct.contains("report-abuse"),
+        "no channel that bypasses the maintainer"
+    );
+    assert!(conduct.contains("## What happens next"));
+    // The same address the security policy gives: one inbox, not two that can drift.
+    assert!(repo_text("SECURITY.md").contains(&address));
+}

@@ -565,7 +565,9 @@ jobs:
           awk -v ver="$VERSION" '
             /^## / {
               if (found) exit
-              if (index($0, ver)) found=1
+              # The bracketed form, whole: a bare substring match would take `1.0.0` out of
+              # `11.0.0`, and every heading is `## [x.y.z] - date` (tests/docs.rs holds them to it).
+              if (index($0, "[" ver "]")) found=1
               next
             }
             found { print }

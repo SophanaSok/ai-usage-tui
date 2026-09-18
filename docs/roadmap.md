@@ -608,7 +608,23 @@ bindings table and the parser rather than a list kept in the test. Decisions wor
 
    *As filed:* The Windows zip carries no completions (PowerShell is never generated); no musl
    static Linux build; macOS binaries unsigned; AUR blocked upstream; Chocolatey never pushed.
-9. **Hygiene.** `CODE_OF_CONDUCT.md` has no contact or enforcement path; `LICENSE` names
+9. **Resolved (2026-09-18), but for one call that is the maintainer's. Hygiene.**
+   `CODE_OF_CONDUCT.md` has a reporting address (the one `SECURITY.md` gives, held together by
+   a test), GitHub's own channel for a report about the sole maintainer, and what follows.
+   `LICENSE` names the author `Cargo.toml` names, with the contributors. Every changelog heading
+   is `## [x.y.z] - YYYY-MM-DD`, in order, the newest matching `Cargo.toml`; normalising them
+   showed the release workflow cut its release notes by *substring* of the version, which takes
+   `1.0.0` out of `11.0.0`, and it matches `[x.y.z]` now. `.claude/settings.local.json` was
+   already in the repository's `.gitignore` by the time this was reached.
+
+   **Left to the maintainer: `v0.1.0` has a tag and no GitHub Release.** Creating one is a public
+   act on the project's release page, so it was not done unasked. The recommendation is to leave
+   it: the tag is the initial commit, it predates the release workflow, and a release with no
+   assets is a download page with nothing to download -- `install.sh --version v0.1.0` would
+   still refuse it for having no `checksums.txt`. If it is wanted:
+   `gh release create v0.1.0 --latest=false --notes "Initial release. No binaries were built for it."`
+
+   *As filed:* `CODE_OF_CONDUCT.md` has no contact or enforcement path; `LICENSE` names
    "contributors" where `Cargo.toml` names the author; CHANGELOG headings mix `## [x.y.z]` and
    `## x.y.z`; `v0.1.0` has a tag and no GitHub Release; `.claude/settings.local.json` is ignored
    only by one machine's global gitignore.
