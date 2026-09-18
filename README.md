@@ -68,7 +68,8 @@ this repository's own documents at the latest release. `ai-usage-tui --help` pri
 - Usage grouped by provider and model, across OpenCode, Claude Code, Codex CLI, GitHub Copilot, Gemini CLI, and Local models
 - Input, output, reasoning, cache-read, and cache-write tokens
 - Today (local calendar day), trailing 7-day, trailing 30-day, all-time, or custom-day ranges
-- `LOCAL`, `CLOUD`, `FREE`, `PAID`, and `UNKNOWN` classifications
+- `LOCAL`, `CLOUD`, `FREE`, `PAID`, and `UNKNOWN` classifications, each with its share of the
+  tokens, and one strip dividing the whole between them
 - Provider-reported, calculated, estimated, free, local, quota-billed, or unavailable cost
 - Daily and monthly budget status
 - Subscription rate-limit windows and their resets, from Claude Code's own cache, from its status
@@ -705,7 +706,9 @@ regardless. Use `--provider` / `--model` to narrow the data itself.
 <details>
 <summary>Screenshots of each panel</summary>
 
-**Dashboard** — token totals, model activity and cost provenance; the view every panel sits beside.
+**Dashboard** — the tab strip, a tile and a share of the strip per category, and model activity
+with cost provenance. The left rail — token flow, a meter per subscription window, tokens per
+day — is the part every panel sits beside.
 
 ![Dashboard showing token totals, model activity, and cost provenance](docs/assets/dashboard.png)
 
@@ -1434,6 +1437,15 @@ SOURCES
   builds that means the session must have shut down, and a session still
   running contributes nothing until it does. If your build keeps its store
   somewhere else, point at it with `--copilot-dir PATH`.
+- **Colours look flat, or the panels have no background:** the terminal did not say it draws
+  24-bit colour, so the palette was mapped down to 256 or to the terminal's own sixteen.
+  `--doctor` prints the depth it chose and the variable it read under `CONFIG`. `ssh`, `sudo`
+  and some multiplexers drop `COLORTERM`; if the terminal does support 24-bit colour, set
+  `COLORTERM=truecolor` for that session.
+- **`Terminal too short for the dashboard`:** the layout needs 20 rows, 21 while a budget alert
+  is showing. Width has no floor: the tab strip and the footer shorten themselves, the tables
+  drop their bars when their pane is under 84 columns, and the rail drops whole sections rather
+  than squeezing them.
 - **No Cursor rows, ever:** by design. See
   [Why there is no Cursor collector](#why-there-is-no-cursor-collector).
 

@@ -1,7 +1,9 @@
 //! Colours and small shared widgets.
 //!
 //! Everything visual that more than one panel needs lives here, so a new panel does not have
-//! to rediscover the palette or re-derive how a bordered box is built.
+//! to rediscover the palette or re-derive how a bordered box, a bar or a scrollbar is built.
+//! `downgrade` is the palette for terminals that draw fewer colours; `ui::draw` applies it to
+//! the finished frame, so nothing here or in a panel branches on colour depth.
 
 use ratatui::{
     layout::{Margin, Rect},

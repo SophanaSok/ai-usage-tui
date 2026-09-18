@@ -978,6 +978,26 @@ Remaining:
   table* whatever panel was showing, so on a machine with few model groups and many projects the
   later projects were unreachable. Cosmetic while nothing acted on the row; wrong the moment
   `Enter` did. Both the clamp and `visible_rows` are panel-aware now, with a regression test.
+- **Resolved (#127) — the layout wasted most of the screen.** Seven-row tiles holding two lines,
+  a third of the width given to a nine-line list, no sign of which panel was open, no proportion
+  drawn anywhere, and a 24-bit palette sent to every terminal. Now: a tab strip read from
+  `keys::BINDINGS`; four-row tiles over a share strip (`aggregate::share_cells` -- a category
+  with usage always gets a cell, one without never does); a left rail of token flow, limit
+  meters and tokens per day that drops whole sections, last first, when short; bars, row counts
+  and scrollbars in the tables; and `utils::ColourDepth`, applied as one pass over the finished
+  frame like `NO_COLOR`.
+
+  Three things worth knowing before touching it. **`fixture_limits(true)` does not isolate
+  staleness:** it loads the fixture three hours on, by when the 92% window has also reset, so a
+  test using it passes with the stale rule deleted -- set `snapshot.stale` by hand. **The active
+  tab is always reverse video,** so "some cell is reversed" says nothing about the selected row
+  under `NO_COLOR`; the test looks at the row. **`tests/docs.rs` sees an environment read only
+  when it is spelled `non_empty(env, "NAME")`** -- a helper that takes the name as an argument
+  hides the variable from the README table guard.
+
+  Left out on purpose, each a reasonable next step now that the palette's literals are named:
+  selectable themes (a config key, so additive under `docs/stability.md`), a second panel side
+  by side on very wide terminals, and a calendar heatmap.
 - **Interactive depth** — mouse support. Sortable columns shipped: `<`/`>` move the sort column,
   `o` reverses, each panel keeps its own, and the sorted column is marked in its header. The
   defaults reproduce the orders the lists already had, so nothing moves until a key is pressed.
@@ -1181,8 +1201,10 @@ production reader at all.
   section for the last of those. The README keeps one subsection per registered source (which
   `tests/docs.rs` requires), each reduced to its default path, its override flags, one sentence
   on what is not read, and the billing paragraph the previous move kept on purpose.
-- **`src/ui/theme.rs` has no tests** and probably wants none — it is colour constants. Noted so
-  the next person does not re-derive that.
+- **Resolved.** `src/ui/theme.rs` was colour constants with no tests and wanted none. Since the
+  layout rework it holds logic -- `bar_of`, `meter`, `row_count`, `draw_scrollbar`, and the
+  colour-depth mapping -- and that is tested where it is seen, in `src/ui/tests/layout.rs` and
+  `src/ui/tests/terminal.rs`, not in a module of its own.
 - **Resolved in v0.8.0.** Derived escalations are exported: `--json` carries an `escalations`
   object. Deliberately not in `--routing-json` or `--csv`; the reasoning is under *Dashboard*
   above.
