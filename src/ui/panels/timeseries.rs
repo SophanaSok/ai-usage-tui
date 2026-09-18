@@ -101,7 +101,7 @@ fn day_table(days: &[DayTotals], height: usize) -> Table<'_> {
         };
         Row::new(vec![
             Cell::from(day.day.clone()),
-            Cell::from(bar(day.cost, peak)),
+            Cell::from(Span::styled(bar(day.cost, peak), Style::default().fg(CYAN))),
             Cell::from(format_count(day.tokens)),
             cost,
             Cell::from(day.requests.to_string()),

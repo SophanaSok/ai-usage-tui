@@ -98,7 +98,16 @@ fn window_line<'a>(snapshot: &LimitsSnapshot, window: &LimitWindow) -> Line<'a> 
     Line::from(vec![
         Span::styled(format!("{:<9} ", snapshot.agent), muted),
         Span::styled(format!("{:<28} ", truncate(&window.label, 28)), figure),
-        Span::styled(format!("{:<12} ", bar(window.fraction, 1.0)), figure),
+        // Plain figures are unstyled text; the bar beside them takes the accent the rail's
+        // meters use, and follows `figure` when that says stale or alarming.
+        Span::styled(
+            format!("{:<12} ", bar(window.fraction, 1.0)),
+            if figure == Style::default() {
+                Style::default().fg(CYAN)
+            } else {
+                figure
+            },
+        ),
         Span::styled(
             format!("{:>4}%  ", window.percent_used().round() as u64),
             figure,

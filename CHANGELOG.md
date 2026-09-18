@@ -4,6 +4,17 @@
 
 ### Added
 
+- **A terminal is sent the colours it says it can draw.** The palette is 24-bit and went to
+  every terminal as such; one that does not understand the sequence draws whatever it makes of
+  it. The depth is now read once at startup -- `COLORTERM`, then `WT_SESSION`, then `TERM` -- and
+  anything short of 24-bit has the finished frame mapped down in a single pass, as `NO_COLOR`
+  is, so a new panel cannot forget it. 256 colours take each colour's nearest neighbour; this
+  tier exists because `ssh` and `sudo` drop `COLORTERM` and keep `TERM`. Sixteen map the named
+  palette by meaning, so muted text and borders do not land on one grey, leave the backgrounds
+  to the terminal, and draw white text in the default foreground so a light theme can read it.
+  `--doctor` prints the depth chosen and the variable it came from. If a terminal that does
+  support 24-bit colour looks flatter than it did, set `COLORTERM=truecolor`.
+
 - **`--install-hook` and `--install-statusline` put this tool into Claude Code's settings;
   `--uninstall-hook`, `--uninstall-statusline` and `--uninstall` take it out.** Routing
   analytics, the feature nothing else here has, sat behind a hand-run `jq -s '.[0] * .[1]'`
@@ -71,6 +82,27 @@
 
 ### Changed
 
+- **The dashboard uses the screen it has.** The six tiles were seven rows tall for two lines of
+  text, and four of them spent the second line repeating the first (`3.3M` over `3.3M tokens`);
+  TOKEN FLOW held a third of the width for nine lines with everything under it empty; nothing
+  said which of the eight panels was showing; and the default view drew no proportion anywhere,
+  so "which category, which model" meant comparing `2.5M` with `688.6K` by eye. Now a tab strip
+  under the header names every panel and marks the active one -- built from the footer hints in
+  the bindings table, so it cannot drift from them, and in reverse video, so `NO_COLOR` cannot
+  unmark it. The tiles are four rows and say each category's share and request count; a category
+  with no tokens says `—`, never `0%`, and a share that rounds to nothing says `<1%`. Under them
+  one strip divides the width between the categories: a category with usage always gets a cell,
+  one without never does. The left pane is a rail -- the token list with a bar per kind, a meter
+  per subscription window under the limits panel's own stale-and-alarming rule, and tokens per
+  day (tokens, because on a subscription a chart of dollars is a flat line that reads as nothing
+  happening). A rail section that does not fit whole is not drawn, last first, instead of being
+  squeezed to a border around nothing. Tables colour the CLASS cell, draw a bar beside TOKENS
+  when the pane is wide enough to spare it, say how many rows they hold, and show a scrollbar
+  only when rows are off screen. Borders are rounded. The layout is not a stable surface
+  (`docs/stability.md`); nothing a script reads has changed.
+- **`API-RATE EQUIV.` is two lines.** On one it was wider than its pane on most terminals, and
+  what a `Paragraph` cut off without saying so was `not billed` -- the half that stops the
+  figure reading as a charge.
 - **JSON objects keep the order their keys were written in.** `serde_json` now builds with
   `preserve_order`, which the installers need to hand a user's `settings.json` back as they found
   it. The visible effect elsewhere: a document built key by key (`--check-budgets`, the

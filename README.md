@@ -657,9 +657,12 @@ The dashboard refreshes every 30 seconds by default. OpenCode, Claude Code,
 Codex, and journal collectors run in the background at their configured
 intervals.
 
-The main view combines summary metrics, token-flow breakdown, and per-model
-activity. One other panel occupies the right-hand pane at a time; `?` lists every
-key.
+The main view has a tile per category with a strip under them dividing the
+tokens between the categories, a left rail, and per-model activity. The rail
+holds the token-flow breakdown, a meter for each subscription window, and
+tokens per day; on a short terminal it drops whole sections from the bottom
+rather than squeezing them. One other panel occupies the right-hand pane at a
+time, the tab strip under the header says which, and `?` lists every key.
 
 | View | Key | What it answers |
 | --- | --- | --- |

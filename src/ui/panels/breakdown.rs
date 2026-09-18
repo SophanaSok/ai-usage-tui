@@ -21,7 +21,7 @@ use ratatui::{
 };
 
 use crate::model::{CYAN, YELLOW};
-use crate::ui::app::App;
+use crate::ui::app::{App, Panel};
 use crate::ui::panels::limits::{figure_style, truncate};
 use crate::ui::panels::timeseries::tokens_sparkline;
 use crate::ui::theme::{bar_of, meter, panel, MUTED};
@@ -38,8 +38,14 @@ pub fn draw_breakdown(frame: &mut Frame, area: Rect, app: &App) {
     if flow.len() as u16 + 2 > area.height {
         flow.retain(|line| line.width() > 0);
     }
-    let limits = limit_lines(app, inner_width);
-    let has_days = app.daily().iter().any(|day| day.tokens > 0);
+    // A section the right-hand pane is already showing in full is left out: the same windows
+    // twice on one screen is not more information, and it reads as two sources.
+    let limits = if app.panel == Panel::Limits {
+        Vec::new()
+    } else {
+        limit_lines(app, inner_width)
+    };
+    let has_days = app.panel != Panel::TimeSeries && app.daily().iter().any(|day| day.tokens > 0);
 
     // Each section with the height it needs, borders included. The token list is first and is
     // always drawn; the others are dropped from the end until what is left fits.

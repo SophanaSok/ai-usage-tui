@@ -202,6 +202,21 @@ fn a_stale_window_is_not_alarming_in_the_rail_or_the_panel() {
     assert_ne!(panel(&app), Some(crate::model::RED));
 }
 
+/// The same windows twice on one screen reads as two sources that happen to agree.
+#[test]
+fn the_rail_leaves_out_what_the_open_panel_already_shows() {
+    let mut app = rail_app();
+    app.panel = Panel::Limits;
+    let rendered = render_breakdown(&app, 40, 30);
+    assert!(!rendered.contains("92%"), "{rendered}");
+    assert!(rendered.contains("TOKENS PER DAY"), "{rendered}");
+
+    app.panel = Panel::TimeSeries;
+    let rendered = render_breakdown(&app, 40, 30);
+    assert!(rendered.contains("92%"), "{rendered}");
+    assert!(!rendered.contains("TOKENS PER DAY"), "{rendered}");
+}
+
 #[test]
 fn a_rail_with_no_limits_and_no_days_is_just_the_token_list() {
     let app = test_app(Vec::new());
