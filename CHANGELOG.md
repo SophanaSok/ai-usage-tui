@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-18
+
+The Claude Code hook starts seeing the test runs it was installed to see. Nothing a script reads
+changes meaning: `--routing-json` and `--summary-json` gain a `routing.withheld` block, and the
+journal gains a table older builds ignore. After upgrading, expect the routing panel to fill --
+and expect failures in it that the shell reported as successes, because they were.
+
 ### Fixed
 
 - **The Claude Code hook recorded almost none of the test runs it saw, and said nothing about the
