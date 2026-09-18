@@ -174,8 +174,10 @@ figure from the export, not an impression.
 
 **Real spend and the counterfactual are different numbers, and they are never added.** The
 export's provenance block puts $25.47 of calculated cost — 683 requests through OpenCode to
-metered providers — beside $2,802.39 of API-equivalent on 20,030 quota requests, 1,999 free
-requests and 1,031 local ones, each under its own status. A dashboard that summed them would
+metered providers — beside 20,030 quota requests, 1,999 free requests and 1,031 local ones, each
+under its own status. The $2,802.39 of API-equivalent sits on 16,870 of the quota requests, the
+Claude Code ones; the other 3,160, through Ollama's cloud models and Copilot, are `quota` with no
+API-equivalent figure, and are not given one. A dashboard that summed them would
 report a $2,828 month on a machine that paid a subscription and $25. One that rendered the
 quota rows as `$0.00` would report that Opus is free.
 
