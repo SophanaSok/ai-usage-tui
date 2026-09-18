@@ -1,0 +1,6 @@
+--- FAIL: TestBad (0.00s)
+    bad_test.go:5: no
+FAIL
+FAIL	cap/badpkg	0.001s
+ok  	cap/okpkg	(cached)
+FAIL

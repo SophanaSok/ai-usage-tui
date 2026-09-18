@@ -1209,6 +1209,79 @@ pub(crate) fn record_routing_event(path: &Path, json: &Value) -> Result<usize> {
     Ok(inserted)
 }
 
+/// Test runs a harness saw and could not record, by UTC day, agent and reason.
+///
+/// A tally and not a log, on purpose. The row says *that* a runner ran on a line whose exit status
+/// was not its own, and why; it holds no command line, no working directory and no output, because
+/// a command line can carry a credential in a leading assignment and none of it is needed to say
+/// "517 runs were piped". A re-delivered hook counts twice: there is no identity here to refuse
+/// it by, and a count that is slightly high is the cheaper error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WithheldRuns {
+    /// Start of the UTC day, epoch seconds.
+    pub day: i64,
+    pub agent: String,
+    /// One of `harness::shell::Reason`'s labels.
+    pub reason: String,
+    pub runs: u64,
+}
+
+const WITHHELD_TABLE: &str = "CREATE TABLE IF NOT EXISTS withheld_test_run (
+    day INTEGER NOT NULL,
+    agent TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    runs INTEGER NOT NULL,
+    PRIMARY KEY (day, agent, reason)
+) WITHOUT ROWID;";
+
+/// Count one test run that was seen and not recorded.
+pub(crate) fn record_withheld_test_run(
+    path: &Path,
+    agent: &str,
+    reason: &str,
+    now: i64,
+) -> Result<()> {
+    let conn = open_for_writing(path, |conn| Ok(conn.execute_batch(WITHHELD_TABLE)?))?;
+    conn.execute(
+        "INSERT INTO withheld_test_run (day, agent, reason, runs) VALUES (?1, ?2, ?3, 1)
+         ON CONFLICT (day, agent, reason) DO UPDATE SET runs = runs + 1",
+        params![now - now.rem_euclid(86_400), agent, reason],
+    )?;
+    Ok(())
+}
+
+/// Every tally row, oldest day first. Empty for a journal no harness has counted into.
+pub fn load_withheld_test_runs(path: &Path) -> Result<Vec<WithheldRuns>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+    )?;
+    conn.busy_timeout(Duration::from_millis(250))?;
+    let has_table: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'withheld_test_run')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_table {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT day, agent, reason, runs FROM withheld_test_run ORDER BY day, agent, reason",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(WithheldRuns {
+            day: row.get(0)?,
+            agent: row.get(1)?,
+            reason: row.get(2)?,
+            runs: count(row.get(3)?),
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
 /// The table as it is created today. The three counters are nullable: an emitter that reports
 /// nothing stores `NULL`, which is not `0`.
 const ROUTING_EVENT_COLUMNS: &str = "
@@ -1470,6 +1543,15 @@ pub fn prune(path: &Path, days: u64, now: i64) -> Result<Option<PruneReport>> {
         } else {
             None
         };
+        // The tally of test runs a harness could not record ages out with the events it sits
+        // beside. It is a count, not rows anyone reads back one by one, so it is not in the
+        // report; a whole day goes or stays.
+        if has_table("withheld_test_run")? {
+            conn.execute(
+                "DELETE FROM withheld_test_run WHERE day < ?1 - 86399",
+                [cutoff],
+            )?;
+        }
         Ok((usage, routing))
     })();
     let (usage, routing) = match deleted {
@@ -2224,6 +2306,51 @@ mod tests {
             report.cutoff, month_start,
             "rows of the current month were eligible: a monthly budget still reads them"
         );
+    }
+
+    /// The tally of test runs a harness saw and could not record: one row per UTC day, agent and
+    /// reason, counted up, read back in order, and aged out a whole day at a time.
+    #[test]
+    fn withheld_test_runs_are_counted_by_day_and_pruned_with_the_journal() {
+        let scratch = scratch_journal("withheld");
+        let journal = scratch.journal.clone();
+        assert!(load_withheld_test_runs(&journal).unwrap().is_empty());
+
+        let now = crate::utils::now();
+        let today = now - now.rem_euclid(DAY);
+        let old = now - 60 * DAY;
+        for (agent, reason, at) in [
+            ("claude-code", "pipe", now),
+            ("claude-code", "pipe", now),
+            ("claude-code", "sequence", now),
+            ("claude-code:Explore", "pipe", now),
+            ("claude-code", "pipe", old),
+        ] {
+            record_withheld_test_run(&journal, agent, reason, at).expect("count");
+        }
+        let row = |day, agent: &str, reason: &str, runs| WithheldRuns {
+            day,
+            agent: agent.to_string(),
+            reason: reason.to_string(),
+            runs,
+        };
+        assert_eq!(
+            load_withheld_test_runs(&journal).unwrap(),
+            [
+                row(old - old.rem_euclid(DAY), "claude-code", "pipe", 1),
+                row(today, "claude-code", "pipe", 2),
+                row(today, "claude-code", "sequence", 1),
+                row(today, "claude-code:Explore", "pipe", 1),
+            ]
+        );
+        // A tally is all the journal holds here: no usage table, no routing table, and a
+        // journal that has only ever counted still reads as one with no events.
+        assert!(load_routing(&journal).unwrap().is_empty());
+
+        prune(&journal, 31, now).unwrap().unwrap();
+        let kept = load_withheld_test_runs(&journal).unwrap();
+        assert_eq!(kept.len(), 3, "{kept:?}");
+        assert!(kept.iter().all(|row| row.day == today), "{kept:?}");
     }
 
     /// Bug: "nothing to prune" leaving a journal behind -- a file, a table, a version stamp.

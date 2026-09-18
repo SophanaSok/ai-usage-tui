@@ -180,6 +180,21 @@
         "quota_requests": { "type": "integer", "meaning": "In-scope requests billed against a plan." }
       }
     },
+    "routing_withheld": {
+      "meaning": "Test runs --claude-code-hook saw and did not record: the command line's exit status was not the test runner's own (it was piped, chained or substituted) and the output held no summary line the tool can read. A count only; no command line or output is stored. Read it beside events: two events and 800 withheld is a coverage gap, two events and none is a quiet machine.",
+      "keys": {
+        "runs": { "type": "integer", "meaning": "Runs withheld." },
+        "by_reason": {
+          "type": "array",
+          "meaning": "The same runs by reason, most first.",
+          "keys": {
+            "reason": { "type": "string", "meaning": "pipe, sequence, or_after, after_or, background, substitution or and_chain. New labels may be added." },
+            "runs": { "type": "integer", "meaning": "Runs withheld for this reason." },
+            "meaning": { "type": "string or null", "meaning": "The reason in words. null for a label written by a newer build." }
+          }
+        }
+      }
+    },
     "routing_aggregate": {
       "meaning": "Recorded routing events (test runs journaled by --claude-code-hook or --record-routing) grouped by agent, model and provider.",
       "keys": {
@@ -388,7 +403,8 @@
           "meaning": "Recorded routing events in range. Empty unless a hook or --record-routing feeds the journal.",
           "keys": {
             "events": { "type": "integer", "meaning": "Events in range." },
-            "aggregates": { "type": "array", "shape": "routing_aggregate", "meaning": "Grouped by agent, model and provider." }
+            "aggregates": { "type": "array", "shape": "routing_aggregate", "meaning": "Grouped by agent, model and provider." },
+            "withheld": { "type": "object", "shape": "routing_withheld", "meaning": "Test runs in range that a harness saw and recorded nothing for. Counted by UTC day, so a range boundary is a day's, not a second's." }
           }
         }
       }
@@ -433,7 +449,8 @@
         "schema_version": { "type": "integer", "meaning": "Version of this contract." },
         "source": { "type": "string", "meaning": "The journal read." },
         "events": { "type": "integer", "meaning": "Events aggregated." },
-        "aggregates": { "type": "array", "shape": "routing_aggregate", "meaning": "Grouped by agent, model and provider." }
+        "aggregates": { "type": "array", "shape": "routing_aggregate", "meaning": "Grouped by agent, model and provider." },
+        "withheld": { "type": "object", "shape": "routing_withheld", "meaning": "Test runs a harness saw and recorded nothing for." }
       }
     },
     "--check-budgets": {

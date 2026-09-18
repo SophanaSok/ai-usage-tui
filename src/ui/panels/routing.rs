@@ -42,8 +42,9 @@ pub fn draw_routing(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     let aggregates = app.routing();
+    let title = title(app.withheld_runs());
     if aggregates.is_empty() {
-        frame.render_widget(empty_state(), area);
+        frame.render_widget(empty_state(&title), area);
         return;
     }
 
@@ -94,10 +95,24 @@ pub fn draw_routing(frame: &mut Frame, area: Rect, app: &App) {
         )
         .header(header)
         .column_spacing(1)
-        .block(panel("ROUTING — cost per delivered result", CYAN)),
+        .block(panel(&title, CYAN)),
         area,
         &mut state,
     );
+}
+
+/// The panel's title, which also carries what the table cannot: test runs a harness saw and
+/// recorded nothing for, because neither the exit status nor the output said how they went.
+/// `--doctor` has the reasons.
+pub(crate) fn title(withheld_runs: u64) -> String {
+    let base = "ROUTING — cost per delivered result";
+    match withheld_runs {
+        0 => base.to_string(),
+        runs => format!(
+            "{base} · {} test runs seen, not recorded (--doctor says why)",
+            format_count(runs)
+        ),
+    }
 }
 
 /// Dollars per task that actually passed.
@@ -171,7 +186,7 @@ fn short_model(model: &str) -> String {
 /// harness rather than being collected automatically. A bare "no events recorded" told them the
 /// feature was empty without telling them it existed or why they would want it — which is why
 /// the most differentiated thing this project does was also its least visible.
-fn empty_state<'a>() -> Paragraph<'a> {
+fn empty_state<'a>(title: &'a str) -> Paragraph<'a> {
     let dim = Style::default().fg(MUTED);
     Paragraph::new(vec![
         Line::from(Span::styled(
@@ -221,7 +236,7 @@ fn empty_state<'a>() -> Paragraph<'a> {
         Line::from(""),
         Line::from(Span::styled("  docs/routing-analytics.md", dim)),
     ])
-    .block(panel("ROUTING — cost per delivered result", CYAN))
+    .block(panel(title, CYAN))
 }
 
 /// The derived block's height: one line per shown transition, plus the summary, plus borders.

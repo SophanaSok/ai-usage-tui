@@ -358,6 +358,9 @@ pub struct DerivedView {
     totals: Totals,
     category_totals: Vec<(Category, Totals)>,
     routing: Vec<RoutingAggregates>,
+    /// Test runs a harness saw and could not record. The routing panel says so, because a
+    /// table of two events reads very differently beside "841 not recorded".
+    withheld_runs: u64,
     projects: Vec<ProjectTotals>,
     daily: Vec<DayTotals>,
     burn: BurnRate,
@@ -975,6 +978,14 @@ impl App {
                 Vec::new()
             }
         };
+        self.view.withheld_runs =
+            match crate::collector::journal::load_withheld_test_runs(&self.roots.journal) {
+                Ok(rows) => rows.iter().map(|row| row.runs).sum(),
+                Err(error) => {
+                    crate::logging::error("routing", &format!("tally read failed: {error}"));
+                    0
+                }
+            };
         self.recompute();
         // Omarchy's records: three small files, read here beside the routing table so the
         // render path stays free of I/O. Absent on any machine without Omarchy.
@@ -1075,5 +1086,9 @@ impl App {
 
     pub fn routing(&self) -> &[RoutingAggregates] {
         &self.view.routing
+    }
+
+    pub fn withheld_runs(&self) -> u64 {
+        self.view.withheld_runs
     }
 }

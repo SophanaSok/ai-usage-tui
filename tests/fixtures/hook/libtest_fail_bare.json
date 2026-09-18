@@ -1,0 +1,16 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000007",
+  "transcript_path": "/home/user/.claude/projects/-home-user-project/00000000-0000-4000-8000-000000000007.jsonl",
+  "cwd": "/home/user/project",
+  "prompt_id": "00000000-0000-4000-9000-000000000007",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "cargo test"
+  },
+  "tool_use_id": "toolu_000000000000000000000007",
+  "error": "Exit code 101\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s\n     Running unittests src/lib.rs (target/debug/deps/hookcap-c4677e10314ae609)\n\nrunning 2 tests\ntest tests::two_is_two ... ok\ntest tests::two_is_still_two ... FAILED\n\nfailures:\n\n---- tests::two_is_still_two stdout ----\n\nthread 'tests::two_is_still_two' (299368) panicked at src/lib.rs:14:9:\nassertion `left == right` failed\n  left: 3\n right: 2\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    tests::two_is_still_two\n\ntest result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `--lib`",
+  "is_interrupt": false,
+  "duration_ms": 21
+}

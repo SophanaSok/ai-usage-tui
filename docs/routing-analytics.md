@@ -104,16 +104,16 @@ the model as something to act on, and a journal that could not be written is not
 fix. With exit `1` the same run told the model nothing.
 
 **What counts as a test run.** The command line must contain a recognised runner at the head of
-a simple command — `cargo test`, `pytest`, `npm test`, `go test`, `just test`, `make check` and
+a simple command — `cargo test`, `pytest`, `npm test`, `go test`, `just test`, `just check`, `make check` and
 some forty others, through wrappers like `npx`, `uv run`, `timeout` and leading `VAR=value`
 assignments; the list is `RUNNERS` in `src/harness/shell.rs`. Matching is on the command's
 leading tokens, so `grep "cargo test"`, `echo cargo test` and `cat test.log` are not test runs.
 
 **Whose status the hook sees.** The exit status is the *line's*, not the runner's, and the two
-differ in ways that would record a wrong result. So a line is an observation only when its
-status is the runner's own, in that direction:
+differ in ways that would record a wrong result. So the status decides only when it is the
+runner's own, in that direction:
 
-| Line | Recorded |
+| Line | The status says |
 | --- | --- |
 | `cargo test`, `RUST_BACKTRACE=1 cargo test`, `cargo build; cargo test` | pass and fail |
 | `cargo build && cargo test` | pass only — a failure may be the build's, before a test ran |
@@ -121,18 +121,57 @@ status is the runner's own, in that direction:
 | `cargo test 2>&1 \| tail -20` | nothing — the status is `tail`'s |
 | `cargo test; echo done`, `cargo test \|\| true`, `cargo test &` | nothing — the runner's status is discarded |
 | `cargo check \|\| cargo test` | nothing — the tests ran only if the check failed |
-| anything with `$(…)`, backticks or a heredoc | nothing — a runner inside them is text, not a run |
+| a runner on a line with `$(…)`, backticks or a heredoc | nothing — the line cannot be read reliably |
 
-A withheld observation is printed with its reason (`Nothing to record: …`), which `claude
---debug` shows. Run the test command plainly, as the last thing on the line, and both directions
-are recorded. An interrupted command, and one run with `run_in_background`, has no outcome in
-its payload and is never recorded.
+**When the status says nothing, the runner's own summary does.** Measured on the author's machine
+over eighteen days, the first table's bottom four rows were 841 test runs of 845: every test
+command there is trimmed through `grep`, `tail` or `head` so its output fits a tool result, and
+the hook recorded two events and said nothing about the rest. Captured from Claude Code, `cargo
+test 2>&1 | grep -E "^test result|FAILED"` with a **failing** test fires `PostToolUse` — the
+success hook — so the status was never going to be a way in. The runner's summary line is still
+in the payload (`tool_response.stdout`, or `error` for `PostToolUseFailure`), and for a line
+whose status does not speak, that line decides — against the hook event when they disagree:
+
+| Runner | Read as a pass | Read as a failure |
+| --- | --- | --- |
+| `cargo test` | `test result: ok.` | `test result: FAILED.`, `test … ... FAILED`, `error: test failed`, `error: N target(s) failed` |
+| `pytest` | `N passed in 0.01s` | `N failed, …`, `N error(s), …`, `FAILED path::test`, `ERROR path` |
+| `go test` | `ok  	pkg	0.001s` | `FAIL`, `FAIL	pkg`, `--- FAIL: Test` |
+| `deno test` | `ok \| N passed \| 0 failed` | `FAILED \| …`, `error: Test failed` |
+| `make`, `just`, `npm`/`pnpm`/`yarn`/`bun run` scripts, `tox`, `rake`, `composer` | any of the above | any of the above |
+
+Every marker is a line that runner really printed, kept under `tests/fixtures/hook/`. A runner
+with no captured output has no marker — jest, vitest, nextest and the rest are recognised and
+their piped runs stay unrecorded — and adding one starts with a capture, not with its
+documentation (`CONTRIBUTING.md`, "Capturing a Claude Code hook payload").
+
+The two directions are not treated alike. **A failure marker is always believed**: a filter can
+hide one, it cannot make one. **A pass needs the end of the output to be there**, because the end
+is where each of these runners puts a failure: `tail` keeps it; a `head` that filled its limit, or
+whose limit cannot be read, may have cut it, and then no pass is recorded. A line that selects
+passing summaries by name (`grep "test result: ok"`) can never show a failure and never yields a
+pass. The output is read for a verdict and dropped; nothing of it is stored.
+
+**What could not be recorded is counted.** A test run with neither a status nor a summary to go
+on — `cargo test | head -3`, `pnpm test >/dev/null; echo done` — records no event and adds one to
+a tally in the journal: the UTC day, the agent and the reason, and nothing else (no command line,
+which can carry a credential; no output). `--doctor` prints it under CLAUDE CODE, the routing
+panel's title carries the total, and `--routing-json` and `--summary-json` export it as
+`withheld`. The reasons are `pipe`, `sequence`, `or_after`, `after_or`, `background`,
+`substitution` and `and_chain`. Read it beside `events`: two events and 800 withheld is a
+coverage gap, two events and none is a quiet machine. A re-delivered hook counts twice — a tally
+has no identity to refuse it by — so treat it as a close count, not an exact one.
+
+The hook prints what it did (`Recorded a failing test run …, from the runner's summary line`,
+`Counted a test run and recorded nothing: …`, `Nothing to record: not a test run`), which `claude
+--debug` shows. An interrupted command, and one run with `run_in_background`, has no outcome in
+its payload and is never recorded or counted.
 
 **What the event carries.**
 
 | Field | Source |
 | --- | --- |
-| `test_result` | Which hook fired |
+| `test_result` | Which hook fired, or the runner's summary line when the line's status is not the runner's |
 | `agent` | `claude-code`, or `claude-code:<agent_type>` inside a subagent |
 | `model`, `provider` | The last request in the transcript the payload names — the model in use — and `anthropic` |
 | `requests`, `tokens` | The attempt: every request in the transcript that no earlier event of this session has attributed. One API request is written as several assistant lines sharing a `requestId`; they count once |

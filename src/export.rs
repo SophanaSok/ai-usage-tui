@@ -286,6 +286,11 @@ pub fn print_summary(cli: &Cli, budgets: &crate::budget::BudgetEngine) -> Result
         .into_iter()
         .filter(|event| filter.in_range(event.created))
         .collect();
+    // A tally row is a whole UTC day: it is in range when the day's end is.
+    let withheld: Vec<_> = crate::collector::journal::load_withheld_test_runs(&journal)?
+        .into_iter()
+        .filter(|row| filter.in_range(row.day + 86_399))
+        .collect();
     let (_, channel) = crate::update::current_channel();
     let document = crate::summary::build(&crate::summary::Inputs {
         schema_version: JSON_SCHEMA_VERSION,
@@ -317,6 +322,7 @@ pub fn print_summary(cli: &Cli, budgets: &crate::budget::BudgetEngine) -> Result
         budgets: &budgets.check(&usages),
         limits: &crate::limits::load(&roots, now),
         routing_events: &routing_events,
+        withheld: &withheld,
         input_rate: &|model| engine.input_rate(model),
     });
     print_line(&serde_json::to_string(&document)?)?;

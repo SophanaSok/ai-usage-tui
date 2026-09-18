@@ -427,6 +427,8 @@ pub struct Inputs<'a> {
     pub limits: &'a LimitsReport,
     /// Routing events already narrowed to the range.
     pub routing_events: &'a [RoutingEvent],
+    /// Test runs seen and not recorded, already narrowed to the range.
+    pub withheld: &'a [crate::collector::journal::WithheldRuns],
     /// A model's input rate, for ordering models when deriving escalations.
     pub input_rate: &'a dyn Fn(&str) -> Option<f64>,
 }
@@ -550,6 +552,7 @@ pub fn build(inputs: &Inputs<'_>) -> Value {
         "routing": {
             "events": inputs.routing_events.len(),
             "aggregates": aggregates.iter().map(crate::routing::aggregate_json).collect::<Vec<_>>(),
+            "withheld": crate::routing::withheld_json(inputs.withheld),
         },
     })
 }
@@ -693,6 +696,7 @@ mod tests {
             budgets: &[],
             limits: &LimitsReport::default(),
             routing_events: &[],
+            withheld: &[],
             input_rate: &|_| None,
         })
     }

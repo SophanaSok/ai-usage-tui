@@ -1,0 +1,22 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000002",
+  "transcript_path": "/home/user/.claude/projects/-home-user-project/00000000-0000-4000-8000-000000000002.jsonl",
+  "cwd": "/home/user/project",
+  "prompt_id": "00000000-0000-4000-9000-000000000002",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "cargo test 2>&1 | tail -5",
+    "description": "redacted"
+  },
+  "tool_response": {
+    "stdout": "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "stderr": "",
+    "interrupted": false,
+    "isImage": false,
+    "noOutputExpected": false
+  },
+  "tool_use_id": "toolu_000000000000000000000002",
+  "duration_ms": 40
+}

@@ -2385,14 +2385,24 @@ fn a_claude_code_hook_records_the_test_runs_it_observed_and_nothing_else() {
         "the second attempt is only req_3: {json}"
     );
 
-    // A failure whose status is not the runner's is not a failure.
+    // A failure whose status is not the runner's is not a failure: `Exit code 1` and nothing
+    // else may be the build's. It is counted, with the reason, and no event is made of it.
     let out = hook(&payload(
         "PostToolUseFailure",
         "cargo build && cargo test",
         "toolu_3",
     ));
-    assert!(out.starts_with("Nothing to record"), "{out}");
-    assert_eq!(aggregates()["events"], 2);
+    assert!(
+        out.starts_with("Counted a test run and recorded nothing"),
+        "{out}"
+    );
+    let json = aggregates();
+    assert_eq!(json["events"], 2, "{json}");
+    assert_eq!(json["withheld"]["runs"], 1, "{json}");
+    assert_eq!(
+        json["withheld"]["by_reason"][0]["reason"], "and_chain",
+        "{json}"
+    );
 
     // A run with nothing new in the transcript is still a run, attributed to nothing — and it
     // must not move the cursor, or the next request would never be counted.
@@ -2415,6 +2425,119 @@ fn a_claude_code_hook_records_the_test_runs_it_observed_and_nothing_else() {
         450 + 130,
         "req_4 belongs to the last attempt; an empty attempt must not have consumed it: {json}"
     );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The payloads Claude Code really sent for a test run trimmed through `grep`, `tail` and `head`
+/// — the shape of 98% of the test runs on the machine this was written on, none of which the hook
+/// had ever recorded. The shell's status was the filter's, and `PostToolUse` fired for the failing
+/// run too; the result is the runner's own summary line. What still cannot be read is counted,
+/// and `--doctor`, `--routing-json` and `--summary-json` all say so.
+#[test]
+fn a_piped_test_run_is_recorded_from_its_summary_and_the_rest_is_counted() {
+    use std::io::Write as _;
+
+    let dir = scratch("hook-piped");
+    let journal = dir.join("usage.db");
+    let fixture = |name: &str| -> String {
+        let path = format!("{}/tests/fixtures/hook/{name}", env!("CARGO_MANIFEST_DIR"));
+        std::fs::read_to_string(&path).expect(&path)
+    };
+    let hook = |body: &str| -> String {
+        let mut child = hermetic_with(
+            bin().arg("--claude-code-hook"),
+            &PathBuf::from(fixture_db()),
+            &journal,
+        )
+        .arg("--claude-billing")
+        .arg("subscription")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(body.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().expect("wait");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+
+    let out = hook(&fixture("libtest_pass_grep.json"));
+    assert!(out.starts_with("Recorded a passing test run"), "{out}");
+    assert!(out.contains("from the runner's summary line"), "{out}");
+    // `PostToolUse` — the success hook — and a failing run.
+    let out = hook(&fixture("libtest_fail_grep.json"));
+    assert!(out.starts_with("Recorded a failing test run"), "{out}");
+    let out = hook(&fixture("libtest_fail_tail.json"));
+    assert!(out.starts_with("Recorded a failing test run"), "{out}");
+    // `head -3` stopped before the summary: nothing to read, so nothing is claimed.
+    let out = hook(&fixture("libtest_pass_head_cut.json"));
+    assert!(
+        out.starts_with("Counted a test run and recorded nothing"),
+        "{out}"
+    );
+    assert!(out.contains("piped into another command"), "{out}");
+
+    let routing = hermetic_with(
+        bin().arg("--routing-json"),
+        &PathBuf::from(fixture_db()),
+        &journal,
+    )
+    .output()
+    .expect("run --routing-json");
+    let json: serde_json::Value = serde_json::from_slice(&routing.stdout).expect("json");
+    assert_eq!(json["events"], 3, "{json}");
+    assert_eq!(json["aggregates"][0]["test_passes"], 1, "{json}");
+    assert_eq!(json["aggregates"][0]["test_failures"], 2, "{json}");
+    assert_eq!(json["withheld"]["runs"], 1, "{json}");
+    assert_eq!(json["withheld"]["by_reason"][0]["reason"], "pipe", "{json}");
+    assert!(
+        json["withheld"]["by_reason"][0]["meaning"]
+            .as_str()
+            .is_some_and(|meaning| meaning.contains("piped")),
+        "{json}"
+    );
+
+    let summary = hermetic_with(
+        bin().arg("--summary-json").arg("--all"),
+        &PathBuf::from(fixture_db()),
+        &journal,
+    )
+    .output()
+    .expect("run --summary-json");
+    let json: serde_json::Value = serde_json::from_slice(&summary.stdout).expect("json");
+    assert_eq!(json["routing"]["withheld"]["runs"], 1, "{json}");
+
+    let doctor = hermetic_with(
+        bin().arg("--doctor"),
+        &PathBuf::from(fixture_db()),
+        &journal,
+    )
+    .output()
+    .expect("run --doctor");
+    let text = String::from_utf8_lossy(&doctor.stdout);
+    assert!(
+        text.contains("3 test run(s) recorded, 1 seen and not recorded"),
+        "{text}"
+    );
+    assert!(text.contains("1 piped into another command"), "{text}");
+
+    // No output is kept: a verdict was derived from it and it was dropped.
+    let bytes = std::fs::read(&journal).expect("journal");
+    let haystack = String::from_utf8_lossy(&bytes);
+    for leaked in ["test result", "two_is_still_two", "grep -E"] {
+        assert!(!haystack.contains(leaked), "the journal holds {leaked:?}");
+    }
 
     let _ = std::fs::remove_dir_all(&dir);
 }
