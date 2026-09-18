@@ -25,8 +25,8 @@ pub fn refresh_zen_catalog() -> Result<PathBuf> {
         .send()?
         .error_for_status()?;
     let body: Value = response.json()?;
-    let temporary = path.with_extension("json.tmp");
-    fs::write(&temporary, serde_json::to_vec_pretty(&body)?)?;
-    fs::rename(temporary, &path)?;
+    // Through the one spelling of temporary-then-rename. This was the last cache still writing
+    // to a temporary every process shares, which two dashboards refreshing together race on.
+    crate::helpers::write_atomic(&path, &serde_json::to_vec_pretty(&body)?)?;
     Ok(path)
 }

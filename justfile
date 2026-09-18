@@ -56,6 +56,15 @@ docs:
     shellcheck scripts/*.sh
     scripts/test-publish-release.sh
 
+# Line coverage by file, as the Coverage job reports it. Needs cargo-llvm-cov
+# (`cargo install cargo-llvm-cov --locked`) and LLVM's tools: `rustup component add
+# llvm-tools-preview`, or on a distribution toolchain the system ones, which must match the
+# compiler's LLVM (`rustc -vV`): LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata.
+#
+# Not part of `check`, and nothing fails on its number; see the job's comment in ci.yml.
+coverage *args:
+    cargo llvm-cov --all-targets --locked --summary-only {{args}}
+
 # Dependency advisories and licence policy, as CI runs it.
 deny:
     #!/usr/bin/env bash
