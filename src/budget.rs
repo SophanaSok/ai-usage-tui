@@ -368,6 +368,51 @@ fn spend_for_scope(usages: &[Usage], scope: &BudgetScope, period: BudgetPeriod) 
     total
 }
 
+/// The host a webhook URL names: no scheme, no `user:password@`, no port, no path.
+///
+/// Anything that prints a webhook prints this and never the URL. A Slack, Discord or ntfy hook
+/// *is* its URL -- the token is in the path or the userinfo -- and the error this tool used to
+/// give for a bad scheme quoted the whole thing into stderr and the log.
+pub fn webhook_host(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    match host.strip_prefix('[') {
+        // `[::1]:8080`: the brackets hold the address, and its colons are not a port.
+        Some(bracketed) => bracketed.split(']').next().unwrap_or(""),
+        None => host.split(':').next().unwrap_or(""),
+    }
+}
+
+/// What to tell someone whose alerts travel in the clear, or `None` when they do not.
+///
+/// A webhook payload is the budget's scope, its limit and what has been spent. Over `http://`
+/// to another machine, anything on the path reads it and can answer in the receiver's place.
+/// **Said, not refused, by decision:** the usual plain-HTTP target is a notifier on the user's
+/// own network (ntfy, Home Assistant, n8n), a LAN host cannot be told from a public one without
+/// resolving it, and giving such a box a certificate is not this tool's to demand. Loopback is
+/// exempt: that traffic never leaves the machine.
+pub fn webhook_notice(url: &str) -> Option<String> {
+    if !url.to_ascii_lowercase().starts_with("http://") {
+        return None;
+    }
+    let host = webhook_host(url).to_ascii_lowercase();
+    let loopback = host == "localhost"
+        || host.ends_with(".localhost")
+        || host == "::1"
+        || host
+            .parse::<std::net::Ipv4Addr>()
+            .is_ok_and(|address| address.is_loopback());
+    (!loopback).then(|| {
+        format!(
+            "budget alerts go to {host} over plain http: the scope, limit and spend in them \
+             can be read on the way; use https:// if the receiver offers it"
+        )
+    })
+}
+
 pub struct AlertDispatcher {
     pub webhook_url: Option<String>,
     last_dispatched: HashMap<(BudgetScope, BudgetPeriod), (AlertLevel, Instant)>,
@@ -399,9 +444,10 @@ impl AlertDispatcher {
             return Ok(());
         };
         if !webhook_url.starts_with("https://") && !webhook_url.starts_with("http://") {
+            // The scheme and nothing else: the rest of a webhook URL is its credential.
             return Err(anyhow::anyhow!(
-                "webhook URL must start with http:// or https://, got {:?}",
-                webhook_url
+                "webhook URL must start with http:// or https:// (host {:?})",
+                webhook_host(&webhook_url)
             ));
         }
         let actionable: Vec<&Alert> = alerts.iter().filter(|a| a.is_actionable()).collect();
@@ -428,11 +474,20 @@ impl AlertDispatcher {
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()?;
+        // `reqwest` puts the URL in every error it gives, and these errors go to stderr and the
+        // log. The URL is the webhook's credential, so it is taken out and the host put back.
         client
             .post(webhook_url.as_str())
             .json(&payload)
-            .send()?
-            .error_for_status()?;
+            .send()
+            .and_then(|response| response.error_for_status())
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "{} (host {})",
+                    error.without_url(),
+                    webhook_host(&webhook_url)
+                )
+            })?;
 
         for alert in to_send {
             self.last_dispatched.insert(
@@ -448,6 +503,79 @@ impl AlertDispatcher {
 mod tests {
     use super::*;
     use crate::model::{Category, CostStatus, Usage};
+
+    #[test]
+    fn a_webhook_is_named_by_its_host_and_nothing_else() {
+        for (url, host) in [
+            (
+                "https://hooks.slack.com/services/T0/B0/SECRET",
+                "hooks.slack.com",
+            ),
+            (
+                "http://user:SECRET@ntfy.lan:8080/alerts?auth=SECRET",
+                "ntfy.lan",
+            ),
+            ("http://[::1]:9000/hook", "::1"),
+            ("http://127.0.0.1:9000", "127.0.0.1"),
+            ("not a url", "not a url"),
+        ] {
+            assert_eq!(webhook_host(url), host, "{url}");
+        }
+    }
+
+    #[test]
+    fn plain_http_is_remarked_on_unless_it_never_leaves_the_machine() {
+        let notice = webhook_notice("http://user:SECRET@ntfy.lan:8080/t/SECRET").expect("a notice");
+        assert!(
+            notice.contains("ntfy.lan") && notice.contains("plain http"),
+            "{notice}"
+        );
+        assert!(!notice.contains("SECRET"), "{notice}");
+        assert!(
+            webhook_notice("HTTP://example.com/hook").is_some(),
+            "the scheme is not case-sensitive"
+        );
+        for quiet in [
+            "https://example.com/hook",
+            "http://localhost:9000/hook",
+            "http://hooks.localhost/x",
+            "http://127.0.0.1/hook",
+            "http://127.8.9.1:1/hook",
+            "http://[::1]:9000/hook",
+        ] {
+            assert_eq!(webhook_notice(quiet), None, "{quiet}");
+        }
+        // A name that only starts like loopback is another machine.
+        assert!(webhook_notice("http://127.0.0.1.example.com/hook").is_some());
+        assert!(webhook_notice("http://localhost.example.com/hook").is_some());
+    }
+
+    /// A webhook URL is its own credential, and both of these errors reach stderr and the log.
+    #[test]
+    fn no_dispatch_error_repeats_the_url() {
+        let over = Alert {
+            scope: BudgetScope::Global,
+            period: BudgetPeriod::Daily,
+            spend: 12.0,
+            limit: 10.0,
+            pct: 120.0,
+            level: AlertLevel::Critical,
+            unpriced_requests: 0,
+            quota_requests: 0,
+        };
+        // Nothing listens on port 9 of loopback, so the send fails without leaving the machine.
+        for url in [
+            "ftp://host.example/SECRET",
+            "http://127.0.0.1:9/hook/SECRET",
+        ] {
+            let error = AlertDispatcher::new(Some(url.to_string()))
+                .dispatch(std::slice::from_ref(&over))
+                .expect_err("neither can be delivered")
+                .to_string();
+            assert!(!error.contains("SECRET"), "{error}");
+            assert!(error.contains("host"), "{error}");
+        }
+    }
 
     fn make_usage(provider: &str, model: &str, cost: f64, created: i64) -> Usage {
         Usage {
