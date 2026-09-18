@@ -4,6 +4,10 @@
 
 ### Added
 
+- **PowerShell completions ship.** `--completions powershell` always worked and nothing ever ran
+  it: the Windows zip was the one archive with no completions in it. It now carries
+  `completions/_ai-usage-tui.ps1`, and the unix archives carry it beside bash, zsh and fish.
+
 - **The Limits panel says when a window resets, not only how long.** An `AT` column gives the
   reset on the local clock -- `Fri 14:00`, or `Sep 25 14:00` once a weekday alone would read as
   today. A countdown is already old when it is read off a twenty-minute-old snapshot, and "can I
@@ -88,6 +92,19 @@
 
 ### Fixed
 
+- **The Linux downloads did not start on current stable distributions.** A binary linked against
+  glibc needs a glibc at least as new as the machine that built it, and that was the release
+  runner's: 2.39, measured on the v0.20.0 binary. So `install.sh` installed something that
+  answered ``version `GLIBC_2.39' not found`` on Debian 12, Ubuntu 22.04 and RHEL 9; the `.deb`
+  declared `libc6 (>= 2.39)` and apt refused it there; the `.rpm` declared nothing, installed,
+  and failed when run; and none of it could be loaded on Alpine. Releases now carry **static
+  builds** (`-x86_64-linux-musl.tar.gz`, `-aarch64-linux-musl.tar.gz`), checked with `file` and
+  run on a bare Alpine in the release build. `install.sh` takes them (`--libc gnu` for the other),
+  as do `cargo binstall` on a musl host and the Homebrew formula on Linux, and the `.deb` and
+  `.rpm` are built from them, checked to require no C library, and installed and run on Debian
+  11, Ubuntu 20.04, Rocky 8 and Fedora before they are published. The glibc archives are still
+  published, and the AUR package uses them.
+
 - **A webhook URL was printed in full when a POST failed.** A Slack, Discord or ntfy webhook is
   its URL -- the token is the path -- and `reqwest` puts the URL in every error it returns, so a
   timeout or a 404 wrote the credential to stderr and to the diagnostic log; the bad-scheme error
@@ -159,6 +176,12 @@
   write into the backup for the rest of its life. `--uninstall` removes the backup with the log.
 
 ### Changed
+
+- **The Chocolatey package is built and checked on every release run**, dry runs included. The
+  manifests were rendered and attached to every release and never packed by CI, and the one hand
+  run of `choco pack` had produced a package that installed nothing. The push is gated on a
+  `CHOCOLATEY_API_KEY` secret, as crates.io's is on its token: until an account exists the job
+  proves the package and publishes nothing.
 
 - **Plain `http://` to a budget webhook is remarked on, not refused.** The payload is the
   budget's scope, limit and spend. `--check-budgets` says so on stderr, `--doctor` under the new
