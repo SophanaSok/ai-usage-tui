@@ -10,6 +10,8 @@
 #
 # What it does that a hand-pasted curl|tar does not:
 #   - refuses to guess on an unsupported platform, and names the source build instead
+#   - on Linux, takes the static build when the release has one, so the C library is never a
+#     reason for the binary not to start
 #   - verifies the download against the release's own checksums.txt
 #   - checks the build attestation when the GitHub CLI is there to check it with
 #   - unpacks into a scratch directory, because the archive also contains README.md and LICENSE
@@ -26,16 +28,21 @@ VERSION=""
 DEST=""
 REQUIRE_ATTESTATION=""
 NO_ATTESTATION=""
+LIBC=""
 
 usage() {
     cat <<EOF
 Install a prebuilt $BIN release.
 
-Usage: install.sh [--version vX.Y.Z] [--dir PATH] [--require-attestation | --no-attestation]
+Usage: install.sh [--version vX.Y.Z] [--dir PATH] [--libc musl|gnu]
+                  [--require-attestation | --no-attestation]
 
   --version   Release tag to install. Default: the latest release.
   --dir       Directory to install into. Default: \$HOME/.local/bin,
               or /usr/local/bin when running as root.
+  --libc      Linux only. musl is the static build, which runs on any distribution and
+              is the default when the release has one. gnu is the build linked against
+              glibc, which needs a glibc as new as the release runner's.
   --require-attestation
               Refuse to install unless the GitHub CLI (gh) confirms the download
               was built by this project's release workflow. Without this flag the
@@ -60,6 +67,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --version) [ $# -ge 2 ] || die "--version requires a tag"; VERSION="$2"; shift 2 ;;
         --dir)     [ $# -ge 2 ] || die "--dir requires a path";    DEST="$2";    shift 2 ;;
+        --libc)    [ $# -ge 2 ] || die "--libc requires musl or gnu"; LIBC="$2";   shift 2 ;;
         --require-attestation) REQUIRE_ATTESTATION=1; shift ;;
         --no-attestation)      NO_ATTESTATION=1; shift ;;
         --help|-h) usage; exit 0 ;;
@@ -69,6 +77,10 @@ done
 
 [ -z "$REQUIRE_ATTESTATION" ] || [ -z "$NO_ATTESTATION" ] ||
     die "--require-attestation and --no-attestation contradict each other"
+case "$LIBC" in
+    ""|musl|gnu) ;;
+    *) die "--libc takes musl or gnu, not '$LIBC'" ;;
+esac
 
 # --- platform -------------------------------------------------------------------------------
 # Kept deliberately in step with the archive-name table in README.md and the build matrix in
@@ -127,10 +139,48 @@ if [ -z "$DEST" ]; then
     fi
 fi
 
-ARCHIVE="${BIN}-${VERSION}-${SLUG}.${EXT}"
 BASE="https://github.com/$REPO/releases/download/$VERSION"
 
-echo "==> $BIN $VERSION for ${os}-${arch}"
+WORK="$(mktemp -d)"
+# shellcheck disable=SC2064  # WORK is expanded now on purpose; it never changes.
+trap "rm -rf '$WORK'" EXIT INT TERM
+
+# Fetched before the archive, because on Linux it decides which archive. A release without it is
+# refused here as it always was further down: an unverified binary is what this script is for
+# avoiding.
+if ! fetch "$BASE/checksums.txt" > "$WORK/checksums.txt" 2>/dev/null || [ ! -s "$WORK/checksums.txt" ]; then
+    die "could not fetch $BASE/checksums.txt; refusing to install an unverified binary
+Check that $VERSION is a published release."
+fi
+
+listed() {
+    awk -v n="$1" '$2 == n || $2 == "*" n { found = 1 } END { exit !found }' "$WORK/checksums.txt"
+}
+
+# --- which Linux build ----------------------------------------------------------------------
+# The gnu build needs a glibc at least as new as the runner that linked it -- 2.39 through
+# v0.20.0 -- so on Debian 12, Ubuntu 22.04 or RHEL 9 this script installed a binary that answered
+# "version \`GLIBC_2.39' not found", and on Alpine one that could not be loaded at all. The
+# static build has no such floor, so it is what is installed wherever the release has one.
+# Releases before the static builds existed fall back to gnu, and say which.
+if [ "$os" = "Linux" ]; then
+    case "$LIBC" in
+        gnu) ;;
+        musl)
+            listed "${BIN}-${VERSION}-${SLUG}-musl.${EXT}" ||
+                die "$VERSION has no static (musl) build for ${arch}; omit --libc to take the glibc one"
+            SLUG="${SLUG}-musl" ;;
+        *)
+            if listed "${BIN}-${VERSION}-${SLUG}-musl.${EXT}"; then
+                SLUG="${SLUG}-musl"
+            else
+                echo "    $VERSION predates the static builds; installing the one linked against glibc"
+            fi ;;
+    esac
+fi
+ARCHIVE="${BIN}-${VERSION}-${SLUG}.${EXT}"
+
+echo "==> $BIN $VERSION for ${os}-${arch} ($SLUG)"
 
 # --- what is already here -------------------------------------------------------------------
 # Re-running this script to upgrade used to be silent about what it replaced, so an upgrade and
@@ -158,10 +208,6 @@ if [ -e "$DEST/$BIN" ]; then
     fi
 fi
 
-WORK="$(mktemp -d)"
-# shellcheck disable=SC2064  # WORK is expanded now on purpose; it never changes.
-trap "rm -rf '$WORK'" EXIT INT TERM
-
 echo "==> downloading $ARCHIVE"
 fetch_to "$BASE/$ARCHIVE" "$WORK/$ARCHIVE" \
     || die "download failed: $BASE/$ARCHIVE
@@ -172,7 +218,7 @@ Check that $VERSION is a published release with an asset for ${SLUG}."
 # or mismatched entry is a hard failure: a silently unverified binary is the thing this script
 # exists to avoid.
 echo "==> verifying checksum"
-if fetch "$BASE/checksums.txt" > "$WORK/checksums.txt" 2>/dev/null && [ -s "$WORK/checksums.txt" ]; then
+if [ -s "$WORK/checksums.txt" ]; then
     expected="$(awk -v n="$ARCHIVE" '$2 == n || $2 == "*" n { print $1 }' "$WORK/checksums.txt")"
     [ -n "$expected" ] || die "checksums.txt has no entry for $ARCHIVE"
 

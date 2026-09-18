@@ -128,7 +128,9 @@ curl -fsSL https://raw.githubusercontent.com/SophanaSok/ai-usage-tui/main/script
 ai-usage-tui
 ```
 
-[`scripts/install.sh`](scripts/install.sh) picks the archive for your platform,
+[`scripts/install.sh`](scripts/install.sh) picks the archive for your platform
+— on Linux the static build, so neither Alpine's musl nor an older glibc is a
+reason for it not to start; `--libc gnu` takes the glibc one —
 **verifies it against the release's published SHA-256 checksums**, and installs
 into `~/.local/bin` — `--dir PATH` to choose somewhere else, `--version vX.Y.Z`
 to pin a release. It refuses to install anything it could not verify, and names
@@ -146,8 +148,8 @@ If you would rather not pipe a script into your shell:
 ```sh
 VERSION=v0.20.0
 case "$(uname -s)-$(uname -m)" in
-  Linux-x86_64)  SLUG=x86_64-linux   ;;
-  Linux-aarch64) SLUG=aarch64-linux  ;;
+  Linux-x86_64)  SLUG=x86_64-linux-musl   ;;
+  Linux-aarch64) SLUG=aarch64-linux-musl  ;;
   Darwin-arm64)  SLUG=aarch64-macos  ;;
   Darwin-x86_64) SLUG=x86_64-macos   ;;
   *) SLUG=""; echo "No prebuilt binary for $(uname -s)-$(uname -m) — build from source instead." ;;
@@ -197,13 +199,23 @@ Checksums are published with each release.
 
 | Platform | Archive name pattern |
 | --- | --- |
-| Linux x86_64 | `ai-usage-tui-VERSION-x86_64-linux.tar.gz` |
-| Linux aarch64 | `ai-usage-tui-VERSION-aarch64-linux.tar.gz` |
+| Linux x86_64, static — any distribution, Alpine included | `ai-usage-tui-VERSION-x86_64-linux-musl.tar.gz` |
+| Linux aarch64, static | `ai-usage-tui-VERSION-aarch64-linux-musl.tar.gz` |
+| Linux x86_64, glibc | `ai-usage-tui-VERSION-x86_64-linux.tar.gz` |
+| Linux aarch64, glibc | `ai-usage-tui-VERSION-aarch64-linux.tar.gz` |
 | macOS Apple Silicon | `ai-usage-tui-VERSION-aarch64-macos.tar.gz` |
 | macOS Intel | `ai-usage-tui-VERSION-x86_64-macos.tar.gz` |
 | Windows x86_64 | `ai-usage-tui-VERSION-x86_64-windows.zip` |
 | Debian/Ubuntu | `ai-usage-tui-VERSION-amd64.deb`, `-arm64.deb` |
 | Fedora/RHEL | `ai-usage-tui-VERSION-amd64.rpm`, `-arm64.rpm` |
+
+**On Linux, take the static archive unless you have a reason not to.** The glibc build needs a
+glibc at least as new as the machine that linked it — 2.39, through v0.20.0 — so it does not
+start on Debian 12, Ubuntu 22.04 or RHEL 9, and cannot be loaded at all on Alpine. The static
+one is a single file with nothing to resolve at load time, and the release build runs it on a
+bare Alpine before publishing it. The `.deb` and `.rpm` carry the static binary for the same
+reason, and are installed and run on Debian 11, Ubuntu 20.04, Rocky 8 and Fedora in the release
+build. Static archives exist from the first release after v0.20.0.
 
 macOS example (Apple Silicon — use `x86_64-macos` on an Intel Mac):
 
@@ -280,7 +292,9 @@ that the list belongs to the binary you have.
 
 ### Shell completions and the man page
 
-The `.deb` and `.rpm` install both. From a tarball or `cargo install`, generate
+The `.deb` and `.rpm` install both. Every archive carries them under `completions/` — the
+Windows zip a PowerShell script, `completions/_ai-usage-tui.ps1`, to dot-source from your
+`$PROFILE` — beside the man page. From `cargo install`, or to match a newer binary, generate
 them yourself — they come from the parser itself, so they cannot describe a flag
 that does not exist:
 
