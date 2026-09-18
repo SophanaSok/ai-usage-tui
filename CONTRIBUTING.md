@@ -190,13 +190,28 @@ Write `src/ui/panels/yours.rs` with a single `draw_yours(frame, area, app)` and 
 `src/ui/panels/mod.rs`; add a variant to `Panel` in `src/ui/app.rs` (inside the `panels!` list,
 which also generates `Panel::ALL`), a `Binding` to `BINDINGS` in `src/ui/keys.rs` with a
 `hint: Some((key, word))` for the footer, a match arm in `draw` in `src/ui/mod.rs`, and a row in
-the README's panel table. That is everything: the event loop, the `?` overlay, `--help` and the
-footer all read the table. `ui::keys::tests` fails for a panel with no key or no hint, the overlay
+the README's panel table. That is everything: the event loop, the tab strip, the `?` overlay,
+`--help` and the footer all read the table. `ui::keys::tests` fails for a panel with no key or no hint, the overlay
 test for one the overlay does not show, the footer tests if the new hint no longer fits 80
 columns, and `tests/docs.rs` without the README row. `Panel::sort_columns` and `default_sort`
 have catch-all arms, so they are optional.
 Anything the panel needs should be computed once per refresh into `DerivedView`, never inside
 the draw call.
+
+Build the panel from `src/ui/theme.rs` rather than from ratatui directly: `panel` and
+`panel_with_count` for the box (the count is `row_count`, which knows about a `/` filter),
+`tokens_cell` and `tokens_column` for a TOKENS column that carries a bar when the pane is wide
+enough, `draw_scrollbar` after a table that scrolls, `meter` and `bar_of` for anything
+proportional. Colours are the named constants there and in `src/model.rs`. A colour that is not
+one of them still works -- `NO_COLOR` and the 256- and 16-colour fallbacks are passes over the
+finished frame, so no panel can bypass them -- but on sixteen colours it falls to nearest-match
+instead of being mapped by meaning, which is how two things end up the same grey. Anything
+marked by colour alone disappears under `NO_COLOR`: give it a glyph, a label or reverse video as
+well, as the tab strip and the share strip do.
+
+The left rail (`src/ui/panels/breakdown.rs`) is shared by every panel. A section added to it
+states its height and is dropped whole when it does not fit; if a panel shows the same thing in
+full, the rail leaves it out while that panel is open.
 
 ### Correct or add pricing
 
