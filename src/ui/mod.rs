@@ -6,14 +6,18 @@
 //! |---|---|
 //! | `app.rs` | `App` state, the `Panel` enum, and the derived views recomputed each refresh |
 //! | `aggregate.rs` | pure functions over `Usage` — per-project totals, pricing coverage |
-//! | `theme.rs` | palette and the small shared widgets (`panel`, `metric`, `cost_display`) |
+//! | `theme.rs` | palette, the colour-depth mapping, and the shared widgets (`panel`, `metric`, `meter`, `tokens_cell`, `draw_scrollbar`, `cost_display`) |
 //! | `panels/` | one module per panel, each exposing a single `draw_*` function |
 //! | `svg.rs` | renders a frame to SVG off-screen, for the README images |
 //! | this file | the event loop and the frame layout that dispatches to those panels |
 //!
 //! **To add a panel:** write `panels/yours.rs` with one `draw_yours(frame, area, app)`, add a
-//! `Panel` variant, a key binding in `run`, and a match arm in `draw`. Nothing else needs to
-//! know about it.
+//! `Panel` variant, a `Binding` in `keys.rs`, and a match arm in `draw`. Nothing else needs to
+//! know about it: the tab strip, the footer and the `?` overlay read the bindings table.
+//!
+//! The frame, top to bottom: header, tab strip, the alert banner when there is one, the hero row
+//! (`panels/metrics.rs`), then the left rail (`panels/breakdown.rs`) beside the open panel, and
+//! the footer.
 //!
 //! Two invariants hold throughout. Nothing here reads the clock, opens a database, or performs
 //! I/O — everything a panel needs is computed once per refresh into `DerivedView`, because this
