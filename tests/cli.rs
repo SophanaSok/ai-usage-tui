@@ -3403,6 +3403,7 @@ fn uninstall_removes_the_caches_and_keeps_the_data() {
         "update-check.json",
         "statusline-limits.json",
         "ai-usage-tui.log",
+        "ai-usage-tui.log.old",
     ];
     for name in caches {
         std::fs::write(data.join(name), "x").unwrap();
@@ -3572,5 +3573,31 @@ fn prune_journal_refuses_young_rows_and_creates_nothing() {
     assert!(status.success(), "no journal is not a failure: {stderr}");
     assert!(stdout.contains("Nothing to prune"), "{stdout}");
     assert!(!journal.exists(), "a prune created the journal");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Bug: a diagnostic log that grew for as long as `AI_USAGE_LOG` stayed set. Through the
+/// binary, because the sink is one per process and keyed off the real environment.
+#[test]
+fn a_log_past_its_cap_is_rotated_on_the_next_line() {
+    let dir = scratch("log-rotation");
+    let log = dir.join("x.log");
+    let backup = dir.join("x.log.old");
+    let cap = ai_usage_tui::logging::MAX_LOG_BYTES;
+    std::fs::File::create(&log)
+        .and_then(|file| file.set_len(cap + 1))
+        .expect("a log past the cap");
+
+    let (status, _, stderr) = run(writer(&dir).env("AI_USAGE_LOG", &log).arg("--doctor"));
+    assert!(status.success(), "{stderr}");
+    assert_eq!(
+        std::fs::metadata(&backup)
+            .expect("the old log, moved aside")
+            .len(),
+        cap + 1
+    );
+    let fresh = std::fs::read_to_string(&log).expect("a fresh log");
+    assert!(fresh.contains("starting"), "{fresh}");
+    assert!((fresh.len() as u64) < cap);
     let _ = std::fs::remove_dir_all(dir);
 }

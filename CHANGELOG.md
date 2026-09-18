@@ -59,6 +59,16 @@
   still never evicted, by decision: every source loads all of history at startup and ALL TIME and
   the budgets read it, so a dashboard that dropped old rows would disagree with one just started.
 
+- **The diagnostic log is bounded, and quieter.** With `AI_USAGE_LOG` set the file grew for as
+  long as the variable stayed set -- and what grew it was not errors: every successful poll of
+  every collector logged `poll ok`, six lines every thirty seconds, some seventeen thousand a day.
+  A poll is now logged when its row count changes. Past 5 MiB the file is renamed to `<name>.old`,
+  replacing the previous backup, and started again. Several processes write the one file -- the
+  dashboard, each hook, each status-line redraw -- and the rotation takes no lock: whoever finds
+  the path over the cap renames it, and a process whose open handle is over the cap while the path
+  is not knows it is holding the backup, and reopens; without that second half a dashboard would
+  write into the backup for the rest of its life. `--uninstall` removes the backup with the log.
+
 ### Changed
 
 - **JSON objects keep the order their keys were written in.** `serde_json` now builds with

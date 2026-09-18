@@ -82,6 +82,15 @@ AI_USAGE_LOG=/tmp/ai-usage.log ai-usage-tui       # explicit path
 Off unless set. The dashboard holds the alternate screen, so anything written to stderr is
 invisible; before this existed a panicking collector left no trace anywhere.
 
+Bounded: past 5 MiB (`logging::MAX_LOG_BYTES`) the file is renamed to `<name>.old`, replacing the
+previous backup, and a fresh one is started, so the pair never holds more than about twice the
+cap. Several processes write the same file -- the dashboard, each hook, each status-line redraw
+-- and the rotation needs no lock: whoever finds the *path* over the cap renames it, and a process
+whose open handle is over the cap while the path is not is holding the backup, and reopens. A
+successful poll is logged when its row count changes, not every poll; that line alone used to be
+some seventeen thousand a day. `--uninstall` removes the log and its backup at the default
+location, and leaves a log at a path you named.
+
 The log records timestamps, levels, collector names and error text. It never contains prompts,
 completions, or credentials — the same boundary the collectors themselves observe.
 

@@ -275,6 +275,20 @@ impl CollectorState {
     }
 }
 
+/// Whether a poll's row count is worth a log line: when it differs from the last one logged.
+///
+/// Every successful poll of every collector used to log `poll ok` -- six lines every thirty
+/// seconds while the dashboard is open, some seventeen thousand a day, all saying the same
+/// thing. That was the log's growth, not errors. The warning above follows the same rule, for
+/// the same reason: the log is for noticing, not for counting.
+fn count_changed(logged: &mut Option<usize>, count: usize) -> bool {
+    if *logged == Some(count) {
+        return false;
+    }
+    *logged = Some(count);
+    true
+}
+
 /// Shutdown signal that a sleeping collector can be woken from.
 ///
 /// The old version polled an `AtomicBool` once a second, so `shutdown()` could take up to a
@@ -343,6 +357,7 @@ impl CollectorHandle {
                 // Logged when it changes, not every poll: an unreadable transcript stays
                 // unreadable for hours, and the log is for noticing, not for counting.
                 let mut logged_warning: Option<String> = None;
+                let mut logged_count: Option<usize> = None;
                 while !shutdown.is_set() {
                     let result = catch_unwind(AssertUnwindSafe(|| collector.poll()));
                     match result {
@@ -373,8 +388,8 @@ impl CollectorHandle {
                             drop(s);
                             if refreshes_pricing {
                                 logging::info(&name, "pricing refreshed and reloaded");
-                            } else {
-                                logging::info(&name, &format!("poll ok, {} usage rows", count));
+                            } else if count_changed(&mut logged_count, count) {
+                                logging::info(&name, &format!("poll ok, {count} new rows"));
                             }
                         }
                         Ok(Err(e)) => {
@@ -602,6 +617,21 @@ mod tests {
         fn poll(&mut self) -> Result<Vec<Usage>> {
             Ok(self.usages.clone())
         }
+    }
+
+    /// Bug: one `poll ok` line per collector per poll, which is what filled the log.
+    #[test]
+    fn a_poll_is_logged_when_its_count_changes_and_not_otherwise() {
+        let mut logged = None;
+        let lines: Vec<bool> = [0, 0, 0, 3, 0, 0, 2, 2]
+            .into_iter()
+            .map(|count| count_changed(&mut logged, count))
+            .collect();
+        assert_eq!(
+            lines,
+            [true, false, false, true, true, false, true, false],
+            "the first poll, and every change after it"
+        );
     }
 
     /// Bug: the dashboard copying every row on every refresh. The generation is what lets it

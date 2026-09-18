@@ -33,7 +33,8 @@ when they do:
   `--doctor`; `--statusline`; the status line; error messages; the prose of `--agent-guide` and
   the `meaning` strings in `--schema`. Parse `--summary-json` or `--json`, not these.
 - **Files the tool keeps for itself.** `zen-pricing.toml`, `zen-models.json`, `update-check.json`,
-  `statusline-limits.json` and the `AI_USAGE_LOG` diagnostic log. `--uninstall` removes exactly
+  `statusline-limits.json` and the `AI_USAGE_LOG` diagnostic log -- `ai-usage-tui.log` and its one
+  rotated backup, `ai-usage-tui.log.old`, at the default location. `--uninstall` removes exactly
   these, and a test holds that list to this one.
 - **Figures that come from outside.** Pricing rates are data. A release that updates a rate or adds a
   model changes a computed cost, and that is not a breaking change. Which of these a figure rests on

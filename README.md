@@ -1258,7 +1258,7 @@ Environment variables:
 | `CODEX_HOME` | Codex home; session logs are read from `sessions/` and `archived_sessions/` beneath it |
 | `COPILOT_HOME` | Copilot home; its CLI store and `session-state/` logs are read beneath it |
 | `GEMINI_TELEMETRY_OUTFILE` | Gemini CLI's own telemetry output path; when set, it is read from there rather than `~/.gemini/telemetry.json` |
-| `AI_USAGE_LOG` | Write diagnostics to a file — `1` for the default location, or a path. Off when unset. |
+| `AI_USAGE_LOG` | Write diagnostics to a file — `1` for the default location, or a path. Off when unset. Past 5 MiB the file is renamed to `<name>.old`, replacing the previous one, and started again. |
 | `NO_COLOR` | Any non-empty value draws the dashboard without colour ([no-color.org](https://no-color.org)); the selected row is shown in reverse video instead |
 | `XDG_CONFIG_HOME` | Base directory for the default config path |
 | `XDG_DATA_HOME` | Base directory for default database, journal, and cache paths |
