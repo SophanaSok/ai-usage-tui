@@ -313,8 +313,9 @@ jobs:
           done
           # Static, so neither package may ask for a C library -- that requirement is what made
           # the last ones uninstallable on a current stable distribution.
-          dpkg-deb -f "ai-usage-tui-${{ inputs.tag || github.ref_name }}-${{ matrix.slug }}.deb" | tee /tmp/control.txt
-          if grep -qi 'libc' /tmp/control.txt; then
+          # The Depends field alone: the description is the README, which discusses glibc.
+          dpkg-deb -f "ai-usage-tui-${{ inputs.tag || github.ref_name }}-${{ matrix.slug }}.deb" Depends | tee /tmp/depends.txt
+          if grep -qi 'libc' /tmp/depends.txt; then
             echo "::error::.deb depends on a C library; the binary in it is not static"; exit 1
           fi
           if rpm -qpR "ai-usage-tui-${{ inputs.tag || github.ref_name }}-${{ matrix.slug }}.rpm" | grep -qi 'libc\.so'; then
