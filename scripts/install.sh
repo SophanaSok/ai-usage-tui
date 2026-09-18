@@ -148,9 +148,10 @@ trap "rm -rf '$WORK'" EXIT INT TERM
 # Fetched before the archive, because on Linux it decides which archive. A release without it is
 # refused here as it always was further down: an unverified binary is what this script is for
 # avoiding.
-fetch "$BASE/checksums.txt" > "$WORK/checksums.txt" 2>/dev/null && [ -s "$WORK/checksums.txt" ] ||
+if ! fetch "$BASE/checksums.txt" > "$WORK/checksums.txt" 2>/dev/null || [ ! -s "$WORK/checksums.txt" ]; then
     die "could not fetch $BASE/checksums.txt; refusing to install an unverified binary
 Check that $VERSION is a published release."
+fi
 
 listed() {
     awk -v n="$1" '$2 == n || $2 == "*" n { found = 1 } END { exit !found }' "$WORK/checksums.txt"
