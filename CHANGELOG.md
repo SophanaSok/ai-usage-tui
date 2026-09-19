@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- **The installer shows what it is doing while it does it.** `scripts/install.sh` was silent through
+  its slow steps -- finding the latest tag, fetching `checksums.txt`, the download, and `gh`
+  asking GitHub about the attestation -- so on a slow connection a working install and a hung one
+  looked the same. On a terminal it now draws each step as a line of a boot sequence, in red, with
+  a scanner sweeping while the step runs and the bytes received beside the download. Every line is
+  a step the script took: there is no filler, and no percentage, because the total is not known and
+  is not guessed. The install is not made to wait for the drawing.
+
+  Nothing a log or a script reads changes. A pipe, CI, `TERM=dumb` or the new `--plain` gets the
+  plain log, byte for byte what it was -- checked against the previous script over eleven runs
+  (upgrades, refusals, every attestation outcome), and held to it by the new
+  `scripts/test-install.sh`. `NO_COLOR` keeps the movement and drops the colour; every status is
+  a word (`[ OK ]`, `NOT CHECKED`, `[FAIL]`) as well as a colour.
+
+  The slow steps had to move to the background to be drawn over, which is where an installer can
+  quietly stop refusing: a background command's exit status is lost unless it is asked for. The
+  tests run the refusals -- a checksum mismatch, a failed download, a failed attestation -- on a
+  terminal as well as off one, and each was watched failing against a copy of the script with
+  the status dropped. Two things changed for everyone: Ctrl-C now stops the install (it used to
+  remove the scratch directory and carry on, to fail at whatever came next) and the download with it,
+  and no step can read the script's own stdin when it arrives from `curl | sh`.
+
 ## [1.1.0] - 2026-09-18
 
 The Claude Code hook starts seeing the test runs it was installed to see. Nothing a script reads

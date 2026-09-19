@@ -136,6 +136,11 @@ into `~/.local/bin` — `--dir PATH` to choose somewhere else, `--version vX.Y.Z
 to pin a release. It refuses to install anything it could not verify, and names
 the source build on a platform with no prebuilt binary.
 
+On a terminal it draws the steps as a boot sequence, a scanner sweeping while
+each one really runs; every line is a step it took and the only figure is the
+bytes received. A pipe, CI, `TERM=dumb` or `--plain` gets the plain log, and
+`NO_COLOR` keeps the movement and drops the colour.
+
 Re-run it to upgrade. It names the version it replaced, and — the case that
 actually bites — warns when a copy installed by some other channel sits earlier
 on your `PATH` and will go on being the one that runs. `--doctor` names the
