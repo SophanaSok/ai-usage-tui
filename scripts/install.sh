@@ -290,9 +290,10 @@ if need curl; then
     }
 elif need wget; then
     fetch_to() { exec wget -qO "$2" "$1"; }
+    # wget names the redirects among its headers, on stderr; the last one is picked out of
+    # them afterwards, because a pipeline here could not be `exec`ed.
     latest_location() {
-        wget -qS --max-redirect=10 -O /dev/null "https://github.com/$REPO/releases/latest" 2>&1 \
-            | awk '/^ *Location:/ { print $2 }' | tail -1
+        exec wget -qS --max-redirect=10 -O /dev/null "https://github.com/$REPO/releases/latest" 2>&1
     }
 else
     die "curl or wget is required"
@@ -351,7 +352,8 @@ hud_banner
 # --- version --------------------------------------------------------------------------------
 if [ -z "$VERSION" ]; then
     run_step RESOLVE "latest release" latest_location || true
-    location="$(cat "$WORK/step.out")"
+    location="$(awk '/^ *Location:/ { seen = $2 } END { print seen }' "$WORK/step.out")"
+    [ -n "$location" ] || location="$(cat "$WORK/step.out")"
     VERSION="${location##*/}"
     case "$VERSION" in
         v[0-9]*) ;;
@@ -531,13 +533,15 @@ unchecked() {
     hud_note "$1"
 }
 
-# Whether this gh can make the check at all: 3 when it cannot verify against a tag, 4 when it is
-# not signed in. `gh auth status` asks GitHub, which is why this is a step with a line of its own.
+# Whether this gh can make the check at all: 3 when it cannot verify against a tag, anything else
+# but 0 when it is not signed in. `gh auth status` asks GitHub, which is why this is a step with a line of its own.
 gh_usable() {
     # An older gh has no `attestation` command, or one without the flag that ties a file to a
     # tag. Its usage error is not a verdict on the download.
     gh attestation verify --help 2>/dev/null | grep -q -- '--source-ref' || return 3
-    gh auth status >/dev/null 2>&1 || return 4
+    # The one that asks GitHub, and so the one that can hang: `exec`ed, so that an interrupt stops
+    # it. Any failure of it reads as "not signed in".
+    exec gh auth status >/dev/null 2>&1
 }
 
 # Three things are pinned, and each closes a door: the repository; the workflow, so that no other
