@@ -55,6 +55,7 @@ docs:
     python3 scripts/check-markdown-links.py .
     shellcheck scripts/*.sh
     scripts/test-publish-release.sh
+    scripts/test-install.sh
 
 # Line coverage by file, as the Coverage job reports it. Needs cargo-llvm-cov
 # (`cargo install cargo-llvm-cov --locked`) and LLVM's tools: `rustup component add
