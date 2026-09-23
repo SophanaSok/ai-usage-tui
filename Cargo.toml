@@ -88,7 +88,7 @@ ruzstd = { version = "0.9", default-features = false, features = ["std"] }
 # Turns SIGTERM / SIGHUP / SIGINT into an ordinary quit so the terminal is restored. Already in the
 # tree through crossterm, so naming it adds no crate and no licence.
 [target.'cfg(unix)'.dependencies]
-signal-hook = "0.3"
+signal-hook = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
