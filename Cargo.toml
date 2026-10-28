@@ -76,7 +76,7 @@ clap_mangen = "0.3.3"
 crossterm = "0.29"
 ratatui = "0.30"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 toml = "1.1"
@@ -88,7 +88,7 @@ ruzstd = { version = "0.9", default-features = false, features = ["std"] }
 # Turns SIGTERM / SIGHUP / SIGINT into an ordinary quit so the terminal is restored. Already in the
 # tree through crossterm, so naming it adds no crate and no licence.
 [target.'cfg(unix)'.dependencies]
-signal-hook = "0.3"
+signal-hook = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
