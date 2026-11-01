@@ -68,7 +68,7 @@ jobs:
       # A table the engine cannot parse, or that stops pricing a model a test pins, must not be
       # offered for merging. These are the pricing engine's own tests, which include "the
       # generated community table parses cleanly" and the dated-header check.
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master, 2026-09-17
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, 2026-09-17
         if: steps.check.outputs.stale == 'true'
         with:
           toolchain: stable
